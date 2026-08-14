@@ -3,9 +3,9 @@ import "@xyflow/react/dist/style.css";
 import { layoutNodes, type GraphEdge, type GraphNode } from "./types";
 
 const WEIGHT_COLOR: Record<string, string> = {
-  cheap: "#4a5568",
-  expensive: "#f4a261",
-  critical: "#e85d04",
+  cheap: "var(--edge-cheap)",
+  expensive: "var(--edge-expensive)",
+  critical: "var(--edge-critical)",
 };
 
 function LoadNode({ data }: { data: { name: string; type: string } }) {
@@ -35,12 +35,12 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
       target: e.dst,
       animated: e.weight === "critical",
       style: {
-        stroke: WEIGHT_COLOR[e.weight] || "#4a5568",
+        stroke: WEIGHT_COLOR[e.weight] || "var(--edge-cheap)",
         strokeWidth: e.weight === "critical" ? 2.4 : 1.2,
         strokeDasharray: e.confidence < 0.8 ? "6 4" : undefined,
       },
       label: e.type.replaceAll("_", " "),
-      labelStyle: { fill: "#8b9bb0", fontSize: 9 },
+      labelStyle: { fill: "var(--muted)", fontSize: 9 },
     }));
 
   return (

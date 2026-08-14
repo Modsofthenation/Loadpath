@@ -51,6 +51,11 @@ export type Review = {
   sinks: { id: string; type: string; name: string }[];
   tests_note: string;
   architecture_note: string;
+  evolution?: {
+    hotspots: { path: string; commits: number; bus_factor: number; complexity?: number }[];
+    change_coupling: { a: string; b: string; together: number; cross_context?: boolean }[];
+    notes: string[];
+  };
   nodes: GraphNode[];
   edges: GraphEdge[];
   markdown?: string;

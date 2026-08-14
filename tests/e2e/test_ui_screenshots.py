@@ -136,8 +136,14 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path):
         page.get_by_test_id("tab-settings").click()
         page.get_by_test_id("settings-form").wait_for()
         page.locator('select[name="ai_provider"]').select_option("grok")
+        page.get_by_test_id("theme-grid").wait_for()
+        page.get_by_test_id("theme-paper").click()
+        page.wait_for_function("document.documentElement.dataset.theme === 'paper'")
         page.wait_for_timeout(200)
         page.screenshot(path=str(dest / "settings.png"), full_page=False)
+
+        page.get_by_test_id("theme-select").select_option("nord")
+        page.wait_for_function("document.documentElement.dataset.theme === 'nord'")
 
         for name in ("architecture.png", "review.png", "graph.png", "pull-requests.png", "settings.png"):
             assert (dest / name).stat().st_size > 1000

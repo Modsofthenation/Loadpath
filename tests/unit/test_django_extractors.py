@@ -264,3 +264,37 @@ class BadSerializer(serializers.ModelSerializer):
     g = extract_django_file("backend/billing/serializers.py", src, _cfg())
     ser = next(n for n in g.nodes if n.type is NodeType.SERIALIZER)
     assert ser.extra.get("queryset_in_serializer") is True
+
+
+def test_nplusone_related_access_in_loop():
+    src = """
+from billing.models import Invoice
+
+def overdue_account_emails():
+    names = []
+    for invoice in Invoice.objects.filter(status="open"):
+        names.append(invoice.account.email)
+    return names
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    hits = svc.extra.get("nplusone") or []
+    assert hits
+    assert hits[0]["kind"] == "select_related"
+    assert "account" in hits[0]["accessed"]
+    assert "select_related" in hits[0]["suggested_fix"]
+
+
+def test_nplusone_silent_when_select_related():
+    src = """
+from billing.models import Invoice
+
+def overdue_account_emails():
+    names = []
+    for invoice in Invoice.objects.filter(status="open").select_related("account"):
+        names.append(invoice.account.email)
+    return names
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    assert not svc.extra.get("nplusone")

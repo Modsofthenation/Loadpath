@@ -21,7 +21,7 @@ plus the jobs the view enqueues (`send_invoice_email.delay`, `rebuild_ledger.sen
 
 ## App
 
-`loadpath serve --port 7345` opens a local desktop-style UI. Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close.
+`loadpath serve --port 7345` opens a local desktop-style UI. Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close. The rail and Settings page ship a dozen themes (Obsidian, Nord, Solarized, Paper, high-contrast, …); the choice stays in `localStorage`.
 
 ### Review
 
@@ -143,10 +143,15 @@ AST is enough for review. If you need live `_meta` (db_table, resolved relations
 | `serializers_are_the_only_published_contract` | Zod/form fields must not drift from the serializer |
 | `no_queryset_in_serializer` | Serializers must not run querysets |
 | `celery_tasks_must_be_idempotent_on_model_pk` | Celery and Dramatiq tasks take a model pk |
+| `queryset_nplusone` | Loops over querysets that touch related objects need `select_related` / `prefetch_related` |
+| `cascade_crosses_context` | `on_delete=CASCADE` must not blast into another bounded context |
+| `migration_blast_radius` | `RemoveField` / `DeleteModel` still referenced by the typed graph |
 
 Waivers live under `waivers:` in the same file. Reviewers are the `owners` of the bounded contexts in the impact subgraph.
 
 Impact walk skips permission/app/context hubs, does not climb `renders` into the App shell, and does not follow cross-context `relates_to` (an Invoice FK to UserProfile does not pull identity into a billing review).
+
+Review also folds in a **churn & coupling** slice of git history (CodeScene-style hotspots, bus factor, temporal coupling, cyclomatic complexity on the changed functions) scoped to the same impact files — not a whole-repo hotspot map.
 
 ## How confidence is scored
 
@@ -186,4 +191,4 @@ CI installs Chromium and runs the full suite.
 
 ## What this is not
 
-Not CodeRabbit (comments without a closed impact set). Not CodeScene (historical coupling). Not django-orm-lens (models only). Not a generic SCIP call graph. The product is review as load-path inspection.
+Not CodeRabbit (comments without a closed impact set). Not a CodeScene clone (we do not replace its hotspot maps; we only score churn/coupling on the load path). Not django-orm-lens (we do not boot an ER explorer; we reuse its N+1 / cascade / blast-radius heuristics inside the typed graph). Not a generic SCIP call graph. The product is review as load-path inspection.

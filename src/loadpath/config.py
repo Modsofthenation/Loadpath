@@ -12,6 +12,9 @@ DEFAULT_RULES = [
     "serializers_are_the_only_published_contract",
     "no_queryset_in_serializer",
     "celery_tasks_must_be_idempotent_on_model_pk",
+    "queryset_nplusone",
+    "cascade_crosses_context",
+    "migration_blast_radius",
 ]
 
 

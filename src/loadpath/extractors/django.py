@@ -129,6 +129,10 @@ def _kw(call: ast.Call, key: str) -> ast.AST | None:
     return None
 
 
+def _truthy(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
 def _app_from_path(rel: str) -> str | None:
     parts = Path(rel).parts
     # backend/billing/models.py → billing
@@ -323,6 +327,8 @@ class DjangoExtractor(ast.NodeVisitor):
                     on_delete = _name(od)
                     extra["on_delete"] = on_delete.split(".")[-1] if on_delete else None
                     extra["related_name"] = _const_str(_kw(stmt.value, "related_name"))
+                    extra["db_index"] = _truthy(_kw(stmt.value, "db_index"))
+                    extra["unique"] = _truthy(_kw(stmt.value, "unique"))
                 field_node = self.add_node(NodeType.FIELD, fname, field_q, stmt.lineno, extra)
                 self.add_edge(model.id, field_node.id, EdgeType.HAS_FIELD)
                 if rel_to:
@@ -974,6 +980,9 @@ def extract_django_file(rel_path: str, source: str, config: LoadpathConfig) -> E
         return g
     extractor = DjangoExtractor(rel, source, config)
     extractor.visit(tree)
+    from loadpath.orm.nplusone import apply_nplusone
+
+    apply_nplusone(extractor.graph, tree)
     return extractor.graph
 
 
