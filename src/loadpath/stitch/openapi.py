@@ -321,7 +321,10 @@ def _paths_match(a: str, b: str) -> bool:
 
 
 def _client_is_generated(client: dict, generated_files: list[str]) -> bool:
-    fp = str(client.get("file_path") or "").replace("\\", "/")
+    extra = client.get("extra") or {}
+    if extra.get("generated"):
+        return True
+    fp = str(client.get("file_path") or extra.get("file") or "").replace("\\", "/")
     if not fp:
         return False
     generated = any(
