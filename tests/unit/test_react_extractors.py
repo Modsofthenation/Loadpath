@@ -41,6 +41,18 @@ def test_extracts_hook_query_key_and_fetch_url():
     assert any(c.name == "/api/invoices/{id}" for c in clients)
 
 
+def test_generated_client_is_not_inferred():
+    g = extract_react_file(
+        "frontend/src/generated/invoices.ts",
+        (FIXTURE / "frontend/src/generated/invoices.ts").read_text(),
+        _cfg(),
+    )
+    clients = [n for n in g.nodes if n.type is NodeType.API_CLIENT]
+    assert clients
+    assert all(c.extra.get("generated") for c in clients)
+    assert all(not c.extra.get("inferred") for c in clients)
+
+
 def test_extracts_zod_schema_fields():
     g = extract_react_file(
         "frontend/src/features/billing/invoiceSchema.ts",

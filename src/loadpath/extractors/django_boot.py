@@ -2,15 +2,136 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 from loadpath.config import LoadpathConfig
 from loadpath.types import Edge, EdgeType, ExtractedGraph, Node, NodeType, node_id
 
+BOOT_JSON_MARKER = "__LOADPATH_BOOT_JSON__"
+
 
 def try_boot_models(repo_root: Path, config: LoadpathConfig) -> ExtractedGraph:
+    """Boot Django in a subprocess so django.setup() is not process-global."""
+    if os.environ.get("LOADPATH_BOOT_INPROCESS") == "1":
+        return _boot_inprocess(repo_root, config)
+    return _boot_subprocess(repo_root, config)
+
+
+def _boot_subprocess(repo_root: Path, config: LoadpathConfig) -> ExtractedGraph:
+    src_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["LOADPATH_BOOT_INPROCESS"] = "1"
+    env["PYTHONPATH"] = str(src_root) + os.pathsep + env.get("PYTHONPATH", "")
+    payload = json.dumps(
+        {
+            "repo_root": str(repo_root.resolve()),
+            "django_root": config.django_root,
+        }
+    )
+    code = (
+        "import io,json,sys\n"
+        "from contextlib import redirect_stdout\n"
+        "from pathlib import Path\n"
+        "from loadpath.config import load_config\n"
+        "from loadpath.extractors.django_boot import _boot_inprocess\n"
+        "meta=json.loads(sys.argv[1])\n"
+        "root=Path(meta['repo_root'])\n"
+        "cfg=load_config(root)\n"
+        "cfg.django_root=meta['django_root']\n"
+        "cfg.boot_django=True\n"
+        "buf=io.StringIO()\n"
+        "with redirect_stdout(buf):\n"
+        "    g=_boot_inprocess(root,cfg)\n"
+        "print(" + repr(BOOT_JSON_MARKER) + " + json.dumps("
+        "{'nodes':[n.to_row() for n in g.nodes],"
+        "'edges':[e.to_row() for e in g.edges],'residuals':g.residuals}))\n"
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code, payload],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            env=env,
+            cwd=str(repo_root),
+        )
+    except subprocess.TimeoutExpired:
+        graph = ExtractedGraph()
+        graph.residuals.append("django.setup() skipped: boot subprocess timed out")
+        return graph
+    if proc.returncode != 0:
+        graph = ExtractedGraph()
+        err = (proc.stderr or proc.stdout or "unknown error").strip().splitlines()
+        tail = err[-1] if err else "unknown error"
+        graph.residuals.append(f"django.setup() skipped: {tail}")
+        return graph
+    data = _parse_boot_payload(proc.stdout)
+    if data is None:
+        graph = ExtractedGraph()
+        graph.residuals.append("django.setup() skipped: boot subprocess returned invalid JSON")
+        return graph
+    return _graph_from_boot_data(data)
+
+
+def _graph_from_boot_data(data: dict) -> ExtractedGraph:
+    graph = ExtractedGraph()
+    graph.residuals.extend(data.get("residuals") or [])
+    try:
+        for row in data.get("nodes") or []:
+            extra = row.get("extra") or {}
+            if isinstance(extra, str):
+                extra = json.loads(extra)
+            graph.nodes.append(
+                Node(
+                    id=row["id"],
+                    type=NodeType(row["type"]),
+                    name=row["name"],
+                    qualified_name=row["qualified_name"],
+                    file_path=row.get("file_path"),
+                    start_line=row.get("start_line"),
+                    end_line=row.get("end_line"),
+                    context=row.get("context"),
+                    extra=extra if isinstance(extra, dict) else {},
+                )
+            )
+        for row in data.get("edges") or []:
+            extra = row.get("extra") or {}
+            if isinstance(extra, str):
+                extra = json.loads(extra)
+            graph.edges.append(
+                Edge(
+                    src=row["src"],
+                    dst=row["dst"],
+                    type=EdgeType(row["type"]),
+                    confidence=float(row.get("confidence") or 1),
+                    extra=extra if isinstance(extra, dict) else {},
+                )
+            )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        graph = ExtractedGraph()
+        graph.residuals.append(f"django.setup() skipped: boot payload malformed ({exc})")
+    return graph
+
+
+def _parse_boot_payload(stdout: str | None) -> dict | None:
+    text = stdout or ""
+    idx = text.rfind(BOOT_JSON_MARKER)
+    blob = text[idx + len(BOOT_JSON_MARKER) :] if idx >= 0 else text
+    blob = blob.strip().splitlines()[0] if blob.strip() else ""
+    if not blob:
+        return None
+    try:
+        data = json.loads(blob)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _boot_inprocess(repo_root: Path, config: LoadpathConfig) -> ExtractedGraph:
     graph = ExtractedGraph()
     settings_mod = _discover_settings_module(repo_root, config.django_root)
     if not settings_mod:

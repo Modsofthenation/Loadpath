@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from loadpath.architecture.rules import evaluate
+from loadpath.architecture.rules import _related_accesses, evaluate
 from loadpath.config import LoadpathConfig, load_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_drift, index_repo
@@ -243,6 +243,9 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet
     for line in stored.splitlines():
         if any(f and f in line for f in impact_files) or any(n and str(n) in line for n in impact_names):
             residuals.append(line)
+    fields_by_name: dict[str, list[dict]] = {}
+    for field in store.nodes([NodeType.FIELD]):
+        fields_by_name.setdefault(field["name"], []).append(field)
     for n in impact_nodes:
         extra = n.get("extra") or {}
         if extra.get("get_serializer_class"):
@@ -254,12 +257,28 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet
         if extra.get("queryset_in_serializer"):
             residuals.append(f"Queryset inside serializer {n['qualified_name']}")
         for hit in extra.get("nplusone") or []:
-            accessed = ", ".join(hit.get("accessed") or []) or "related fields"
+            accessed = list(hit.get("accessed") or [])
+            related, _ = _related_accesses(accessed, fields_by_name, extra.get("app"))
+            if not related:
+                continue
             residuals.append(
-                f"N+1 {accessed} in {n.get('file_path')}:{hit.get('line')} — {hit.get('suggested_fix')}"
+                f"N+1 {', '.join(related)} in {n.get('file_path')}:{hit.get('line')} — {hit.get('suggested_fix')}"
             )
     residuals.extend(_test_field_residuals(impact_nodes, diff))
     residuals.extend(_react_path_residuals(impact_nodes, diff))
+    ids = {n["id"] for n in impact_nodes}
+    for e in store.edges():
+        if e["src"] not in ids or e["dst"] not in ids:
+            continue
+        extra = e.get("extra") or {}
+        if extra.get("overlap"):
+            residuals.append(
+                f"Inferred serializer/Zod overlap fields={extra['overlap']}"
+            )
+        if extra.get("superseded_by_generated"):
+            residuals.append(
+                f"String URL stitch {extra.get('react')} superseded by a generated OpenAPI client"
+            )
     seen = set()
     out = []
     for r in residuals:
@@ -267,6 +286,11 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet
             seen.add(r)
             out.append(r)
     return out
+
+
+def _serious_evolution_notes(notes: list[str]) -> list[str]:
+    tokens = ("hotspot", "silo", "crosses a bounded", "cross-context", "temporal coupling")
+    return [n for n in notes if any(tok in n.lower() for tok in tokens)]
 
 
 def suggested_reviewers(config: LoadpathConfig, impact_nodes: list[dict]) -> list[str]:
@@ -358,10 +382,11 @@ def run_review(
     residuals = collect_residuals(store, impact_nodes, diff)
     evolution = analyze_evolution(repo_root, diff, impact_nodes, config)
     confidence = score_confidence(store, impact_nodes, impact_edges, scoped, residuals)
-    if evolution.get("notes") and confidence["level"] == "high":
+    serious = _serious_evolution_notes(evolution.get("notes") or [])
+    if serious and confidence["level"] == "high":
         confidence["level"] = "medium"
         reasons = list(confidence.get("reasons") or [])
-        reasons = [evolution["notes"][0], *reasons][:3]
+        reasons = [serious[0], *reasons][:3]
         confidence["reasons"] = reasons
     boot = store.get_meta("django_boot") or "off"
     if boot == "failed" and confidence["level"] == "high":

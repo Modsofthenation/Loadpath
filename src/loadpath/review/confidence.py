@@ -40,14 +40,17 @@ def score_confidence(
 
     tested_ids: set[str] = set()
     impact_ids = {n["id"] for n in impact_nodes}
-    all_edges = list(store.edges())
-    for e in list(impact_edges) + all_edges:
-        if e["type"] == EdgeType.TESTED_BY.value:
+    for e in impact_edges:
+        if e["type"] != EdgeType.TESTED_BY.value:
+            continue
+        if e["src"] in impact_ids and e["dst"] in impact_ids:
             tested_ids.add(e["src"])
 
-    # A sink is covered if it, or a producer within two hops (view/serializer/hook/page), is tested.
+    # A sink is covered if it, or a producer within two hops on THIS path, is tested.
     inbound: dict[str, list[str]] = {}
-    for e in all_edges:
+    for e in impact_edges:
+        if e["src"] not in impact_ids or e["dst"] not in impact_ids:
+            continue
         inbound.setdefault(e["dst"], []).append(e["src"])
         inbound.setdefault(e["src"], []).append(e["dst"])
 

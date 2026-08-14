@@ -149,8 +149,70 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
     ser_fields = [n for n in store.nodes([NodeType.SERIALIZER_FIELD])]
     schemas = [n for n in store.nodes([NodeType.FORM_SCHEMA])]
     generated_files = _generated_client_files(repo_root, config)
+    generated_templates: set[str] = set()
+    for client in clients:
+        raw = (client.get("extra") or {}).get("raw") or client["name"]
+        tmpl = normalize_url_template(str(raw))
+        if _client_is_generated(client, generated_files):
+            generated_templates.add(tmpl)
 
-    # Route → OpenAPI
+    # Clients consumed_by matching routes / openapi
+    for client in clients:
+        raw = (client.get("extra") or {}).get("raw") or client["name"]
+        tmpl = normalize_url_template(str(raw))
+        matched = False
+        generated = _client_is_generated(client, generated_files)
+
+        for route in routes:
+            extra = route.get("extra") or {}
+            if extra.get("include"):
+                continue
+            rraw = extra.get("mounted_at") or extra.get("full_path") or extra.get("route") or route["name"]
+            rtmpl = django_route_to_template(str(rraw))
+            if _paths_match(tmpl, rtmpl):
+                if generated:
+                    conf = 0.95
+                elif tmpl in generated_templates:
+                    conf = 0.4
+                else:
+                    conf = 0.55
+                store.upsert_edge(
+                    Edge(
+                        src=route["id"],
+                        dst=client["id"],
+                        type=EdgeType.CONSUMED_BY_CLIENT,
+                        confidence=conf,
+                        extra={
+                            "match": "url_template",
+                            "generated_client": generated,
+                            "django": rtmpl,
+                            "react": tmpl,
+                            "superseded_by_generated": bool(not generated and tmpl in generated_templates),
+                        },
+                    )
+                )
+                matched = True
+                if not generated:
+                    note = f"Inferred client stitch {tmpl} ↔ {rtmpl} from string URL in {client.get('file_path')}"
+                    if tmpl in generated_templates:
+                        note += " (generated OpenAPI client already covers this URL)"
+                    else:
+                        note += " (not a generated OpenAPI client)"
+                    residuals.append(note)
+        for op in openapi_by_path.get(tmpl, []):
+            store.upsert_edge(
+                Edge(
+                    src=node_id(NodeType.OPENAPI_PATH, f"{op['method']} {op['path']}"),
+                    dst=client["id"],
+                    type=EdgeType.CONSUMED_BY_CLIENT,
+                    confidence=1.0 if generated else (0.45 if tmpl in generated_templates else 0.7),
+                    extra={"via": "openapi", "generated_client": generated},
+                )
+            )
+            matched = True
+        if not matched and tmpl.startswith("/api/"):
+            residuals.append(f"React client {tmpl} has no matching Django route ({client.get('file_path')})")
+
     for route in routes:
         extra = route.get("extra") or {}
         if extra.get("include"):
@@ -170,57 +232,6 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
                     extra={"via": "openapi"},
                 )
             )
-
-    # Clients consumed_by matching routes / openapi
-    for client in clients:
-        raw = (client.get("extra") or {}).get("raw") or client["name"]
-        tmpl = normalize_url_template(str(raw))
-        matched = False
-        generated = any(
-            client.get("file_path") and str(client["file_path"]).replace("\\", "/").endswith(g.replace("\\", "/"))
-            or (client.get("file_path") and g.replace("\\", "/") in str(client["file_path"]).replace("\\", "/"))
-            for g in generated_files
-        )
-        if client.get("file_path"):
-            fp = str(client["file_path"]).replace("\\", "/")
-            generated = generated or "/generated/" in f"/{fp}/" or "openapi" in Path(fp).name.lower()
-
-        for route in routes:
-            extra = route.get("extra") or {}
-            if extra.get("include"):
-                continue
-            rraw = extra.get("mounted_at") or extra.get("full_path") or extra.get("route") or route["name"]
-            rtmpl = django_route_to_template(str(rraw))
-            if _paths_match(tmpl, rtmpl):
-                conf = 0.95 if generated else 0.55
-                store.upsert_edge(
-                    Edge(
-                        src=route["id"],
-                        dst=client["id"],
-                        type=EdgeType.CONSUMED_BY_CLIENT,
-                        confidence=conf,
-                        extra={"match": "url_template", "generated_client": generated, "django": rtmpl, "react": tmpl},
-                    )
-                )
-                matched = True
-                if not generated:
-                    residuals.append(
-                        f"Inferred client stitch {tmpl} ↔ {rtmpl} from string URL in {client.get('file_path')} "
-                        "(not a generated OpenAPI client)"
-                    )
-        for op in openapi_by_path.get(tmpl, []):
-            store.upsert_edge(
-                Edge(
-                    src=node_id(NodeType.OPENAPI_PATH, f"{op['method']} {op['path']}"),
-                    dst=client["id"],
-                    type=EdgeType.CONSUMED_BY_CLIENT,
-                    confidence=1.0 if generated else 0.7,
-                    extra={"via": "openapi", "generated_client": generated},
-                )
-            )
-            matched = True
-        if not matched and tmpl.startswith("/api/"):
-            residuals.append(f"React client {tmpl} has no matching Django route ({client.get('file_path')})")
 
     # Serializer field ↔ Zod field overlap
     fields_by_serializer: dict[str, list[dict]] = {}
@@ -307,6 +318,19 @@ def _paths_match(a: str, b: str) -> bool:
     if a.endswith(b) or b.endswith(a):
         return True
     return "/".join(a_tail) == "/".join(b_tail) and len(a_tail[-1]) > 2
+
+
+def _client_is_generated(client: dict, generated_files: list[str]) -> bool:
+    extra = client.get("extra") or {}
+    if extra.get("generated"):
+        return True
+    fp = str(client.get("file_path") or extra.get("file") or "").replace("\\", "/")
+    if not fp:
+        return False
+    generated = any(
+        fp.endswith(g.replace("\\", "/")) or g.replace("\\", "/") in fp for g in generated_files
+    )
+    return generated or "/generated/" in f"/{fp}/" or "openapi" in Path(fp).name.lower()
 
 
 def _generated_client_files(repo_root: Path, config: LoadpathConfig) -> list[str]:

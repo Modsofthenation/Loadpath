@@ -236,12 +236,22 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
             continue
         line = source[: m.start()].count("\n") + 1
         norm = normalize_url_template(url)
+        generated_file = "/generated/" in f"/{rel}/" or "openapi" in Path(rel).stem.lower()
+        qname = f"client:{rel}:{norm}"
+        if any(n.qualified_name == qname for n in graph.nodes):
+            continue
         client = add(
             NodeType.API_CLIENT,
             norm,
-            f"client:{norm}",
+            qname,
             line,
-            {"raw": url, "inferred": True, "feature": feature, "file": rel},
+            {
+                "raw": url,
+                "inferred": not generated_file,
+                "generated": generated_file,
+                "feature": feature,
+                "file": rel,
+            },
         )
         for owner in hooks or components:
             edge(owner.id, client.id, EdgeType.CALLS)
@@ -253,14 +263,22 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
         url = m.group(1)
         line = source[: m.start()].count("\n") + 1
         norm = normalize_url_template(url)
-        if any(n.qualified_name == f"client:{norm}" for n in graph.nodes):
+        generated_file = "/generated/" in f"/{rel}/" or "openapi" in Path(rel).stem.lower()
+        qname = f"client:{rel}:{norm}"
+        if any(n.qualified_name == qname for n in graph.nodes):
             continue
         add(
             NodeType.API_CLIENT,
             norm,
-            f"client:{norm}",
+            qname,
             line,
-            {"raw": url, "inferred": True, "feature": feature, "file": rel},
+            {
+                "raw": url,
+                "inferred": not generated_file,
+                "generated": generated_file,
+                "feature": feature,
+                "file": rel,
+            },
         )
 
     for m in ROUTE_JSX_RE.finditer(source):
