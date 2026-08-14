@@ -148,6 +148,23 @@ class GitHubProvider:
             if LOADPATH_COMMENT_MARKER in (item.get("body") or ""):
                 existing_id = item.get("id")
                 break
+        # Walk a couple of pages so a busy PR does not grow a second Loadpath comment.
+        page = 2
+        while existing_id is None and page <= 3:
+            more = self.client.get(
+                f"{self.base}/repos/{repo}/issues/{number}/comments",
+                params={"per_page": 100, "page": page},
+                headers=self._headers(),
+            )
+            more.raise_for_status()
+            batch = more.json() or []
+            if not batch:
+                break
+            for item in batch:
+                if LOADPATH_COMMENT_MARKER in (item.get("body") or ""):
+                    existing_id = item.get("id")
+                    break
+            page += 1
         if existing_id:
             r = self.client.patch(
                 f"{self.base}/repos/{repo}/issues/comments/{existing_id}",

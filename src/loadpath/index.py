@@ -131,9 +131,8 @@ def index_repo(
     repo_root = repo_root.resolve()
     if draft_config:
         from loadpath.detect import write_draft_config
-        from loadpath.config import find_config
 
-        if find_config(repo_root) is None:
+        if not (repo_root / "loadpath.yml").is_file():
             write_draft_config(repo_root)
     config = config or load_config(repo_root)
     db_path = db_path or default_db_path(repo_root)

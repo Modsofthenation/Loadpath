@@ -22,7 +22,17 @@ def test_index_stitches_django_route_to_react_client(tmp_path: Path):
     store.close()
 
 
-def test_incremental_index_skips_when_hashes_match(tmp_path: Path):
+def test_index_drafts_yml_in_repo_even_if_parent_has_one(tmp_path: Path):
+    parent = tmp_path / "parent"
+    child = parent / "app"
+    child.mkdir(parents=True)
+    (parent / "loadpath.yml").write_text("contexts: {}\n", encoding="utf-8")
+    (child / "backend").mkdir()
+    (child / "backend" / "manage.py").write_text("print(1)\n")
+    store = index_repo(child, db_path=child / "g.sqlite3", incremental=False, draft_config=True)
+    store.close()
+    assert (child / "loadpath.yml").is_file()
+    assert (parent / "loadpath.yml").read_text() == "contexts: {}\n"
     db = tmp_path / "graph.sqlite3"
     store = index_repo(FIXTURE, db_path=db, incremental=False)
     store.close()

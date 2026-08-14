@@ -289,6 +289,8 @@ def create_app() -> FastAPI:
             token = settings.github_token if body.provider == "github" else settings.bitbucket_token
         if not token:
             raise HTTPException(400, f"No {body.provider} token configured")
+        if not body.markdown.strip():
+            raise HTTPException(400, "markdown is empty")
         try:
             scm = provider_for(body.provider, token, username=username)
             posted = scm.upsert_pull_request_comment(body.repo, body.number, body.markdown)

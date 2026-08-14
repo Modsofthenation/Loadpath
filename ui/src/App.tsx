@@ -86,6 +86,7 @@ export function App() {
 
   const runReview = async () => {
     setError("");
+    setCopied("");
     setBusy("Tracing load path…");
     persistRepo(repo);
     persistRefs(base, head);
@@ -105,6 +106,7 @@ export function App() {
 
   const runIndex = async (incremental = true) => {
     setError("");
+    setCopied("");
     setBusy(incremental ? "Indexing…" : "Full reindex…");
     persistRepo(repo);
     try {
@@ -124,6 +126,7 @@ export function App() {
 
   const draftConfig = async () => {
     setError("");
+    setCopied("");
     setBusy("Detecting layout…");
     persistRepo(repo);
     try {
@@ -589,7 +592,7 @@ export function App() {
                   <button
                     className="btn"
                     onClick={() => {
-                      persistRefs(p.target_branch, p.source_branch);
+                      persistRefs(p.base_sha || p.target_branch, p.head_sha || p.source_branch);
                       persistPr(p.provider, p.repo, String(p.number));
                       setTab("review");
                     }}
