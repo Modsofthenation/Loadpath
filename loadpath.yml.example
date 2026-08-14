@@ -27,3 +27,4 @@ rules:
 django_root: backend
 react_root: frontend/src
 openapi_paths: []
+boot_django: false

@@ -6,6 +6,7 @@ from pathlib import Path
 from loadpath.config import LoadpathConfig, load_config
 from loadpath.extractors.django import extract_django_file
 from loadpath.extractors.react import extract_react_file
+from loadpath.extractors.django_boot import try_boot_models
 from loadpath.graph.store import GraphStore
 from loadpath.stitch.openapi import stitch
 from loadpath.types import GENERATED_PATH_MARKERS, ExtractedGraph, Node, NodeType, node_id
@@ -87,6 +88,12 @@ def index_repo(
         store.upsert_file(rel, digest, language_for(path))
         store.upsert_graph(graph)
         residuals.extend(graph.residuals)
+
+    boot = ExtractedGraph()
+    if config.boot_django:
+        boot = try_boot_models(repo_root, config)
+        store.upsert_graph(boot)
+        residuals.extend(boot.residuals)
 
     _ensure_context_nodes(store, config)
     stitch_residuals = stitch(store, config, repo_root)

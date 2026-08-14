@@ -97,43 +97,44 @@ export function App() {
 
   return (
     <div className="app">
-      <nav className="rail">
+      <nav className="rail" data-testid="rail">
         <div className="brand">Loadpath</div>
-        <button className={tab === "review" ? "active" : ""} onClick={() => setTab("review")}>
+        <button data-testid="tab-review" className={tab === "review" ? "active" : ""} onClick={() => setTab("review")}>
           Review
         </button>
-        <button className={tab === "graph" ? "active" : ""} onClick={() => setTab("graph")}>
+        <button data-testid="tab-graph" className={tab === "graph" ? "active" : ""} onClick={() => setTab("graph")}>
           Impact graph
         </button>
-        <button className={tab === "prs" ? "active" : ""} onClick={() => setTab("prs")}>
+        <button data-testid="tab-prs" className={tab === "prs" ? "active" : ""} onClick={() => setTab("prs")}>
           Pull requests
         </button>
-        <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
+        <button data-testid="tab-settings" className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
           Settings
         </button>
         <div style={{ flex: 1 }} />
         <div className="muted">{busy || "Django + React load paths"}</div>
       </nav>
       <div className="main">
-        <div className="topbar">
+        <div className="topbar" data-testid="topbar">
           <input
+            data-testid="repo-path"
             className="path"
             placeholder="Local monorepo path"
             value={repo}
             onChange={(e) => setRepo(e.target.value)}
           />
-          <input value={base} onChange={(e) => setBase(e.target.value)} placeholder="base" />
-          <input value={head} onChange={(e) => setHead(e.target.value)} placeholder="head" />
-          <button onClick={runIndex}>Index</button>
-          <button className="btn primary" onClick={runReview}>
+          <input data-testid="base-ref" value={base} onChange={(e) => setBase(e.target.value)} placeholder="base" />
+          <input data-testid="head-ref" value={head} onChange={(e) => setHead(e.target.value)} placeholder="head" />
+          <button data-testid="btn-index" onClick={runIndex}>Index</button>
+          <button data-testid="btn-review" className="btn primary" onClick={runReview}>
             Review
           </button>
         </div>
         {error ? <div className="error">{error}</div> : null}
 
         {tab === "review" && (
-          <div className="content">
-            <aside className="brief">
+          <div className="content" data-testid="review-layout">
+            <aside className="brief" data-testid="brief">
               {review ? (
                 <>
                   <div className={`level ${review.confidence.level}`}>
@@ -192,35 +193,36 @@ export function App() {
                 </p>
               )}
             </aside>
-            <div className="graph-wrap">
+            <div className="graph-wrap" data-testid="review-graph">
               {review ? <ImpactGraph nodes={graphNodes} edges={graphEdges} /> : null}
             </div>
           </div>
         )}
 
         {tab === "graph" && (
-          <div className="graph-wrap" style={{ height: "100%" }}>
+          <div className="graph-wrap" data-testid="graph-full" style={{ height: "100%" }}>
             {review ? <ImpactGraph nodes={graphNodes} edges={graphEdges} /> : <p className="muted">Run a review first.</p>}
           </div>
         )}
 
         {tab === "prs" && (
-          <div className="pr-list">
+          <div className="pr-list" data-testid="pr-list">
             <div className="topbar" style={{ border: 0, padding: 0, marginBottom: 12 }}>
-              <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+              <select data-testid="pr-provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
                 <option value="github">GitHub</option>
                 <option value="bitbucket">Bitbucket</option>
               </select>
               <input
+                data-testid="pr-repo"
                 className="path"
                 placeholder="owner/repo"
                 value={scmRepo}
                 onChange={(e) => setScmRepo(e.target.value)}
               />
-              <button onClick={loadPrs}>List PRs</button>
+              <button data-testid="btn-list-prs" onClick={loadPrs}>List PRs</button>
             </div>
             {prs.map((p) => (
-              <article className="pr" key={`${p.provider}-${p.number}`}>
+              <article className="pr" data-testid={`pr-${p.number}`} key={`${p.provider}-${p.number}`}>
                 <h3>
                   #{p.number} {p.title}
                 </h3>
@@ -248,7 +250,7 @@ export function App() {
         )}
 
         {tab === "settings" && (
-          <form className="settings" onSubmit={saveSettings}>
+          <form className="settings" data-testid="settings-form" onSubmit={saveSettings}>
             <h1>Keys & providers</h1>
             <p className="muted">
               Tokens stay on this machine in ~/.loadpath/settings.json. GitHub and Bitbucket power the

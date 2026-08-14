@@ -3,20 +3,53 @@ from __future__ import annotations
 from typer.testing import CliRunner
 
 from loadpath.cli import app
-from tests.conftest import copy_fixture, git_commit_all, git_init_with_main
+from tests.conftest import prepare_review_repo
 
 runner = CliRunner()
 
 
-def test_cli_index_and_review(tmp_path):
-    repo = copy_fixture(tmp_path)
-    git_init_with_main(repo)
-    ser = repo / "backend/billing/serializers.py"
-    ser.write_text(ser.read_text() + "\n# touch\n")
-    git_commit_all(repo, "touch serializer")
+def test_cli_index_review_json_and_html(tmp_path):
+    repo = prepare_review_repo(tmp_path)
     result = runner.invoke(app, ["index", str(repo)])
     assert result.exit_code == 0, result.output
     assert "nodes" in result.output
-    result = runner.invoke(app, ["review", str(repo), "--base", "HEAD~1", "--head", "HEAD"])
-    assert result.exit_code == 0, result.output
+
+    md = runner.invoke(app, ["review", str(repo), "--base", "HEAD~1", "--head", "HEAD"])
+    assert md.exit_code == 0, md.output
+    assert "Loadpath" in md.output
+    assert "MEDIUM" in md.output or "LOW" in md.output or "HIGH" in md.output
+
+    json_out = tmp_path / "review.json"
+    js = runner.invoke(
+        app,
+        ["review", str(repo), "--base", "HEAD~1", "--head", "HEAD", "--format", "json", "--out", str(json_out)],
+    )
+    assert js.exit_code == 0, js.output
+    payload = json_out.read_text()
+    assert "InvoiceSerializer" in payload
+    assert "rebuild_ledger" in payload
+    assert "send_invoice_email" in payload
+    assert "Dramatiq" in payload or "dramatiq" in payload
+    assert "Celery" in payload or "celery" in payload
+
+    html_out = tmp_path / "review.html"
+    html = runner.invoke(
+        app,
+        ["review", str(repo), "--base", "HEAD~1", "--head", "HEAD", "--format", "html", "--out", str(html_out)],
+    )
+    assert html.exit_code == 0, html.output
+    text = html_out.read_text()
+    assert "vis-network" in text
+    assert "Loadpath" in text
+
+
+def test_cli_help():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
     assert "Loadpath" in result.output
+
+
+def test_cli_serve_help():
+    result = runner.invoke(app, ["serve", "--help"])
+    assert result.exit_code == 0
+    assert "port" in result.output.lower()

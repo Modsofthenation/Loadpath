@@ -13,7 +13,8 @@ RULE_DOCS = {
     "react_feature_may_only_call_own_or_shared_api": "A React feature may only call its own public API or shared clients.",
     "serializers_are_the_only_published_contract": "Serializers (and OpenAPI) are the only published contract; React must not drift.",
     "no_queryset_in_serializer": "Serializers must not run querysets.",
-    "celery_tasks_must_be_idempotent_on_model_pk": "Celery tasks must take a model pk/id, not a full object payload.",
+    "celery_tasks_must_be_idempotent_on_model_pk": "Celery and Dramatiq tasks must take a model pk/id, not a full object payload.",
+    "async_tasks_must_be_idempotent_on_model_pk": "Celery and Dramatiq tasks must take a model pk/id, not a full object payload.",
 }
 
 
@@ -60,7 +61,7 @@ def evaluate(store: GraphStore, config: LoadpathConfig, changed_ids: set[str] | 
         findings.extend(_contract_drift(store, config))
     if "no_queryset_in_serializer" in enabled:
         findings.extend(_queryset_in_serializer(store))
-    if "celery_tasks_must_be_idempotent_on_model_pk" in enabled:
+    if "celery_tasks_must_be_idempotent_on_model_pk" in enabled or "async_tasks_must_be_idempotent_on_model_pk" in enabled:
         findings.extend(_task_idempotency(store, changed_ids))
 
     for f in findings:
@@ -265,17 +266,19 @@ def _task_idempotency(store: GraphStore, changed_ids: set[str] | None) -> list[F
                 pass
             if extra.get("looks_idempotent_on_pk") is True:
                 continue
+            broker = extra.get("broker") or "task"
+            label = {"celery": "Celery", "dramatiq": "Dramatiq"}.get(broker, "Async")
             out.append(
                 Finding(
                     rule="celery_tasks_must_be_idempotent_on_model_pk",
                     severity=RuleSeverity.WARNING,
                     message=(
-                        f"Celery task {task['name']} args {args} do not look like a model pk; "
+                        f"{label} task {task['name']} args {args} do not look like a model pk; "
                         "tasks must be idempotent on model pk"
                     ),
                     node_id=task["id"],
                     file_path=task.get("file_path"),
-                    extra={"args": args},
+                    extra={"args": args, "broker": broker},
                 )
             )
     return out

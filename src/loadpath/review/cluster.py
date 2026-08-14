@@ -49,6 +49,9 @@ FORWARD_TYPES = {
     "tested_by",
     "has_permission",
     "belongs_to",
+    "destructive_migration",
+    "changes_permission",
+    "crosses_context",
 }
 
 BACKWARD_TYPES = {
@@ -66,6 +69,7 @@ BACKWARD_TYPES = {
     "receives",
     "uses_query_key",
     "belongs_to",
+    "destructive_migration",
 }
 
 
@@ -91,6 +95,12 @@ def impact_walk(store: GraphStore, seed_ids: set[str], hops: int = 8) -> tuple[l
             if expand:
                 frontier.add(nid)
 
+    seed_contexts = {
+        (by_id.get(s) or {}).get("context")
+        for s in seed_ids
+        if (by_id.get(s) or {}).get("context")
+    }
+
     for _ in range(hops):
         nxt: set[str] = set()
         working = set(frontier)
@@ -105,6 +115,22 @@ def impact_walk(store: GraphStore, seed_ids: set[str], hops: int = 8) -> tuple[l
                 other = e["dst"]
                 other_node = by_id.get(other) or {}
                 expand = other_node.get("type") not in BRIDGE_TYPES
+                if (
+                    e["type"] == "relates_to"
+                    and other_node.get("context")
+                    and seed_contexts
+                    and other_node.get("context") not in seed_contexts
+                ):
+                    continue
+                if (
+                    e["type"] == "queries_model"
+                    and other_node.get("context")
+                    and seed_contexts
+                    and other_node.get("context") not in seed_contexts
+                ):
+                    include(other, False)
+                    kept_edges[e["id"]] = e
+                    continue
                 include(other, expand)
                 kept_edges[e["id"]] = e
                 if expand and other not in working:

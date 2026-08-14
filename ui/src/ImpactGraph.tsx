@@ -44,7 +44,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
     }));
 
   return (
-    <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} fitView minZoom={0.2}>
+    <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} fitView minZoom={0.2} data-testid="impact-graph">
       <Background />
       <MiniMap pannable zoomable />
       <Controls />

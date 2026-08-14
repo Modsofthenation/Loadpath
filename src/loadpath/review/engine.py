@@ -300,15 +300,16 @@ def _sink_summaries(nodes: list[dict], store: GraphStore) -> list[dict]:
         if n["type"] in interesting:
             extra = n.get("extra") or {}
             name = extra.get("mounted_at") or extra.get("full_path") or n["name"]
-            out.append(
-                {
-                    "id": n["id"],
-                    "type": n["type"],
-                    "name": name,
-                    "file_path": n.get("file_path"),
-                    "context": n.get("context"),
-                }
-            )
+            item = {
+                "id": n["id"],
+                "type": n["type"],
+                "name": name,
+                "file_path": n.get("file_path"),
+                "context": n.get("context"),
+            }
+            if extra.get("broker"):
+                item["broker"] = extra["broker"]
+            out.append(item)
     return out
 
 
@@ -337,12 +338,22 @@ def _arch_note(findings: list, kinds: list[str], impact_nodes: list[dict] | None
 def _headline(confidence, title, sinks, tests_note, arch_note, residuals, reviewers) -> str:
     sink_bits = []
     routes = [s["name"] for s in sinks if s["type"] == NodeType.ROUTE.value]
-    tasks = [s["name"] for s in sinks if s["type"] == NodeType.TASK.value]
+    celery_tasks = [s["name"] for s in sinks if s["type"] == NodeType.TASK.value and s.get("broker") == "celery"]
+    dramatiq_tasks = [s["name"] for s in sinks if s["type"] == NodeType.TASK.value and s.get("broker") == "dramatiq"]
+    other_tasks = [
+        s["name"]
+        for s in sinks
+        if s["type"] == NodeType.TASK.value and s.get("broker") not in {"celery", "dramatiq"}
+    ]
     pages = [s["name"] for s in sinks if s["type"] in {NodeType.PAGE.value, NodeType.FORM_SCHEMA.value}]
     if routes:
         sink_bits.append(", ".join(routes[:4]))
-    if tasks:
-        sink_bits.append("Celery " + ", ".join(tasks[:3]))
+    if celery_tasks:
+        sink_bits.append("Celery " + ", ".join(celery_tasks[:3]))
+    if dramatiq_tasks:
+        sink_bits.append("Dramatiq " + ", ".join(dramatiq_tasks[:3]))
+    if other_tasks:
+        sink_bits.append("async " + ", ".join(other_tasks[:3]))
     if pages:
         sink_bits.append("React " + ", ".join(pages[:4]))
     residual = residuals[0] if residuals else "none"

@@ -29,3 +29,4 @@ django_root: backend
 react_root: frontend/src
 openapi_paths:
   - openapi.yaml
+boot_django: false

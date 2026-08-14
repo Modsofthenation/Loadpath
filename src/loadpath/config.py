@@ -52,6 +52,7 @@ class LoadpathConfig:
         ]
     )
     extra: dict[str, Any] = field(default_factory=dict)
+    boot_django: bool = False
 
     def context_for_django_app(self, app: str) -> str | None:
         for name, ctx in self.contexts.items():
@@ -136,4 +137,5 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> LoadpathCon
             ]
         ),
         extra=raw,
+        boot_django=bool(raw.get("boot_django", False)),
     )

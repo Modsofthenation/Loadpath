@@ -121,6 +121,28 @@ class GraphStore:
         self.conn.commit()
 
     def upsert_node(self, node: Node) -> None:
+        existing = self.get_node(node.id)
+        extra = dict(node.extra or {})
+        file_path = node.file_path
+        start_line = node.start_line
+        context = node.context
+        if existing:
+            merged = dict(existing.get("extra") or {})
+            merged.update(extra)
+            extra = merged
+            new_is_ref = bool(node.extra.get("referenced"))
+            old_is_ref = bool((existing.get("extra") or {}).get("referenced"))
+            # A definition (tasks.py / @actor) wins over a call-site placeholder.
+            if new_is_ref and not old_is_ref:
+                extra["referenced"] = False
+                for k, v in (existing.get("extra") or {}).items():
+                    if k not in node.extra or node.extra.get(k) is None:
+                        extra[k] = v
+                file_path = existing.get("file_path") or file_path
+                start_line = existing.get("start_line") if existing.get("start_line") is not None else start_line
+                context = existing.get("context") or context
+            elif not new_is_ref and old_is_ref:
+                extra["referenced"] = False
         self.conn.execute(
             """
             INSERT INTO nodes(id, type, name, qualified_name, file_path, start_line, end_line, context, extra)
@@ -140,11 +162,11 @@ class GraphStore:
                 node.type.value,
                 node.name,
                 node.qualified_name,
-                node.file_path,
-                node.start_line,
+                file_path,
+                start_line,
                 node.end_line,
-                node.context,
-                json.dumps(node.extra),
+                context,
+                json.dumps(extra),
             ),
         )
 

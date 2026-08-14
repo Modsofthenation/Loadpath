@@ -27,6 +27,7 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "respx>=0.21.0",
+    "playwright>=1.49.0",
 ]
 
 [project.scripts]
@@ -42,9 +43,11 @@ loadpath = ["report/*.html", "static/**/*"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q --tb=short"
+markers = [
+    "playwright: UI tests that need Chromium",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
-    "ignore:Using `httpx` with `starlette.testclient`:DeprecationWarning",
 ]
 
 [tool.ruff]

@@ -32,7 +32,23 @@ DJANGO_VIEW_BASES = {
 SERIALIZER_BASES = {"Serializer", "ModelSerializer", "HyperlinkedModelSerializer", "ListSerializer"}
 MODEL_BASES = {"Model"}
 ADMIN_BASES = {"ModelAdmin", "StackedInline", "TabularInline"}
-TASK_DECORATORS = {"shared_task", "task", "periodic_task"}
+CELERY_DECORATORS = {"shared_task", "task", "periodic_task"}
+DRAMATIQ_DECORATORS = {"actor"}
+TASK_DECORATORS = CELERY_DECORATORS | DRAMATIQ_DECORATORS
+CELERY_ENQUEUE = {"delay", "apply_async"}
+CELERY_SIGNATURE = {"s", "si"}
+CELERY_CANVAS = {"group", "chain", "chord", "signature"}
+DRAMATIQ_ENQUEUE = {"send", "send_with_options"}
+CELERY_TASK_BASES = {"Task"}
+DRAMATIQ_TASK_BASES = {"GenericActor"}
+NINJA_HTTP = {"get", "post", "put", "patch", "delete", "api_operation"}
+REL_FIELD_TYPES = {
+    "ForeignKey",
+    "OneToOneField",
+    "ManyToManyField",
+    "GenericForeignKey",
+    "GenericRelation",
+}
 SIGNAL_NAMES = {
     "pre_save",
     "post_save",
@@ -198,6 +214,16 @@ class DjangoExtractor(ast.NodeVisitor):
             self._serializer(node)
         elif _has_base(node, DJANGO_VIEW_BASES) or node.name.endswith(("View", "ViewSet")):
             self._view(node)
+        elif any(b.split(".")[-1] in {"BaseCommand", "AppCommand", "LabelCommand"} for b in _bases(node)):
+            self.add_node(
+                NodeType.MANAGEMENT_COMMAND,
+                node.name if node.name != "Command" else Path(self.rel_path).stem,
+                f"{self.app}.{Path(self.rel_path).stem}",
+                node.lineno,
+                {"app": self.app},
+            )
+        elif self._task_class(node):
+            pass
         elif _has_base(node, ADMIN_BASES) or node.name.endswith("Admin"):
             self._admin(node)
         elif any(x.endswith("Config") for x in _bases(node)) or node.name.endswith("Config"):
@@ -213,6 +239,8 @@ class DjangoExtractor(ast.NodeVisitor):
         self._maybe_command(node)
         self._maybe_test(node)
         self._maybe_service_fn(node)
+        self._maybe_fbv(node)
+        self._maybe_ninja(node)
         self.generic_visit(node)
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
@@ -228,8 +256,27 @@ class DjangoExtractor(ast.NodeVisitor):
             pass
         elif short == "get_model":
             self._get_model(node)
-        elif short in {"delay", "apply_async"}:
-            self._enqueue(node, fname)
+        elif short in CELERY_ENQUEUE:
+            prefix = fname.rsplit(".", 1)[0] if "." in fname else ""
+            if prefix and prefix.split(".")[-1] not in CELERY_CANVAS:
+                self._enqueue(node, fname, broker="celery")
+        elif short in CELERY_SIGNATURE and self._looks_like_celery(fname):
+            self._enqueue(node, fname, broker="celery")
+        elif short in CELERY_CANVAS and self._looks_like_celery(fname):
+            self.graph.residuals.append(f"Celery canvas {fname}() at {self.rel_path}:{node.lineno}")
+        elif short == "send_task":
+            self._send_task(node)
+        elif short in DRAMATIQ_ENQUEUE and self._looks_like_dramatiq_send(fname):
+            self._enqueue(node, fname, broker="dramatiq")
+        elif short == "on_commit":
+            self.graph.residuals.append(
+                f"transaction.on_commit() at {self.rel_path}:{node.lineno} — async work may be hidden in a lambda"
+            )
+            self._enqueue_from_on_commit(node)
+        elif short in {"raw", "execute"} or (short == "extra" and _kw(node, "where")):
+            self.graph.residuals.append(f"Raw SQL ({fname}) in {self.rel_path}:{node.lineno}")
+        elif short in {"select_related", "prefetch_related"}:
+            pass
         elif short == "connect" and any(s in fname for s in SIGNAL_NAMES | {"signal"}):
             self._signal_connect(node, fname)
         elif short == "reverse":
@@ -243,6 +290,8 @@ class DjangoExtractor(ast.NodeVisitor):
                 for elt in node.value.elts:
                     if isinstance(elt, ast.Call):
                         self.visit_Call(elt)
+            if isinstance(target, ast.Name) and target.id in {"CELERY_BEAT_SCHEDULE", "beat_schedule"}:
+                self._beat_schedule(node.value)
         self.generic_visit(node)
 
     def _model(self, node: ast.ClassDef) -> None:
@@ -262,8 +311,14 @@ class DjangoExtractor(ast.NodeVisitor):
                 if isinstance(stmt.value, ast.Call):
                     call_name = _name(stmt.value.func) or ""
                     extra["field_type"] = call_name.split(".")[-1]
+                    extra["relation"] = extra["field_type"] in REL_FIELD_TYPES
                     to_arg = stmt.value.args[0] if stmt.value.args else _kw(stmt.value, "to")
                     rel_to = _const_str(to_arg) or _name(to_arg)
+                    if isinstance(to_arg, ast.Constant) and isinstance(to_arg.value, str):
+                        extra["string_ref"] = True
+                        self.graph.residuals.append(
+                            f'string model ref {to_arg.value} on {qname}.{fname} ({self.rel_path}:{stmt.lineno})'
+                        )
                     od = _kw(stmt.value, "on_delete")
                     on_delete = _name(od)
                     extra["on_delete"] = on_delete.split(".")[-1] if on_delete else None
@@ -273,14 +328,6 @@ class DjangoExtractor(ast.NodeVisitor):
                 if rel_to:
                     target = rel_to if "." in rel_to else f"{self.app}.{rel_to.split('.')[-1]}"
                     rel_id = node_id(NodeType.MODEL, target)
-                    rel_node = Node(
-                        id=rel_id,
-                        type=NodeType.MODEL,
-                        name=target.split(".")[-1],
-                        qualified_name=target,
-                        extra={"placeholder": True},
-                    )
-                    self.graph.nodes.append(rel_node)
                     self.add_edge(
                         field_node.id,
                         rel_id,
@@ -369,6 +416,18 @@ class DjangoExtractor(ast.NodeVisitor):
                     m = re.search(r"id='([A-Z][A-Za-z0-9_]+)'", dumped)
                     if m:
                         queryset_model = m.group(1)
+                elif key == "filterset_class":
+                    extra["filterset"] = _name(stmt.value)
+                elif key == "authentication_classes":
+                    extra["authentication"] = _list_names(stmt.value)
+                elif key == "pagination_class":
+                    extra["pagination"] = _name(stmt.value)
+            if isinstance(stmt, ast.FunctionDef) and stmt.name == "get_queryset":
+                extra["get_queryset"] = True
+                dumped = ast.dump(stmt)
+                m = re.search(r"id='([A-Z][A-Za-z0-9_]+)'", dumped)
+                if m and not queryset_model:
+                    queryset_model = m.group(1)
             if isinstance(stmt, ast.FunctionDef) and stmt.name == "get_serializer_class":
                 dynamic_serializer = True
                 extra["get_serializer_class"] = True
@@ -454,19 +513,222 @@ class DjangoExtractor(ast.NodeVisitor):
 
     def _maybe_task(self, node: ast.FunctionDef) -> None:
         decs = _decorator_names(node)
-        if not any(d.split(".")[-1] in TASK_DECORATORS for d in decs):
-            if "tasks.py" not in self.rel_path:
-                return
-            if not node.name.endswith("task") and "task" not in node.name:
-                return
+        broker = None
+        if any("dramatiq" in d or d.split(".")[-1] in DRAMATIQ_DECORATORS for d in decs):
+            broker = "dramatiq"
+        elif any("celery" in d or d.split(".")[-1] in CELERY_DECORATORS for d in decs):
+            broker = "celery"
+        elif "tasks.py" in self.rel_path or "actors.py" in self.rel_path:
+            if node.name.endswith("task") or "task" in node.name or "actors.py" in self.rel_path:
+                broker = "dramatiq" if "actors.py" in self.rel_path else "celery"
+        if broker is None:
+            return
         qname = f"{self.app}.{node.name}"
-        args = [a.arg for a in node.args.args]
-        extra = {"app": self.app, "args": args}
-        extra["looks_idempotent_on_pk"] = any(
-            a in {"pk", "id", "invoice_id", "object_id", "model_id"} or a.endswith("_id") or a.endswith("_pk")
-            for a in args
-        )
+        args = [a.arg for a in node.args.args if a.arg not in {"self", "cls"}]
+        extra = {
+            "app": self.app,
+            "args": args,
+            "broker": broker,
+            "decorators": decs,
+        }
+        extra["looks_idempotent_on_pk"] = _looks_idempotent(args)
         self.add_node(NodeType.TASK, node.name, qname, node.lineno, extra)
+
+    def _task_class(self, node: ast.ClassDef) -> bool:
+        bases = _bases(node)
+        shorts = {b.split(".")[-1] for b in bases}
+        blob = " ".join(self.imports.values()) + " " + " ".join(self.from_imports.values())
+        broker = None
+        if shorts & DRAMATIQ_TASK_BASES or any("dramatiq" in b.lower() for b in bases):
+            broker = "dramatiq"
+        elif shorts & CELERY_TASK_BASES and (
+            "celery" in blob.lower() or any("celery" in b.lower() for b in bases)
+        ):
+            broker = "celery"
+        if broker is None:
+            return False
+        run = next(
+            (
+                stmt
+                for stmt in node.body
+                if isinstance(stmt, ast.FunctionDef) and stmt.name in {"run", "perform"}
+            ),
+            None,
+        )
+        args = [a.arg for a in run.args.args if a.arg not in {"self", "cls"}] if run else []
+        self.add_node(
+            NodeType.TASK,
+            node.name,
+            f"{self.app}.{node.name}",
+            node.lineno,
+            {
+                "app": self.app,
+                "args": args,
+                "broker": broker,
+                "task_class": True,
+                "looks_idempotent_on_pk": _looks_idempotent(args),
+            },
+        )
+        return True
+
+    def _looks_like_celery(self, fname: str) -> bool:
+        blob = " ".join(self.imports.values()) + " " + " ".join(self.from_imports.values()) + " " + self.source[:800]
+        if "celery" in blob.lower() or "tasks.py" in self.rel_path:
+            return True
+        root = fname.split(".")[0]
+        target = self.from_imports.get(root, self.imports.get(root, ""))
+        return any(part in target for part in ("tasks", "celery", "actors"))
+
+    def _looks_like_dramatiq_send(self, fname: str) -> bool:
+        blob = " ".join(self.imports.values()) + " " + " ".join(self.from_imports.values()) + " " + self.source[:400]
+        if "dramatiq" in blob:
+            return True
+        root = fname.split(".")[0]
+        target = self.from_imports.get(root, self.imports.get(root, ""))
+        return any(part in target for part in ("actors", "tasks", "dramatiq"))
+
+    def _enqueue(self, node: ast.Call, fname: str, broker: str = "celery") -> None:
+        task_name = fname.rsplit(".", 1)[0]
+        short = task_name.split(".")[-1]
+        qname = f"{self.app}.{short}"
+        owner = self.class_stack[-1] if self.class_stack else Path(self.rel_path).stem
+        owner_type = NodeType.VIEW
+        if "management/commands" in self.rel_path:
+            owner_type = NodeType.MANAGEMENT_COMMAND
+            owner = Path(self.rel_path).stem
+        elif owner.endswith("Serializer"):
+            owner_type = NodeType.SERIALIZER
+        elif "Service" in owner or owner.endswith("UseCase"):
+            owner_type = NodeType.SERVICE
+        self.add_edge(
+            node_id(owner_type, f"{self.app}.{owner}"),
+            node_id(NodeType.TASK, qname),
+            EdgeType.ENQUEUES,
+            confidence=0.9,
+            extra={"call": fname, "line": node.lineno, "broker": broker},
+        )
+        self.add_node(
+            NodeType.TASK,
+            short,
+            qname,
+            node.lineno,
+            {"referenced": True, "app": self.app, "broker": broker},
+        )
+
+    def _enqueue_from_on_commit(self, node: ast.Call) -> None:
+        for arg in list(node.args) + [kw.value for kw in node.keywords]:
+            for child in ast.walk(arg):
+                if isinstance(child, ast.Call):
+                    fname = _name(child.func) or ""
+                    short = fname.split(".")[-1]
+                    if short in CELERY_ENQUEUE:
+                        self._enqueue(child, fname, broker="celery")
+                    elif short in DRAMATIQ_ENQUEUE:
+                        self._enqueue(child, fname, broker="dramatiq")
+
+    def _send_task(self, node: ast.Call) -> None:
+        name = _const_str(node.args[0]) if node.args else None
+        self.graph.residuals.append(
+            f'celery.send_task("{name or "?"}") at {self.rel_path}:{node.lineno}'
+        )
+        if not name:
+            return
+        short = name.split(".")[-1]
+        app = name.split(".")[0] if "." in name else self.app
+        qname = f"{app}.{short}"
+        owner = self.class_stack[-1] if self.class_stack else Path(self.rel_path).stem
+        owner_type = NodeType.VIEW
+        if "management/commands" in self.rel_path:
+            owner_type = NodeType.MANAGEMENT_COMMAND
+            owner = Path(self.rel_path).stem
+        self.add_edge(
+            node_id(owner_type, f"{self.app}.{owner}"),
+            node_id(NodeType.TASK, qname),
+            EdgeType.ENQUEUES,
+            confidence=0.7,
+            extra={"call": "send_task", "line": node.lineno, "broker": "celery", "task": name},
+        )
+        self.add_node(
+            NodeType.TASK,
+            short,
+            qname,
+            node.lineno,
+            {"referenced": True, "app": app, "broker": "celery", "via": "send_task"},
+        )
+
+    def _beat_schedule(self, value: ast.AST) -> None:
+        if not isinstance(value, ast.Dict):
+            return
+        for key, val in zip(value.keys, value.values):
+            entry_name = _const_str(key) or _name(key) or "beat"
+            task_name = None
+            if isinstance(val, ast.Dict):
+                for k, v in zip(val.keys, val.values):
+                    label = _const_str(k) or _name(k)
+                    if label == "task":
+                        task_name = _const_str(v) or _name(v)
+            if not task_name:
+                continue
+            parts = task_name.split(".")
+            short = parts[-1]
+            app = parts[0] if len(parts) > 1 else self.app
+            qname = f"{app}.{short}"
+            self.add_node(
+                NodeType.TASK,
+                short,
+                qname,
+                getattr(value, "lineno", 1),
+                {
+                    "referenced": True,
+                    "app": app,
+                    "broker": "celery",
+                    "beat": True,
+                    "schedule_name": entry_name,
+                },
+            )
+            self.graph.residuals.append(
+                f"Celery beat '{entry_name}' → {task_name} ({self.rel_path})"
+            )
+
+    def _maybe_fbv(self, node: ast.FunctionDef) -> None:
+        decs = _decorator_names(node)
+        if not any(d.split(".")[-1] in {"api_view", "csrf_exempt", "login_required", "permission_required", "require_GET", "require_POST"} for d in decs):
+            return
+        if node.name in {"get", "post", "put", "patch", "delete", "handle"}:
+            return
+        qname = f"{self.app}.{node.name}"
+        extra = {"app": self.app, "fbv": True, "decorators": decs}
+        view = self.add_node(NodeType.VIEW, node.name, qname, node.lineno, extra)
+        self._note_cross_app_model_imports(view.id)
+
+    def _maybe_ninja(self, node: ast.FunctionDef) -> None:
+        for dec in node.decorator_list:
+            if not isinstance(dec, ast.Call):
+                continue
+            fname = _name(dec.func) or ""
+            short = fname.split(".")[-1]
+            if short not in NINJA_HTTP:
+                continue
+            if not any(tok in fname.lower() for tok in ("api", "router", "ninja")):
+                continue
+            route = _const_str(dec.args[0]) if dec.args else None
+            qname = f"{self.app}.{node.name}"
+            view = self.add_node(
+                NodeType.VIEW,
+                node.name,
+                qname,
+                node.lineno,
+                {"app": self.app, "ninja": True, "method": short.upper()},
+            )
+            if route:
+                rn = self.add_node(
+                    NodeType.ROUTE,
+                    route,
+                    f"{self.app}:{route}",
+                    node.lineno,
+                    {"app": self.app, "route": route, "ninja": True, "method": short.upper()},
+                )
+                self.add_edge(rn.id, view.id, EdgeType.PUBLISHES_ROUTE)
 
     def _maybe_receiver(self, node: ast.FunctionDef) -> None:
         for dec in node.decorator_list:
@@ -600,25 +862,6 @@ class DjangoExtractor(ast.NodeVisitor):
             )
             self.add_node(NodeType.MODEL, label.split(".")[-1], label, node.lineno, {"string_ref": True})
 
-    def _enqueue(self, node: ast.Call, fname: str) -> None:
-        task_name = fname.rsplit(".", 1)[0]
-        short = task_name.split(".")[-1]
-        qname = f"{self.app}.{short}"
-        owner = self.class_stack[-1] if self.class_stack else Path(self.rel_path).stem
-        owner_type = NodeType.VIEW
-        if owner.endswith("Serializer"):
-            owner_type = NodeType.SERIALIZER
-        elif "Service" in owner or owner.endswith("UseCase"):
-            owner_type = NodeType.SERVICE
-        self.add_edge(
-            node_id(owner_type, f"{self.app}.{owner}"),
-            node_id(NodeType.TASK, qname),
-            EdgeType.ENQUEUES,
-            confidence=0.9,
-            extra={"call": fname, "line": node.lineno},
-        )
-        self.add_node(NodeType.TASK, short, qname, node.lineno, {"referenced": True, "app": self.app})
-
     def _signal_connect(self, node: ast.Call, fname: str) -> None:
         self.graph.residuals.append(f"signal.connect() at {self.rel_path}:{node.lineno} ({fname})")
 
@@ -632,6 +875,13 @@ class DjangoExtractor(ast.NodeVisitor):
             return ast.get_source_segment(self.source, node) or ""
         except Exception:
             return ""
+
+
+def _looks_idempotent(args: list[str]) -> bool:
+    return any(
+        a in {"pk", "id", "invoice_id", "object_id", "model_id"} or a.endswith("_id") or a.endswith("_pk")
+        for a in args
+    )
 
 
 def extract_migrations(rel_path: str, source: str, config: LoadpathConfig) -> ExtractedGraph:
