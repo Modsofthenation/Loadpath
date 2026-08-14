@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -137,7 +138,95 @@ def _why(nodes: list[dict]) -> str:
     return ", ".join(sorted(set(types))[:4])
 
 
-def collect_residuals(store: GraphStore, impact_nodes: list[dict]) -> list[str]:
+def _patch_names(diff: DiffSet | None) -> set[str]:
+    if diff is None:
+        return set()
+    names: set[str] = set()
+    for fd in diff.files:
+        for raw in (fd.patch or "").splitlines():
+            if raw.startswith("+") or raw.startswith("-"):
+                if raw.startswith("+++") or raw.startswith("---"):
+                    continue
+                names.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", raw[1:]))
+    return names
+
+
+def _test_field_residuals(impact_nodes: list[dict], diff: DiffSet | None) -> list[str]:
+    names = _patch_names(diff)
+    if not names:
+        return []
+    mentions: set[str] = set()
+    for n in impact_nodes:
+        if n["type"] not in {NodeType.TEST.value, NodeType.REACT_TEST.value}:
+            continue
+        mentions.update((n.get("extra") or {}).get("mentions") or [])
+    out: list[str] = []
+    seen: set[str] = set()
+    for n in impact_nodes:
+        if n["type"] not in {NodeType.FIELD.value, NodeType.SERIALIZER_FIELD.value}:
+            continue
+        fname = n.get("name") or ""
+        if fname in {"id", "pk"} or fname not in names:
+            continue
+        if fname in mentions:
+            continue
+        key = f"{n['type']}:{fname}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            f"Test exists on the path but does not assert `{fname}` "
+            f"({n.get('file_path') or n.get('qualified_name')})"
+        )
+    return out
+
+
+def _react_path_residuals(impact_nodes: list[dict], diff: DiffSet | None) -> list[str]:
+    changed = set(diff.paths) if diff else set()
+    out: list[str] = []
+    query_keys = [n for n in impact_nodes if n["type"] == NodeType.QUERY_KEY.value]
+    invalidations = [
+        n for n in query_keys if (n.get("extra") or {}).get("invalidation")
+    ]
+    mutations = [
+        n
+        for n in impact_nodes
+        if n["type"] == NodeType.HOOK.value
+        and ((n.get("extra") or {}).get("mutation") or "Mutation" in (n.get("name") or ""))
+    ]
+    if query_keys and mutations and not invalidations:
+        out.append(
+            "Mutation hook on the path does not invalidateQueries the queryKey this page reads"
+        )
+    for n in impact_nodes:
+        extra = n.get("extra") or {}
+        if n["type"] == NodeType.PAGE.value and n.get("file_path") in changed:
+            if extra.get("has_error_boundary") is False:
+                out.append(f"{n['name']} has no ErrorBoundary/Suspense around the page")
+        if n["type"] in {NodeType.COMPONENT.value, NodeType.PAGE.value} and extra.get("form_fields"):
+            pass
+    field_names = {
+        n["name"]
+        for n in impact_nodes
+        if n["type"] in {NodeType.SERIALIZER_FIELD.value, NodeType.FIELD.value}
+    } & _patch_names(diff)
+    form_fields: set[str] = set()
+    for n in impact_nodes:
+        extra = n.get("extra") or {}
+        form_fields.update(extra.get("form_fields") or [])
+        if n["type"] == NodeType.FORM_SCHEMA.value:
+            form_fields.update(extra.get("fields") or [])
+    missing_form = sorted(field_names - form_fields - {"id", "pk"})
+    if missing_form and form_fields:
+        out.append(
+            "Changed fields "
+            + ", ".join(f"`{f}`" for f in missing_form[:6])
+            + " are not in the form defaultValues/Zod on this path"
+        )
+    return out
+
+
+def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet | None = None) -> list[str]:
     residuals = []
     tested = {
         e["src"]
@@ -169,6 +258,8 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict]) -> list[str]:
             residuals.append(
                 f"N+1 {accessed} in {n.get('file_path')}:{hit.get('line')} — {hit.get('suggested_fix')}"
             )
+    residuals.extend(_test_field_residuals(impact_nodes, diff))
+    residuals.extend(_react_path_residuals(impact_nodes, diff))
     seen = set()
     out = []
     for r in residuals:
@@ -190,6 +281,19 @@ def suggested_reviewers(config: LoadpathConfig, impact_nodes: list[dict]) -> lis
             seen.add(o)
             out.append(o)
     return out
+
+
+def _knowledge_owners(evolution: dict) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for h in evolution.get("hotspots") or []:
+        if (h.get("commits") or 0) < 3:
+            continue
+        for author in h.get("authors") or []:
+            if author and author not in seen:
+                seen.add(author)
+                out.append(author)
+    return out[:8]
 
 
 def is_low_risk(kinds: list[str], confidence: dict, findings: list) -> bool:
@@ -251,7 +355,7 @@ def run_review(
         or (f.file_path and f.file_path in impact_files)
         or not impact_ids
     ]
-    residuals = collect_residuals(store, impact_nodes)
+    residuals = collect_residuals(store, impact_nodes, diff)
     evolution = analyze_evolution(repo_root, diff, impact_nodes, config)
     confidence = score_confidence(store, impact_nodes, impact_edges, scoped, residuals)
     if evolution.get("notes") and confidence["level"] == "high":
@@ -268,6 +372,7 @@ def run_review(
     kinds = classify_change(impact_nodes, scoped, seeds=store.nodes_in_files(diff.paths))
     read, skip = read_order_files(diff, impact_nodes)
     reviewers = suggested_reviewers(config, impact_nodes)
+    knowledge = _knowledge_owners(evolution)
     low_risk = is_low_risk(kinds, confidence, scoped)
     labels = ["loadpath:" + confidence["level"]]
     if low_risk:
@@ -302,6 +407,7 @@ def run_review(
         "findings": [f.to_dict() for f in scoped],
         "residuals": residuals,
         "suggested_reviewers": reviewers,
+        "knowledge_owners": knowledge,
         "sinks": sinks,
         "tests_note": tests_note,
         "architecture_note": arch_note,

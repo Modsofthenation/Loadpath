@@ -16,6 +16,7 @@ RULE_DOCS = {
     "celery_tasks_must_be_idempotent_on_model_pk": "Celery and Dramatiq tasks must take a model pk/id, not a full object payload.",
     "async_tasks_must_be_idempotent_on_model_pk": "Celery and Dramatiq tasks must take a model pk/id, not a full object payload.",
     "queryset_nplusone": "Querysets iterated in a loop must select_related/prefetch_related related objects they touch.",
+    "queryset_missing_index": "filter/order_by on a field should match db_index/unique on that field.",
     "cascade_crosses_context": "on_delete=CASCADE must not blast into another bounded context.",
     "migration_blast_radius": "Destructive migrations must not drop fields/models still referenced on the load path.",
 }
@@ -68,6 +69,8 @@ def evaluate(store: GraphStore, config: LoadpathConfig, changed_ids: set[str] | 
         findings.extend(_task_idempotency(store, changed_ids))
     if "queryset_nplusone" in enabled:
         findings.extend(_nplusone(store))
+    if "queryset_missing_index" in enabled:
+        findings.extend(_missing_index(store))
     if "cascade_crosses_context" in enabled:
         findings.extend(_cascade_crosses_context(store, config))
     if "migration_blast_radius" in enabled:
@@ -313,6 +316,51 @@ def _nplusone(store: GraphStore) -> list[Finding]:
                     extra=hit,
                 )
             )
+    return out
+
+
+def _missing_index(store: GraphStore) -> list[Finding]:
+    out: list[Finding] = []
+    fields_by_name: dict[str, list[dict]] = {}
+    for field in store.nodes([NodeType.FIELD]):
+        fields_by_name.setdefault(field["name"], []).append(field)
+    indexed_types = {"ForeignKey", "OneToOneField", "ManyToManyField"}
+    for node in store.nodes():
+        lookups = (node.get("extra") or {}).get("lookups") or []
+        owner_app = (node.get("extra") or {}).get("app")
+        for hit in lookups:
+            for fname in hit.get("fields") or []:
+                matches = fields_by_name.get(fname) or []
+                if owner_app:
+                    scoped = [f for f in matches if (f.get("extra") or {}).get("app") == owner_app]
+                    if scoped:
+                        matches = scoped
+                if not matches:
+                    continue
+                uncovered = [
+                    f
+                    for f in matches
+                    if not (f.get("extra") or {}).get("db_index")
+                    and not (f.get("extra") or {}).get("unique")
+                    and (f.get("extra") or {}).get("field_type") not in indexed_types
+                ]
+                if not uncovered:
+                    continue
+                sample = uncovered[0]
+                out.append(
+                    Finding(
+                        rule="queryset_missing_index",
+                        severity=RuleSeverity.WARNING,
+                        message=(
+                            f"{node['name']} {hit.get('kind')}s `{fname}` "
+                            f"({node.get('file_path')}:{hit.get('line')}) but "
+                            f"{sample.get('qualified_name')} has no db_index"
+                        ),
+                        node_id=node["id"],
+                        file_path=node.get("file_path"),
+                        extra={"field": fname, "kind": hit.get("kind"), "line": hit.get("line")},
+                    )
+                )
     return out
 
 

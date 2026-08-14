@@ -340,3 +340,72 @@ def overdue_account_emails():
     g = extract_django_file("backend/billing/services.py", src, _cfg())
     svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
     assert svc.extra.get("nplusone")
+
+
+def test_nplusone_one_hop_helper_return():
+    src = """
+from billing.models import Invoice
+
+def recent():
+    return Invoice.objects.filter(status="open")
+
+def overdue_account_emails():
+    names = []
+    for invoice in recent():
+        names.append(invoice.account.email)
+    return names
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    assert svc.extra.get("nplusone")
+    assert "account" in svc.extra["nplusone"][0]["accessed"]
+
+
+def test_nplusone_prefetch_object_covers_related():
+    src = """
+from django.db.models import Prefetch
+from billing.models import Invoice
+
+def overdue_account_emails():
+    names = []
+    for invoice in Invoice.objects.prefetch_related(Prefetch("lines")):
+        names.append(list(invoice.lines.all()))
+    return names
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    assert not svc.extra.get("nplusone")
+
+
+def test_lookups_recorded_on_service():
+    src = """
+from billing.models import Invoice
+
+def overdue_account_emails():
+    return Invoice.objects.filter(status="open").order_by("created_at")
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    kinds = {h["kind"] for h in svc.extra.get("lookups") or []}
+    assert "filter" in kinds
+    assert "order_by" in kinds
+
+
+def test_pytest_mentions_serializer_field():
+    source = (FIXTURE / "backend/billing/tests.py").read_text()
+    g = extract_django_file("backend/billing/tests.py", source, _cfg())
+    test = next(n for n in g.nodes if n.name == "test_serializer_includes_total")
+    assert "total" in (test.extra.get("mentions") or [])
+
+
+def test_throttles_are_nodes():
+    src = """
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.throttling import UserRateThrottle
+
+class InvoiceViewSet(ModelViewSet):
+    throttle_classes = [UserRateThrottle]
+    serializer_class = object
+"""
+    g = extract_django_file("backend/billing/views.py", src, _cfg())
+    assert any(n.type is NodeType.THROTTLE and n.name == "UserRateThrottle" for n in g.nodes)

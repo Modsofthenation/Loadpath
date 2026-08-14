@@ -430,6 +430,9 @@ export function App() {
                   {aiNote ? <pre className="headline">{aiNote}</pre> : null}
                   <div className="kicker">Reviewers</div>
                   <div className="muted">{review.suggested_reviewers.join(", ") || "—"}</div>
+                  {review.knowledge_owners?.length ? (
+                    <div className="muted">Knowledge: {review.knowledge_owners.join(", ")}</div>
+                  ) : null}
                 </>
               ) : (
                 <div className="empty" data-testid="review-empty">

@@ -119,6 +119,7 @@ SINK_TYPES = {
     NodeType.TASK,
     NodeType.MIGRATION_OP,
     NodeType.PERMISSION,
+    NodeType.THROTTLE,
     NodeType.ADMIN,
     NodeType.MANAGEMENT_COMMAND,
     NodeType.OPENAPI_PATH,

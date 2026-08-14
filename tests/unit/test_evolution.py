@@ -83,3 +83,8 @@ def test_complexity_does_not_count_unchanged_sibling_methods(tmp_path: Path):
     scores = _complexity_for_diff(repo, diff)
     # changed() has one if → ~2, not the sibling's three nested ifs
     assert scores.get("mod.py", 0) < 6
+    from loadpath.review.evolution import _changed_functions
+
+    fns = {f["name"]: f["complexity"] for f in _changed_functions(repo, diff)}
+    assert "changed" in fns
+    assert "unchanged" not in fns

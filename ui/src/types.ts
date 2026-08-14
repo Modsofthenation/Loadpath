@@ -48,6 +48,7 @@ export type Review = {
   findings: Finding[];
   residuals: string[];
   suggested_reviewers: string[];
+  knowledge_owners?: string[];
   sinks: { id: string; type: string; name: string }[];
   tests_note: string;
   architecture_note: string;
