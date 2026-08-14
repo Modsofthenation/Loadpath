@@ -296,19 +296,40 @@ def _task_idempotency(store: GraphStore, changed_ids: set[str] | None) -> list[F
     return out
 
 
+REL_FIELD_TYPES = {
+    "ForeignKey",
+    "OneToOneField",
+    "ManyToManyField",
+    "GenericForeignKey",
+    "GenericRelation",
+}
+
+
 def _nplusone(store: GraphStore) -> list[Finding]:
     out: list[Finding] = []
+    fields = list(store.nodes([NodeType.FIELD]))
+    fields_by_name: dict[str, list[dict]] = {}
+    for field in fields:
+        fields_by_name.setdefault(field["name"], []).append(field)
     for node in store.nodes():
         hits = (node.get("extra") or {}).get("nplusone") or []
+        owner_app = (node.get("extra") or {}).get("app")
         for hit in hits:
-            accessed = ", ".join(hit.get("accessed") or []) or "related fields"
+            accessed = list(hit.get("accessed") or [])
+            related, conf = _related_accesses(accessed, fields_by_name, owner_app)
+            if not related:
+                continue
+            hit = dict(hit)
+            hit["accessed"] = related
+            hit["confidence"] = conf
+            accessed_s = ", ".join(related)
             fix = hit.get("suggested_fix") or ".select_related()"
             out.append(
                 Finding(
                     rule="queryset_nplusone",
                     severity=RuleSeverity.WARNING,
                     message=(
-                        f"{node['name']} loops `{hit.get('loop_var')}` over a queryset and touches {accessed} "
+                        f"{node['name']} loops `{hit.get('loop_var')}` over a queryset and touches {accessed_s} "
                         f"without {fix} ({node.get('file_path')}:{hit.get('line')})"
                     ),
                     node_id=node["id"],
@@ -317,6 +338,33 @@ def _nplusone(store: GraphStore) -> list[Finding]:
                 )
             )
     return out
+
+
+def _related_accesses(
+    accessed: list[str], fields_by_name: dict[str, list[dict]], owner_app: str | None
+) -> tuple[list[str], str]:
+    related: list[str] = []
+    unknown = False
+    for name in accessed:
+        matches = fields_by_name.get(name) or []
+        if owner_app:
+            scoped = [f for f in matches if (f.get("extra") or {}).get("app") == owner_app]
+            if scoped:
+                matches = scoped
+        if not matches:
+            related.append(name)
+            unknown = True
+            continue
+        if any(_is_relation(f) for f in matches):
+            related.append(name)
+    return related, ("medium" if unknown else "high")
+
+
+def _is_relation(field: dict) -> bool:
+    extra = field.get("extra") or {}
+    if extra.get("relation"):
+        return True
+    return extra.get("field_type") in REL_FIELD_TYPES
 
 
 def _missing_index(store: GraphStore) -> list[Finding]:

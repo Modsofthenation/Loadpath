@@ -89,6 +89,19 @@ def test_django_boot_overlay_reports_skip_or_models(tmp_path):
         assert any(n.name == "Invoice" for n in graph.nodes)
 
 
+def test_boot_payload_ignores_stdout_noise():
+    from loadpath.extractors.django_boot import BOOT_JSON_MARKER, _parse_boot_payload
+
+    raw = (
+        "Watching for file changes with StatReloader\n"
+        + BOOT_JSON_MARKER
+        + '{"nodes":[],"edges":[],"residuals":["django.setup() skipped: boom"]}\n'
+    )
+    data = _parse_boot_payload(raw)
+    assert data is not None
+    assert data["residuals"][0].startswith("django.setup() skipped:")
+
+
 def test_index_counts_grow_with_new_django_files(tmp_path):
     store = index_repo(FIXTURE_ROOT, db_path=tmp_path / "g.sqlite3", incremental=False)
     types = {n["type"] for n in store.nodes()}

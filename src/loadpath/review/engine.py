@@ -260,6 +260,19 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet
             )
     residuals.extend(_test_field_residuals(impact_nodes, diff))
     residuals.extend(_react_path_residuals(impact_nodes, diff))
+    ids = {n["id"] for n in impact_nodes}
+    for e in store.edges():
+        if e["src"] not in ids or e["dst"] not in ids:
+            continue
+        extra = e.get("extra") or {}
+        if extra.get("overlap"):
+            residuals.append(
+                f"Inferred serializer/Zod overlap fields={extra['overlap']}"
+            )
+        if extra.get("superseded_by_generated"):
+            residuals.append(
+                f"String URL stitch {extra.get('react')} superseded by a generated OpenAPI client"
+            )
     seen = set()
     out = []
     for r in residuals:
@@ -267,6 +280,11 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet
             seen.add(r)
             out.append(r)
     return out
+
+
+def _serious_evolution_notes(notes: list[str]) -> list[str]:
+    tokens = ("hotspot", "silo", "crosses a bounded", "cross-context", "temporal coupling")
+    return [n for n in notes if any(tok in n.lower() for tok in tokens)]
 
 
 def suggested_reviewers(config: LoadpathConfig, impact_nodes: list[dict]) -> list[str]:
@@ -358,10 +376,11 @@ def run_review(
     residuals = collect_residuals(store, impact_nodes, diff)
     evolution = analyze_evolution(repo_root, diff, impact_nodes, config)
     confidence = score_confidence(store, impact_nodes, impact_edges, scoped, residuals)
-    if evolution.get("notes") and confidence["level"] == "high":
+    serious = _serious_evolution_notes(evolution.get("notes") or [])
+    if serious and confidence["level"] == "high":
         confidence["level"] = "medium"
         reasons = list(confidence.get("reasons") or [])
-        reasons = [evolution["notes"][0], *reasons][:3]
+        reasons = [serious[0], *reasons][:3]
         confidence["reasons"] = reasons
     boot = store.get_meta("django_boot") or "off"
     if boot == "failed" and confidence["level"] == "high":

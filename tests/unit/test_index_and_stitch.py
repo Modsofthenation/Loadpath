@@ -17,6 +17,13 @@ def test_index_stitches_django_route_to_react_client(tmp_path: Path):
     assert consumed, "expected URL stitch between Django routes and React fetch"
     inferred = [e for e in consumed if e["confidence"] < 0.9]
     assert inferred, "string-matched fetch must be marked inferred (lower confidence)"
+    generated = [
+        e
+        for e in consumed
+        if (e.get("extra") or {}).get("generated_client") and e["confidence"] >= 0.9
+    ]
+    assert generated, "generated OpenAPI client should stitch at high confidence"
+    assert any((e.get("extra") or {}).get("superseded_by_generated") for e in inferred)
     schema_edges = [e for e in edges if e["type"] == "matches_schema"]
     assert schema_edges, "serializer fields should overlap invoiceSchema"
     store.close()
