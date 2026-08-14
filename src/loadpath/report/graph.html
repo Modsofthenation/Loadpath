@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Loadpath — {{ review.title }}</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --surface: #12181f;
+      --ink: #e8eef4;
+      --muted: #8b9bb0;
+      --high: #2a9d8f;
+      --medium: #e9c46a;
+      --low: #e76f51;
+      --critical: #e85d04;
+      --expensive: #f4a261;
+      --cheap: #4a5568;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      height: 100vh;
+    }
+    aside {
+      border-right: 1px solid #1e2a38;
+      padding: 20px;
+      overflow: auto;
+      background: linear-gradient(180deg, #0d141c, #0b0f14);
+    }
+    h1 { font-size: 16px; margin: 0 0 8px; letter-spacing: 0.04em; text-transform: uppercase; }
+    .level { font-weight: 700; }
+    .level.high { color: var(--high); }
+    .level.medium { color: var(--medium); }
+    .level.low { color: var(--low); }
+    pre {
+      white-space: pre-wrap;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    #graph { height: 100vh; background-image:
+      linear-gradient(rgba(42, 80, 120, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(42, 80, 120, 0.08) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <h1>Loadpath</h1>
+    <div class="level {{ review.confidence.level }}">{{ review.confidence.level | upper }} — {{ review.title }}</div>
+    <pre>{{ markdown }}</pre>
+  </aside>
+  <div id="graph"></div>
+  <script>
+    const nodes = {{ review.nodes | tojson }};
+    const edges = {{ review.edges | tojson }};
+    const palette = {
+      "django.route": "#4cc9f0",
+      "django.view": "#4895ef",
+      "django.serializer": "#f4a261",
+      "django.serializer_field": "#e9c46a",
+      "django.model": "#2a9d8f",
+      "django.field": "#8ac926",
+      "django.task": "#e76f51",
+      "django.receiver": "#e85d04",
+      "django.test": "#6c757d",
+      "react.page": "#c77dff",
+      "react.component": "#9d4edd",
+      "react.hook": "#7b2cbf",
+      "react.api_client": "#ff6b6b",
+      "react.form_schema": "#ffd166",
+      "react.query_key": "#adb5bd",
+      "openapi.path": "#00bbf9",
+      "arch.context": "#edf2f4",
+    };
+    const dataNodes = new vis.DataSet(nodes.map(n => ({
+      id: n.id,
+      label: n.name + "\\n" + (n.type || "").split(".").pop(),
+      color: palette[n.type] || "#4a5568",
+      font: { color: "#e8eef4", size: 11, face: "IBM Plex Sans" },
+      title: n.qualified_name + "\\n" + (n.file_path || ""),
+      shape: n.type && n.type.startsWith("react.") ? "box" : "dot",
+    })));
+    const weightColor = { cheap: "#4a5568", expensive: "#f4a261", critical: "#e85d04" };
+    const dataEdges = new vis.DataSet(edges.map(e => ({
+      id: e.id,
+      from: e.src,
+      to: e.dst,
+      color: { color: weightColor[e.weight] || "#4a5568" },
+      width: e.weight === "critical" ? 3 : e.weight === "expensive" ? 2 : 1,
+      dashes: (e.confidence || 1) < 0.8,
+      arrows: "to",
+      title: e.type + " (" + e.weight + ", conf=" + e.confidence + ")",
+    })));
+    new vis.Network(document.getElementById("graph"), { nodes: dataNodes, edges: dataEdges }, {
+      physics: { solver: "forceAtlas2Based", stabilization: { iterations: 80 } },
+      interaction: { hover: true },
+    });
+  </script>
+</body>
+</html>
