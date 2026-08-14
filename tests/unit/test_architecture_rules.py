@@ -136,6 +136,39 @@ def test_nplusone_schema_aware_does_not_add_edges(tmp_path: Path):
     store.close()
 
 
+def test_nplusone_charfield_is_not_a_residual(tmp_path: Path):
+    from loadpath.review.engine import collect_residuals
+
+    store = GraphStore(tmp_path / "g.sqlite3")
+    status = _field("status", "CharField")
+    account = _field("account", "ForeignKey")
+    service = Node(
+        id=node_id(NodeType.SERVICE, "billing.overdue"),
+        type=NodeType.SERVICE,
+        name="overdue",
+        qualified_name="billing.overdue",
+        extra={
+            "app": "billing",
+            "nplusone": [
+                {
+                    "accessed": ["status"],
+                    "loop_var": "invoice",
+                    "line": 4,
+                    "suggested_fix": ".select_related()",
+                }
+            ],
+        },
+    )
+    store.upsert_node(status)
+    store.upsert_node(account)
+    store.upsert_node(service)
+    store.conn.commit()
+    blob = " ".join(collect_residuals(store, [service.to_row()]))
+    assert "N+1" not in blob
+    assert "status" not in blob
+    store.close()
+
+
 def test_cascade_across_contexts_is_warning(tmp_path: Path):
     import shutil
 

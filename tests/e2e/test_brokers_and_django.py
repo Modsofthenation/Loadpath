@@ -102,6 +102,14 @@ def test_boot_payload_ignores_stdout_noise():
     assert data["residuals"][0].startswith("django.setup() skipped:")
 
 
+def test_boot_payload_malformed_nodes_become_residual():
+    from loadpath.extractors.django_boot import _graph_from_boot_data
+
+    graph = _graph_from_boot_data({"nodes": [{"id": 1}], "edges": [], "residuals": []})
+    assert not graph.nodes
+    assert any("django.setup() skipped: boot payload malformed" in r for r in graph.residuals)
+
+
 def test_index_counts_grow_with_new_django_files(tmp_path):
     store = index_repo(FIXTURE_ROOT, db_path=tmp_path / "g.sqlite3", incremental=False)
     types = {n["type"] for n in store.nodes()}

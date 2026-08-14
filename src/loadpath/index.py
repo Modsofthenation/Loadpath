@@ -14,6 +14,8 @@ from loadpath.types import GENERATED_PATH_MARKERS, ExtractedGraph, Node, NodeTyp
 
 PY_SKIP = {"migrations"}  # still extract migrations, just not skip
 INDEX_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx"}
+# Bump when extractor/stitch node identity changes so incremental indexes rebuild.
+INDEX_REVISION = "3"
 
 
 def default_db_path(repo_root: Path) -> Path:
@@ -80,6 +82,7 @@ def _sidecar_digest(repo_root: Path, config: LoadpathConfig) -> str:
             digest.update(rel.encode())
             digest.update(path.read_bytes())
     digest.update(_config_digest(repo_root).encode())
+    digest.update(INDEX_REVISION.encode())
     return digest.hexdigest()
 
 

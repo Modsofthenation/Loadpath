@@ -74,32 +74,46 @@ def _boot_subprocess(repo_root: Path, config: LoadpathConfig) -> ExtractedGraph:
         graph = ExtractedGraph()
         graph.residuals.append("django.setup() skipped: boot subprocess returned invalid JSON")
         return graph
+    return _graph_from_boot_data(data)
+
+
+def _graph_from_boot_data(data: dict) -> ExtractedGraph:
     graph = ExtractedGraph()
     graph.residuals.extend(data.get("residuals") or [])
-    for row in data.get("nodes") or []:
-        graph.nodes.append(
-            Node(
-                id=row["id"],
-                type=NodeType(row["type"]),
-                name=row["name"],
-                qualified_name=row["qualified_name"],
-                file_path=row.get("file_path"),
-                start_line=row.get("start_line"),
-                end_line=row.get("end_line"),
-                context=row.get("context"),
-                extra=row.get("extra") or {},
+    try:
+        for row in data.get("nodes") or []:
+            extra = row.get("extra") or {}
+            if isinstance(extra, str):
+                extra = json.loads(extra)
+            graph.nodes.append(
+                Node(
+                    id=row["id"],
+                    type=NodeType(row["type"]),
+                    name=row["name"],
+                    qualified_name=row["qualified_name"],
+                    file_path=row.get("file_path"),
+                    start_line=row.get("start_line"),
+                    end_line=row.get("end_line"),
+                    context=row.get("context"),
+                    extra=extra if isinstance(extra, dict) else {},
+                )
             )
-        )
-    for row in data.get("edges") or []:
-        graph.edges.append(
-            Edge(
-                src=row["src"],
-                dst=row["dst"],
-                type=EdgeType(row["type"]),
-                confidence=float(row.get("confidence") or 1),
-                extra=row.get("extra") or {},
+        for row in data.get("edges") or []:
+            extra = row.get("extra") or {}
+            if isinstance(extra, str):
+                extra = json.loads(extra)
+            graph.edges.append(
+                Edge(
+                    src=row["src"],
+                    dst=row["dst"],
+                    type=EdgeType(row["type"]),
+                    confidence=float(row.get("confidence") or 1),
+                    extra=extra if isinstance(extra, dict) else {},
+                )
             )
-        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        graph = ExtractedGraph()
+        graph.residuals.append(f"django.setup() skipped: boot payload malformed ({exc})")
     return graph
 
 

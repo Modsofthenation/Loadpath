@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from loadpath.architecture.rules import evaluate
+from loadpath.architecture.rules import _related_accesses, evaluate
 from loadpath.config import LoadpathConfig, load_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_drift, index_repo
@@ -243,6 +243,9 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet
     for line in stored.splitlines():
         if any(f and f in line for f in impact_files) or any(n and str(n) in line for n in impact_names):
             residuals.append(line)
+    fields_by_name: dict[str, list[dict]] = {}
+    for field in store.nodes([NodeType.FIELD]):
+        fields_by_name.setdefault(field["name"], []).append(field)
     for n in impact_nodes:
         extra = n.get("extra") or {}
         if extra.get("get_serializer_class"):
@@ -254,9 +257,12 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet
         if extra.get("queryset_in_serializer"):
             residuals.append(f"Queryset inside serializer {n['qualified_name']}")
         for hit in extra.get("nplusone") or []:
-            accessed = ", ".join(hit.get("accessed") or []) or "related fields"
+            accessed = list(hit.get("accessed") or [])
+            related, _ = _related_accesses(accessed, fields_by_name, extra.get("app"))
+            if not related:
+                continue
             residuals.append(
-                f"N+1 {accessed} in {n.get('file_path')}:{hit.get('line')} — {hit.get('suggested_fix')}"
+                f"N+1 {', '.join(related)} in {n.get('file_path')}:{hit.get('line')} — {hit.get('suggested_fix')}"
             )
     residuals.extend(_test_field_residuals(impact_nodes, diff))
     residuals.extend(_react_path_residuals(impact_nodes, diff))
