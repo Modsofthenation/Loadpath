@@ -340,12 +340,12 @@ def _cascade_crosses_context(store: GraphStore, config: LoadpathConfig) -> list[
                     rule="cascade_crosses_context",
                     severity=RuleSeverity.WARNING,
                     message=(
-                        f"{field['qualified_name']} CASCADE-deletes {target.get('qualified_name')} "
-                        f"across {sctx} → {dctx}"
+                        f"Deleting {target.get('qualified_name')} ({dctx}) CASCADE-deletes "
+                        f"{src_model} via {field['name']} ({sctx})"
                     ),
                     node_id=field["id"],
                     file_path=field.get("file_path"),
-                    extra={"other_context": dctx, "on_delete": "CASCADE"},
+                    extra={"target_context": dctx, "on_delete": "CASCADE"},
                 )
             )
     return out
@@ -353,27 +353,35 @@ def _cascade_crosses_context(store: GraphStore, config: LoadpathConfig) -> list[
 
 def _migration_blast_radius(store: GraphStore) -> list[Finding]:
     out: list[Finding] = []
-    refs = {n["id"]: n for n in store.nodes([NodeType.FIELD, NodeType.MODEL, NodeType.SERIALIZER_FIELD])}
     for op in store.nodes([NodeType.MIGRATION_OP]):
         extra = op.get("extra") or {}
         kind = extra.get("op")
         if kind not in {"RemoveField", "DeleteModel"}:
             continue
         args = extra.get("args") or []
-        targets: list[str] = []
         app = extra.get("app") or ""
-        if kind == "RemoveField" and len(args) >= 2:
-            targets.append(f"{app}.{args[0]}.{args[1]}")
-        elif kind == "DeleteModel" and args:
-            targets.append(f"{app}.{args[0]}")
-        still = [
-            node
-            for node in refs.values()
-            if (node.get("qualified_name") or "").lower() in {t.lower() for t in targets}
-        ]
-        if not still:
+        still: list[dict] = []
+        if kind == "RemoveField":
+            model = extra.get("model_name") or (args[0] if args else None)
+            field = extra.get("field_name") or (args[1] if len(args) > 1 else None)
+            if not model or not field:
+                continue
+            still.extend(_remaining_field_refs(store, app, model, field))
+        else:
+            model = extra.get("model_name") or extra.get("name") or (args[0] if args else None)
+            if not model:
+                continue
+            still.extend(_remaining_model_refs(store, app, model))
+        seen: set[str] = set()
+        uniq: list[dict] = []
+        for node in still:
+            if node["id"] in seen:
+                continue
+            seen.add(node["id"])
+            uniq.append(node)
+        if not uniq:
             continue
-        names = ", ".join(sorted({n["qualified_name"] for n in still})[:6])
+        names = ", ".join(sorted({n["qualified_name"] for n in uniq})[:6])
         out.append(
             Finding(
                 rule="migration_blast_radius",
@@ -381,7 +389,57 @@ def _migration_blast_radius(store: GraphStore) -> list[Finding]:
                 message=f"{op['name']} still referenced by {names}",
                 node_id=op["id"],
                 file_path=op.get("file_path"),
-                extra={"op": kind, "still": [n["id"] for n in still[:8]]},
+                extra={"op": kind, "still": [n["id"] for n in uniq[:8]]},
             )
         )
     return out
+
+
+def _qnames(store: GraphStore, ntype: NodeType, qname: str) -> list[dict]:
+    want = qname.lower()
+    return [n for n in store.nodes([ntype]) if (n.get("qualified_name") or "").lower() == want]
+
+
+def _ids_for(store: GraphStore, ntype: NodeType, qname: str) -> set[str]:
+    ids = {node_id(ntype, qname)}
+    ids.update(n["id"] for n in _qnames(store, ntype, qname))
+    return ids
+
+
+def _remaining_field_refs(store: GraphStore, app: str, model: str, field: str) -> list[dict]:
+    still = list(_qnames(store, NodeType.FIELD, f"{app}.{model}.{field}"))
+    model_ids = _ids_for(store, NodeType.MODEL, f"{app}.{model}")
+    serializer_ids: set[str] = set()
+    want_model = f"{app}.{model}".lower()
+    for edge in store.edges():
+        if edge["type"] != EdgeType.SERIALIZES.value:
+            continue
+        dst = (edge.get("dst") or "").lower()
+        if edge["dst"] in model_ids or dst.endswith(":" + want_model):
+            serializer_ids.add(edge["src"])
+    for edge in store.edges():
+        if edge["type"] != EdgeType.HAS_FIELD.value or edge["src"] not in serializer_ids:
+            continue
+        child = store.get_node(edge["dst"])
+        if child and child.get("name") == field:
+            still.append(child)
+    return still
+
+
+def _remaining_model_refs(store: GraphStore, app: str, model: str) -> list[dict]:
+    still = list(_qnames(store, NodeType.MODEL, f"{app}.{model}"))
+    model_ids = _ids_for(store, NodeType.MODEL, f"{app}.{model}")
+    want = f"{app}.{model}".lower()
+    for edge in store.edges():
+        dst = (edge.get("dst") or "").lower()
+        if edge["dst"] not in model_ids and not dst.endswith(":" + want):
+            continue
+        if edge["type"] in {
+            EdgeType.SERIALIZES.value,
+            EdgeType.QUERIES_MODEL.value,
+            EdgeType.RELATES_TO.value,
+        }:
+            src = store.get_node(edge["src"])
+            if src:
+                still.append(src)
+    return still

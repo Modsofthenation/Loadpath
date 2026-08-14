@@ -148,8 +148,9 @@ def _git_commits(repo_root: Path, limit: int) -> list[dict]:
             ],
             text=True,
             stderr=subprocess.DEVNULL,
+            timeout=30,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
         return []
     commits: list[dict] = []
     current: dict | None = None
@@ -181,25 +182,37 @@ def _complexity_for_diff(repo_root: Path, diff: DiffSet) -> dict[str, int]:
             continue
         score = 0
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                start = getattr(node, "lineno", 0) or 0
-                end = getattr(node, "end_lineno", start) or start
-                if changed and not any(start <= ln <= end for ln in changed):
-                    continue
-                score += _cyclomatic(node)
-        out[fd.path] = score
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            start = getattr(node, "lineno", 0) or 0
+            end = getattr(node, "end_lineno", start) or start
+            if changed and not any(start <= ln <= end for ln in changed):
+                continue
+            score += _cyclomatic(node)
+        if score:
+            out[fd.path] = score
     return out
 
 
 def _cyclomatic(node: ast.AST) -> int:
     n = 1
-    for child in ast.walk(node):
-        if isinstance(child, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler, ast.With, ast.Assert)):
-            n += 1
-        elif isinstance(child, ast.BoolOp):
-            n += max(0, len(child.values) - 1)
-        elif isinstance(child, ast.comprehension):
-            n += 1
+    for child in ast.iter_child_nodes(node):
+        n += _cyclomatic_body(child)
+    return n
+
+
+def _cyclomatic_body(node: ast.AST) -> int:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return 0
+    n = 0
+    if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler, ast.With, ast.Assert)):
+        n += 1
+    elif isinstance(node, ast.BoolOp):
+        n += max(0, len(node.values) - 1)
+    elif isinstance(node, ast.comprehension):
+        n += 1
+    for child in ast.iter_child_nodes(node):
+        n += _cyclomatic_body(child)
     return n
 
 

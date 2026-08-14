@@ -927,14 +927,23 @@ def extract_migrations(rel_path: str, source: str, config: LoadpathConfig) -> Ex
             s = _const_str(a) or _name(a)
             if s:
                 args_repr.append(s)
-        for kw in node.keywords:
-            if kw.arg in {"name", "model_name"}:
-                s = _const_str(kw.value) or _name(kw.value)
-                if s:
-                    args_repr.append(s)
-        label = f"{short}({', '.join(args_repr[:3])})"
+        kw: dict[str, str] = {}
+        for keyword in node.keywords:
+            if not keyword.arg:
+                continue
+            s = _const_str(keyword.value) or _name(keyword.value)
+            if s:
+                kw[keyword.arg] = s
+        extra = {"op": short, "app": app, "args": args_repr, **kw}
+        if short == "RemoveField":
+            extra["model_name"] = kw.get("model_name") or (args_repr[0] if args_repr else None)
+            extra["field_name"] = kw.get("name") or (args_repr[1] if len(args_repr) > 1 else None)
+        elif short == "DeleteModel":
+            extra["model_name"] = kw.get("name") or (args_repr[0] if args_repr else None)
+        label_bits = [extra.get("model_name") or "", extra.get("field_name") or ""]
+        label_bits = [b for b in label_bits if b] or args_repr[:3]
+        label = f"{short}({', '.join(label_bits)})"
         qname = f"{app}.{Path(rel_path).stem}.{label}"
-        extra = {"op": short, "app": app, "args": args_repr}
         n = Node(
             id=node_id(NodeType.MIGRATION_OP, qname),
             type=NodeType.MIGRATION_OP,
@@ -955,16 +964,17 @@ def extract_migrations(rel_path: str, source: str, config: LoadpathConfig) -> Ex
                     extra={"op": short},
                 )
             )
-            if short == "RemoveField" and args_repr:
-                model = args_repr[0]
-                field = args_repr[1] if len(args_repr) > 1 else "?"
-                graph.edges.append(
-                    Edge(
-                        src=n.id,
-                        dst=node_id(NodeType.FIELD, f"{app}.{model}.{field}"),
-                        type=EdgeType.DESTRUCTIVE_MIGRATION,
+            if short == "RemoveField":
+                model = extra.get("model_name")
+                field = extra.get("field_name")
+                if model and field:
+                    graph.edges.append(
+                        Edge(
+                            src=n.id,
+                            dst=node_id(NodeType.FIELD, f"{app}.{model}.{field}"),
+                            type=EdgeType.DESTRUCTIVE_MIGRATION,
+                        )
                     )
-                )
     return graph
 
 

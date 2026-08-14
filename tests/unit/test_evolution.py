@@ -37,3 +37,49 @@ def test_evolution_hotspot_and_cross_context_coupling(tmp_path: Path):
     text = render_markdown(review)
     assert "Churn" in text
     assert "views.py" in text or evo["notes"]
+
+
+def test_complexity_does_not_count_unchanged_sibling_methods(tmp_path: Path):
+    import subprocess
+
+    from loadpath.review.diff import git_diff
+    from loadpath.review.evolution import _complexity_for_diff
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.check_call(["git", "init", "-b", "main"], cwd=repo, stdout=subprocess.DEVNULL)
+    subprocess.check_call(["git", "config", "user.email", "loadpath@test"], cwd=repo)
+    subprocess.check_call(["git", "config", "user.name", "Loadpath Tests"], cwd=repo)
+    target = repo / "mod.py"
+    target.write_text(
+        "class Big:\n"
+        "    def unchanged(self, a, b, c):\n"
+        "        if a:\n"
+        "            if b:\n"
+        "                if c:\n"
+        "                    return 1\n"
+        "        return 0\n"
+        "    def changed(self):\n"
+        "        return 1\n"
+    )
+    subprocess.check_call(["git", "add", "-A"], cwd=repo)
+    subprocess.check_call(["git", "commit", "-m", "base"], cwd=repo, stdout=subprocess.DEVNULL)
+    target.write_text(
+        "class Big:\n"
+        "    def unchanged(self, a, b, c):\n"
+        "        if a:\n"
+        "            if b:\n"
+        "                if c:\n"
+        "                    return 1\n"
+        "        return 0\n"
+        "    def changed(self, flag):\n"
+        "        if flag:\n"
+        "            return 2\n"
+        "        return 1\n"
+    )
+    subprocess.check_call(["git", "add", "-A"], cwd=repo)
+    subprocess.check_call(["git", "commit", "-m", "touch changed"], cwd=repo, stdout=subprocess.DEVNULL)
+    diff = git_diff(repo, "HEAD~1", "HEAD")
+    scores = _complexity_for_diff(repo, diff)
+    # changed() has one if → ~2, not the sibling's three nested ifs
+    assert scores.get("mod.py", 0) < 6
