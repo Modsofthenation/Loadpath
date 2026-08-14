@@ -54,11 +54,23 @@ def test_cli_index_review_json_and_html(tmp_path, monkeypatch):
     assert "Loadpath" in text
 
 
+def test_cli_init_does_not_overwrite(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    repo = prepare_review_repo(tmp_path)
+    original = (repo / "loadpath.yml").read_text()
+    result = runner.invoke(app, ["init", str(repo)])
+    assert result.exit_code == 0, result.output
+    assert "unchanged" in result.output.lower() or "already" in result.output.lower()
+    assert (repo / "loadpath.yml").read_text() == original
+
+
 def test_cli_help():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Loadpath" in result.output
     assert "architecture" in result.output
+    assert "init" in result.output
 
 
 def test_cli_serve_help():

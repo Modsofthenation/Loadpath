@@ -61,22 +61,97 @@ def language_for(path: Path) -> str:
     return "javascript"
 
 
+def _config_digest(repo_root: Path) -> str:
+    path = repo_root / "loadpath.yml"
+    if not path.is_file():
+        return ""
+    return file_hash(path)
+
+
+def _sidecar_digest(repo_root: Path, config: LoadpathConfig) -> str:
+    digest = hashlib.sha256()
+    names = list(config.openapi_paths)
+    for rel in ("openapi.yaml", "openapi.yml", "openapi.json", "schema.yml", "schema.yaml", "schema.json"):
+        names.append(rel)
+        names.append(f"{config.django_root.rstrip('/')}/{rel}")
+    for rel in sorted(set(names)):
+        path = repo_root / rel
+        if path.is_file():
+            digest.update(rel.encode())
+            digest.update(path.read_bytes())
+    digest.update(_config_digest(repo_root).encode())
+    return digest.hexdigest()
+
+
+def index_drift(store: GraphStore, repo_root: Path, config: LoadpathConfig) -> dict:
+    files = iter_source_files(repo_root, config)
+    present = {path.relative_to(repo_root).as_posix() for path in files}
+    indexed = set(store.indexed_paths())
+    changed: list[str] = []
+    for path in files:
+        rel = path.relative_to(repo_root).as_posix()
+        if store.file_hash(rel) != file_hash(path):
+            changed.append(rel)
+    added = sorted(present - indexed)
+    deleted = sorted(indexed - present)
+    config_changed = _sidecar_digest(repo_root, config) != (store.get_meta("sidecar_hash") or "")
+    return {
+        "stale": bool(changed or added or deleted or config_changed) or store.file_count() == 0,
+        "config_changed": config_changed,
+        "changed": changed[:40],
+        "changed_count": len(changed),
+        "added": added[:40],
+        "added_count": len(added),
+        "deleted": deleted[:40],
+        "deleted_count": len(deleted),
+        "file_count": len(present),
+        "indexed_count": len(indexed),
+    }
+
+
+def _boot_status(residuals: list[str], enabled: bool) -> tuple[str, str]:
+    if not enabled:
+        return "off", "boot_django is false; AST graph only"
+    for line in residuals:
+        if "django.setup() skipped:" in line:
+            return "failed", line
+        if "django.setup() overlay applied" in line:
+            return "ok", line
+    return "skipped", "django.setup() did not run"
+
+
 def index_repo(
     repo_root: Path,
     db_path: Path | None = None,
     config: LoadpathConfig | None = None,
     incremental: bool = True,
+    *,
+    draft_config: bool = False,
 ) -> GraphStore:
     repo_root = repo_root.resolve()
+    if draft_config:
+        from loadpath.detect import write_draft_config
+
+        if not (repo_root / "loadpath.yml").is_file():
+            write_draft_config(repo_root)
     config = config or load_config(repo_root)
     db_path = db_path or default_db_path(repo_root)
     store = GraphStore(db_path)
     store.set_meta("repo_root", str(repo_root))
 
+    drift = index_drift(store, repo_root, config)
+    if incremental and store.file_count() > 0 and not drift["stale"]:
+        store.set_meta("reindex_skipped", "1")
+        store.set_meta("files_extracted", "0")
+        store.set_meta("files_skipped", str(drift["indexed_count"]))
+        store.conn.commit()
+        return store
+
     residuals: list[str] = []
     skipped: set[str] = set()
     files = iter_source_files(repo_root, config)
     present = {path.relative_to(repo_root).as_posix() for path in files}
+    extracted = 0
     for stale in store.indexed_paths():
         if stale not in present:
             store.delete_file_nodes(stale)
@@ -96,12 +171,14 @@ def index_repo(
         store.upsert_file(rel, digest, language_for(path))
         store.upsert_graph(graph)
         residuals.extend(graph.residuals)
+        extracted += 1
 
     boot = ExtractedGraph()
     if config.boot_django:
         boot = try_boot_models(repo_root, config)
         store.upsert_graph(boot)
         residuals.extend(boot.residuals)
+    boot_state, boot_detail = _boot_status(boot.residuals, config.boot_django)
 
     _ensure_context_nodes(store, config)
     stitch_residuals = stitch(store, config, repo_root)
@@ -127,6 +204,13 @@ def index_repo(
     store.set_meta("residuals", "\n".join(residuals))
     store.set_meta("indexed_at", datetime.now(timezone.utc).isoformat())
     store.set_meta("incremental", "1" if incremental else "0")
+    store.set_meta("reindex_skipped", "0")
+    store.set_meta("files_extracted", str(extracted))
+    store.set_meta("files_skipped", str(len(skipped)))
+    store.set_meta("django_boot", boot_state)
+    store.set_meta("django_boot_detail", boot_detail)
+    store.set_meta("config_hash", _config_digest(repo_root))
+    store.set_meta("sidecar_hash", _sidecar_digest(repo_root, config))
     store.conn.commit()
     return store
 

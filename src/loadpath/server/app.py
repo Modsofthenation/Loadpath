@@ -13,6 +13,7 @@ from loadpath import __version__
 from loadpath.ai.providers import client_for, residual_prompt
 from loadpath.architecture.snapshot import architecture_graph, architecture_report, summarize_index
 from loadpath.config import load_config
+from loadpath.detect import detect_layout, write_draft_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_repo
 from loadpath.providers.scm import provider_for
@@ -28,10 +29,25 @@ class IndexRequest(BaseModel):
 
 class ReviewRequest(BaseModel):
     repo_path: str
-    base: str = "origin/main"
+    base: str = "HEAD~1"
     head: str | None = None
     reindex: bool = True
     incremental: bool = True
+    three_dot: bool = True
+
+
+class InitRequest(BaseModel):
+    repo_path: str
+    overwrite: bool = False
+
+
+class PRCommentRequest(BaseModel):
+    provider: str
+    repo: str
+    number: int
+    markdown: str
+    token: str | None = None
+    username: str | None = None
 
 
 class SettingsUpdate(BaseModel):
@@ -111,7 +127,7 @@ def create_app() -> FastAPI:
         root = Path(body.repo_path).expanduser().resolve()
         if not root.is_dir():
             raise HTTPException(404, f"Repo not found: {root}")
-        store = index_repo(root, incremental=body.incremental)
+        store = index_repo(root, incremental=body.incremental, draft_config=True)
         register_workspace(root)
         summary = summarize_index(store, load_config(root))
         store.close()
@@ -166,6 +182,7 @@ def create_app() -> FastAPI:
                 head=body.head,
                 reindex=body.reindex,
                 incremental=body.incremental,
+                three_dot=body.three_dot,
             )
         except FileNotFoundError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -246,6 +263,42 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(502, str(exc)) from exc
         return {"pull_requests": [p.to_dict() for p in prs]}
+
+    @app.post("/api/init")
+    def api_init(body: InitRequest) -> dict[str, Any]:
+        root = Path(body.repo_path).expanduser().resolve()
+        if not root.is_dir():
+            raise HTTPException(404, f"Repo not found: {root}")
+        layout = write_draft_config(root, overwrite=body.overwrite)
+        register_workspace(root)
+        return layout
+
+    @app.get("/api/detect")
+    def api_detect(repo_path: str) -> dict[str, Any]:
+        root = Path(repo_path).expanduser().resolve()
+        if not root.is_dir():
+            raise HTTPException(404, f"Repo not found: {root}")
+        return detect_layout(root)
+
+    @app.post("/api/prs/comment")
+    def api_pr_comment(body: PRCommentRequest) -> dict[str, Any]:
+        settings = AppSettings.load()
+        token = body.token
+        username = body.username or settings.bitbucket_username
+        if not token:
+            token = settings.github_token if body.provider == "github" else settings.bitbucket_token
+        if not token:
+            raise HTTPException(400, f"No {body.provider} token configured")
+        if not body.markdown.strip():
+            raise HTTPException(400, "markdown is empty")
+        try:
+            scm = provider_for(body.provider, token, username=username)
+            posted = scm.upsert_pull_request_comment(body.repo, body.number, body.markdown)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, str(exc)) from exc
+        return posted
 
     @app.post("/api/ai/residual")
     def api_residual(body: ResidualRequest) -> dict[str, Any]:

@@ -66,6 +66,21 @@ export type Review = {
     indexed_at?: string | null;
     reindexed: boolean;
     incremental: boolean;
+    reindex_skipped?: boolean;
+    files_extracted?: number;
+    stale?: boolean;
+    django_boot?: string;
+    django_boot_detail?: string;
+  };
+  workspace?: {
+    dirty: string[];
+    dirty_count: number;
+    dirty_overlaps_review: boolean;
+    dirty_overlap: string[];
+    merge_base?: string | null;
+    three_dot?: boolean;
+    base_sha?: string | null;
+    head_sha?: string | null;
   };
 };
 
@@ -89,6 +104,12 @@ export type ArchitectureReport = {
   has_config?: boolean;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  stale?: boolean;
+  django_boot?: string;
+  django_boot_detail?: string;
+  reindex_skipped?: boolean;
+  files_extracted?: number;
+  boot_residuals?: string[];
 };
 
 export type IndexedRepo = {
@@ -100,6 +121,8 @@ export type IndexedRepo = {
   indexed_at?: string | null;
   contexts?: string[];
   has_config?: boolean;
+  stale?: boolean;
+  django_boot?: string;
 };
 
 export type PullRequest = {
@@ -115,6 +138,8 @@ export type PullRequest = {
   state: string;
   updated_at: string;
   draft: boolean;
+  head_sha?: string;
+  base_sha?: string;
 };
 
 export const LAYER_ORDER: Record<string, number> = {

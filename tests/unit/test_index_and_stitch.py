@@ -22,15 +22,25 @@ def test_index_stitches_django_route_to_react_client(tmp_path: Path):
     store.close()
 
 
-def test_index_is_incremental(tmp_path: Path):
+def test_index_drafts_yml_in_repo_even_if_parent_has_one(tmp_path: Path):
+    parent = tmp_path / "parent"
+    child = parent / "app"
+    child.mkdir(parents=True)
+    (parent / "loadpath.yml").write_text("contexts: {}\n", encoding="utf-8")
+    (child / "backend").mkdir()
+    (child / "backend" / "manage.py").write_text("print(1)\n")
+    store = index_repo(child, db_path=child / "g.sqlite3", incremental=False, draft_config=True)
+    store.close()
+    assert (child / "loadpath.yml").is_file()
+    assert (parent / "loadpath.yml").read_text() == "contexts: {}\n"
     db = tmp_path / "graph.sqlite3"
     store = index_repo(FIXTURE, db_path=db, incremental=False)
-    first = store.counts()
     store.close()
     store = index_repo(FIXTURE, db_path=db, incremental=True)
-    second = store.counts()
+    assert store.get_meta("reindex_skipped") == "1"
+    assert store.get_meta("files_extracted") == "0"
+    assert store.get_meta("django_boot") == "off"
     store.close()
-    assert first["nodes"] == second["nodes"]
 
 
 def test_incremental_index_drops_deleted_files(tmp_path: Path):

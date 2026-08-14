@@ -7,6 +7,15 @@ from typing import Any, Protocol
 import httpx
 
 REPO_SLUG = re.compile(r"^[\w.-]+/[\w.-]+$")
+LOADPATH_COMMENT_MARKER = "<!-- loadpath-review -->"
+
+
+def _marked_comment(markdown: str) -> str:
+    body = markdown.strip()
+    if LOADPATH_COMMENT_MARKER not in body:
+        return f"{LOADPATH_COMMENT_MARKER}\n{body}\n"
+    return body
+
 
 
 def require_repo_slug(repo: str) -> str:
@@ -30,6 +39,8 @@ class PullRequest:
     state: str
     updated_at: str
     draft: bool = False
+    head_sha: str = ""
+    base_sha: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
@@ -43,6 +54,8 @@ class SCMProvider(Protocol):
     def get_pull_request(self, repo: str, number: int) -> PullRequest: ...
 
     def get_diff(self, repo: str, number: int) -> str: ...
+
+    def upsert_pull_request_comment(self, repo: str, number: int, markdown: str) -> dict[str, Any]: ...
 
 
 class GitHubProvider:
@@ -84,6 +97,8 @@ class GitHubProvider:
                     state=item.get("state") or "open",
                     updated_at=item.get("updated_at") or "",
                     draft=bool(item.get("draft")),
+                    head_sha=(item.get("head") or {}).get("sha") or "",
+                    base_sha=(item.get("base") or {}).get("sha") or "",
                 )
             )
         return out
@@ -106,6 +121,8 @@ class GitHubProvider:
             state=item.get("state") or "open",
             updated_at=item.get("updated_at") or "",
             draft=bool(item.get("draft")),
+            head_sha=(item.get("head") or {}).get("sha") or "",
+            base_sha=(item.get("base") or {}).get("sha") or "",
         )
 
     def get_diff(self, repo: str, number: int) -> str:
@@ -116,6 +133,55 @@ class GitHubProvider:
         )
         r.raise_for_status()
         return r.text
+
+    def upsert_pull_request_comment(self, repo: str, number: int, markdown: str) -> dict[str, Any]:
+        repo = require_repo_slug(repo)
+        body = _marked_comment(markdown)
+        listed = self.client.get(
+            f"{self.base}/repos/{repo}/issues/{number}/comments",
+            params={"per_page": 100},
+            headers=self._headers(),
+        )
+        listed.raise_for_status()
+        existing_id = None
+        for item in listed.json() or []:
+            if LOADPATH_COMMENT_MARKER in (item.get("body") or ""):
+                existing_id = item.get("id")
+                break
+        # Walk a couple of pages so a busy PR does not grow a second Loadpath comment.
+        page = 2
+        while existing_id is None and page <= 3:
+            more = self.client.get(
+                f"{self.base}/repos/{repo}/issues/{number}/comments",
+                params={"per_page": 100, "page": page},
+                headers=self._headers(),
+            )
+            more.raise_for_status()
+            batch = more.json() or []
+            if not batch:
+                break
+            for item in batch:
+                if LOADPATH_COMMENT_MARKER in (item.get("body") or ""):
+                    existing_id = item.get("id")
+                    break
+            page += 1
+        if existing_id:
+            r = self.client.patch(
+                f"{self.base}/repos/{repo}/issues/comments/{existing_id}",
+                headers=self._headers(),
+                json={"body": body},
+            )
+            r.raise_for_status()
+            data = r.json()
+            return {"id": str(data.get("id")), "url": data.get("html_url") or "", "updated": True}
+        r = self.client.post(
+            f"{self.base}/repos/{repo}/issues/{number}/comments",
+            headers=self._headers(),
+            json={"body": body},
+        )
+        r.raise_for_status()
+        data = r.json()
+        return {"id": str(data.get("id")), "url": data.get("html_url") or "", "updated": False}
 
 
 class BitbucketProvider:
@@ -173,6 +239,8 @@ class BitbucketProvider:
                     state=(item.get("state") or "").lower(),
                     updated_at=item.get("updated_on") or "",
                     draft=False,
+                    head_sha=(((item.get("source") or {}).get("commit") or {}).get("hash") or ""),
+                    base_sha=(((item.get("destination") or {}).get("commit") or {}).get("hash") or ""),
                 )
             )
         return out
@@ -201,6 +269,8 @@ class BitbucketProvider:
             repo=repo,
             state=(item.get("state") or "").lower(),
             updated_at=item.get("updated_on") or "",
+            head_sha=(((item.get("source") or {}).get("commit") or {}).get("hash") or ""),
+            base_sha=(((item.get("destination") or {}).get("commit") or {}).get("hash") or ""),
         )
 
     def get_diff(self, repo: str, number: int) -> str:
@@ -212,6 +282,45 @@ class BitbucketProvider:
         )
         r.raise_for_status()
         return r.text
+
+    def upsert_pull_request_comment(self, repo: str, number: int, markdown: str) -> dict[str, Any]:
+        repo = require_repo_slug(repo)
+        body = _marked_comment(markdown)
+        listed = self.client.get(
+            f"{self.base}/repositories/{repo}/pullrequests/{number}/comments",
+            params={"pagelen": 100},
+            headers=self._headers(),
+            auth=self._auth(),
+        )
+        listed.raise_for_status()
+        existing_id = None
+        for item in listed.json().get("values") or []:
+            raw = ((item.get("content") or {}).get("raw")) or ""
+            if LOADPATH_COMMENT_MARKER in raw:
+                existing_id = item.get("id")
+                break
+        payload = {"content": {"raw": body}}
+        if existing_id:
+            r = self.client.put(
+                f"{self.base}/repositories/{repo}/pullrequests/{number}/comments/{existing_id}",
+                headers=self._headers(),
+                auth=self._auth(),
+                json=payload,
+            )
+            r.raise_for_status()
+            data = r.json()
+            url = ((data.get("links") or {}).get("html") or {}).get("href") or ""
+            return {"id": str(data.get("id")), "url": url, "updated": True}
+        r = self.client.post(
+            f"{self.base}/repositories/{repo}/pullrequests/{number}/comments",
+            headers=self._headers(),
+            auth=self._auth(),
+            json=payload,
+        )
+        r.raise_for_status()
+        data = r.json()
+        url = ((data.get("links") or {}).get("html") or {}).get("href") or ""
+        return {"id": str(data.get("id")), "url": url, "updated": False}
 
 
 def provider_for(name: str, token: str, username: str = "", client: httpx.Client | None = None) -> SCMProvider:

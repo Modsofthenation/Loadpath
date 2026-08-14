@@ -21,7 +21,7 @@ plus the jobs the view enqueues (`send_invoice_email.delay`, `rebuild_ledger.sen
 
 ## App
 
-`loadpath serve --port 7345` opens a local desktop-style UI. Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close. The rail and Settings page ship a dozen themes (Obsidian, Nord, Solarized, Paper, high-contrast, …); the choice stays in `localStorage`.
+`loadpath serve --port 7345` opens a local desktop-style UI. Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close. The rail and Settings page ship a dozen themes (Obsidian, Nord, Solarized, Paper, high-contrast, …); the choice stays in `localStorage`. Last repo, git range, and SCM slug are remembered the same way. Copy the markdown brief, or post **one** PR comment (updated in place) from the Review tab.
 
 ### Review
 
@@ -67,15 +67,18 @@ loadpath --help
 ## CLI
 
 ```bash
-# Index a monorepo (SQLite graph at .loadpath/graph.sqlite3, incremental on file hashes)
+# Detect Django/React roots and draft loadpath.yml (never overwrites an existing file)
+loadpath init /path/to/repo
+
+# Index a monorepo (SQLite graph at .loadpath/graph.sqlite3; unchanged hashes skip extract)
 loadpath index /path/to/repo
 
 # Inspect bounded contexts, rules, and type counts from that index
 loadpath architecture /path/to/repo
 
-# Review a git range against the index (incremental refresh; --no-reindex to reuse as-is)
-loadpath review /path/to/repo --base origin/main --head HEAD
-loadpath review /path/to/repo --base origin/main --no-reindex
+# Review a git range against the index (three-dot / merge-base by default)
+loadpath review /path/to/repo --base HEAD~1 --head HEAD
+loadpath review /path/to/repo --base origin/main --head HEAD --no-reindex
 
 # Cross-platform app (API + visual graph + PR list)
 loadpath serve --port 7345

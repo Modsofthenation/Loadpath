@@ -77,6 +77,28 @@ def test_health_and_settings(tmp_path, monkeypatch):
     assert kept.json()["github_token_set"] is True
 
 
+def test_github_upserts_single_loadpath_comment():
+    import httpx
+
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[{"id": 9, "body": "<!-- loadpath-review -->\nold"}],
+            )
+        return httpx.Response(200, json={"id": 9, "html_url": "https://github.com/acme/demo/issues/1#issuecomment-9"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    gh = GitHubProvider("tok", client=client)
+    posted = gh.upsert_pull_request_comment("acme/demo", 12, "## Loadpath: MEDIUM")
+    assert posted["updated"] is True
+    assert any(c.method == "PATCH" for c in calls)
+    assert not any(c.method == "POST" and "/issues/12/comments" in str(c.url) for c in calls)
+
+
 def test_github_rejects_unsafe_repo_slug():
     import pytest
 
