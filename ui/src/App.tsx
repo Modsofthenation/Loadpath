@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { ImpactGraph } from "./ImpactGraph";
 import type { ArchitectureReport, IndexedRepo, PullRequest, Review } from "./types";
@@ -22,6 +22,8 @@ export function App() {
   const [scmRepo, setScmRepo] = useState("");
   const [provider, setProvider] = useState("github");
   const [aiNote, setAiNote] = useState("");
+  const repoRef = useRef(repo);
+  repoRef.current = repo;
 
   useEffect(() => {
     api.settings().then(setSettings).catch(() => undefined);
@@ -30,7 +32,17 @@ export function App() {
 
   useEffect(() => {
     if (tab !== "architecture" || !repo) return;
-    api.architecture(repo).then(setArchitecture).catch(() => undefined);
+    const requested = repo;
+    let cancelled = false;
+    api
+      .architecture(requested)
+      .then((report) => {
+        if (!cancelled && repoRef.current === requested) setArchitecture(report);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, [tab, repo]);
 
   const persistRepo = (path: string) => {
@@ -41,7 +53,7 @@ export function App() {
   const loadArchitecture = async (path = repo) => {
     if (!path) return null;
     const report = await api.architecture(path);
-    setArchitecture(report);
+    if (repoRef.current === path) setArchitecture(report);
     return report;
   };
 

@@ -214,6 +214,27 @@ def test_get_model_string_ref_is_residual():
     assert any("get_model" in r for r in g.residuals)
 
 
+def test_enqueue_resolves_foreign_app_task():
+    src = """
+from rest_framework.viewsets import ModelViewSet
+from accounts.tasks import notify_user
+
+class InvoiceViewSet(ModelViewSet):
+    def create(self, request):
+        notify_user.delay(1)
+"""
+    g = extract_django_file("backend/billing/views.py", src, _cfg())
+    edges = [e for e in g.edges if e.type.value == "enqueues"]
+    assert edges
+    assert any(e.dst == "django.task:accounts.notify_user" for e in edges)
+
+
+def test_discover_settings_uses_django_root():
+    from loadpath.extractors.django_boot import _discover_settings_module
+
+    assert _discover_settings_module(FIXTURE, "backend") == "config.settings"
+
+
 def test_cross_app_model_import_on_view():
     src = """
 from rest_framework.views import APIView

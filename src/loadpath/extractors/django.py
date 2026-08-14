@@ -588,9 +588,7 @@ class DjangoExtractor(ast.NodeVisitor):
         return any(part in target for part in ("actors", "tasks", "dramatiq"))
 
     def _enqueue(self, node: ast.Call, fname: str, broker: str = "celery") -> None:
-        task_name = fname.rsplit(".", 1)[0]
-        short = task_name.split(".")[-1]
-        qname = f"{self.app}.{short}"
+        app, short, qname = self._task_qname(fname)
         owner = self.class_stack[-1] if self.class_stack else Path(self.rel_path).stem
         owner_type = NodeType.VIEW
         if "management/commands" in self.rel_path:
@@ -612,8 +610,22 @@ class DjangoExtractor(ast.NodeVisitor):
             short,
             qname,
             node.lineno,
-            {"referenced": True, "app": self.app, "broker": broker},
+            {"referenced": True, "app": app, "broker": broker},
         )
+
+    def _task_qname(self, fname: str) -> tuple[str, str, str]:
+        task_name = fname.rsplit(".", 1)[0] if "." in fname else fname
+        resolved = self._resolve(task_name)
+        parts = [p for p in resolved.split(".") if p]
+        short = parts[-1] if parts else task_name.split(".")[-1]
+        app = self.app
+        for marker in ("tasks", "actors", "jobs"):
+            if marker in parts:
+                idx = parts.index(marker)
+                if idx > 0:
+                    app = parts[idx - 1]
+                    break
+        return app, short, f"{app}.{short}"
 
     def _enqueue_from_on_commit(self, node: ast.Call) -> None:
         for arg in list(node.args) + [kw.value for kw in node.keywords]:
@@ -659,11 +671,11 @@ class DjangoExtractor(ast.NodeVisitor):
     def _beat_schedule(self, value: ast.AST) -> None:
         if not isinstance(value, ast.Dict):
             return
-        for key, val in zip(value.keys, value.values):
+        for key, val in zip(value.keys, value.values, strict=True):
             entry_name = _const_str(key) or _name(key) or "beat"
             task_name = None
             if isinstance(val, ast.Dict):
-                for k, v in zip(val.keys, val.values):
+                for k, v in zip(val.keys, val.values, strict=True):
                     label = _const_str(k) or _name(k)
                     if label == "task":
                         task_name = _const_str(v) or _name(v)
@@ -802,7 +814,7 @@ class DjangoExtractor(ast.NodeVisitor):
                 view_name = (_name(view_expr.func) or "").replace(".as_view", "")
                 # mapping dict for viewsets
                 if view_expr.args and isinstance(view_expr.args[0], ast.Dict):
-                    for k, v in zip(view_expr.args[0].keys, view_expr.args[0].values):
+                    for k, v in zip(view_expr.args[0].keys, view_expr.args[0].values, strict=True):
                         method = _const_str(k)
                         action = _name(v)
                         if method and action:

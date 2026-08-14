@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
+
+REPO_SLUG = re.compile(r"^[\w.-]+/[\w.-]+$")
+
+
+def require_repo_slug(repo: str) -> str:
+    slug = repo.strip().strip("/")
+    if not REPO_SLUG.match(slug):
+        raise ValueError("repo must be owner/name")
+    return slug
 
 
 @dataclass
@@ -51,6 +61,7 @@ class GitHubProvider:
         }
 
     def list_pull_requests(self, repo: str, state: str = "open") -> list[PullRequest]:
+        repo = require_repo_slug(repo)
         r = self.client.get(
             f"{self.base}/repos/{repo}/pulls",
             params={"state": state, "per_page": 50, "sort": "updated"},
@@ -78,6 +89,7 @@ class GitHubProvider:
         return out
 
     def get_pull_request(self, repo: str, number: int) -> PullRequest:
+        repo = require_repo_slug(repo)
         r = self.client.get(f"{self.base}/repos/{repo}/pulls/{number}", headers=self._headers())
         r.raise_for_status()
         item = r.json()
@@ -97,6 +109,7 @@ class GitHubProvider:
         )
 
     def get_diff(self, repo: str, number: int) -> str:
+        repo = require_repo_slug(repo)
         r = self.client.get(
             f"{self.base}/repos/{repo}/pulls/{number}",
             headers={**self._headers(), "Accept": "application/vnd.github.diff"},
@@ -130,6 +143,7 @@ class BitbucketProvider:
         return {"Authorization": f"Bearer {self.token}"}
 
     def list_pull_requests(self, repo: str, state: str = "open") -> list[PullRequest]:
+        repo = require_repo_slug(repo)
         bb_state = "OPEN" if state == "open" else state.upper()
         r = self.client.get(
             f"{self.base}/repositories/{repo}/pullrequests",
@@ -164,6 +178,7 @@ class BitbucketProvider:
         return out
 
     def get_pull_request(self, repo: str, number: int) -> PullRequest:
+        repo = require_repo_slug(repo)
         r = self.client.get(
             f"{self.base}/repositories/{repo}/pullrequests/{number}",
             headers=self._headers(),
@@ -189,6 +204,7 @@ class BitbucketProvider:
         )
 
     def get_diff(self, repo: str, number: int) -> str:
+        repo = require_repo_slug(repo)
         r = self.client.get(
             f"{self.base}/repositories/{repo}/pullrequests/{number}/diff",
             headers=self._headers(),

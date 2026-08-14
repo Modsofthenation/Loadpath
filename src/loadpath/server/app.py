@@ -18,7 +18,7 @@ from loadpath.index import default_db_path, index_repo
 from loadpath.providers.scm import provider_for
 from loadpath.review.engine import run_review
 from loadpath.review.render import render_html, render_markdown
-from loadpath.settings import AppSettings, public_settings, register_workspace, settings_path
+from loadpath.settings import AppSettings, public_settings, register_workspace, settings_path, _should_update_secret
 
 
 class IndexRequest(BaseModel):
@@ -62,7 +62,12 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Loadpath", version=__version__)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            "http://127.0.0.1:7345",
+            "http://localhost:7345",
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+        ],
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -78,18 +83,18 @@ def create_app() -> FastAPI:
     @app.put("/api/settings")
     def put_settings(body: SettingsUpdate) -> dict[str, Any]:
         current = AppSettings.load()
-        if body.github_token is not None and body.github_token not in {"", current.github_token} and "…" not in body.github_token:
-            current.github_token = body.github_token
-        if body.bitbucket_token is not None and "…" not in (body.bitbucket_token or ""):
-            current.bitbucket_token = body.bitbucket_token
+        if _should_update_secret(body.github_token, current.github_token):
+            current.github_token = body.github_token or ""
+        if _should_update_secret(body.bitbucket_token, current.bitbucket_token):
+            current.bitbucket_token = body.bitbucket_token or ""
         if body.bitbucket_username is not None:
             current.bitbucket_username = body.bitbucket_username
         if body.bitbucket_workspace is not None:
             current.bitbucket_workspace = body.bitbucket_workspace
         if body.ai_provider is not None:
             current.ai.provider = body.ai_provider
-        if body.ai_api_key is not None and "…" not in body.ai_api_key:
-            current.ai.api_key = body.ai_api_key
+        if _should_update_secret(body.ai_api_key, current.ai.api_key):
+            current.ai.api_key = body.ai_api_key or ""
         if body.ai_model is not None:
             current.ai.model = body.ai_model
         if body.ai_base_url is not None:
@@ -236,6 +241,8 @@ def create_app() -> FastAPI:
         try:
             scm = provider_for(body.provider, token, username=username)
             prs = scm.list_pull_requests(body.repo, state=body.state)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(502, str(exc)) from exc
         return {"pull_requests": [p.to_dict() for p in prs]}

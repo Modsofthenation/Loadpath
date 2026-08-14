@@ -74,12 +74,19 @@ def index_repo(
     store.set_meta("repo_root", str(repo_root))
 
     residuals: list[str] = []
-    for path in iter_source_files(repo_root, config):
+    skipped: set[str] = set()
+    files = iter_source_files(repo_root, config)
+    present = {path.relative_to(repo_root).as_posix() for path in files}
+    for stale in store.indexed_paths():
+        if stale not in present:
+            store.delete_file_nodes(stale)
+    for path in files:
         rel = path.relative_to(repo_root).as_posix()
         digest = file_hash(path)
         if incremental and store.file_hash(rel) == digest:
+            skipped.add(rel)
             continue
-        store.delete_file_nodes(rel)
+        store.delete_file_nodes(rel, drop_incoming=False)
         source = path.read_text(encoding="utf-8", errors="replace")
         if path.suffix == ".py":
             graph = extract_django_file(rel, source, config)
@@ -98,7 +105,25 @@ def index_repo(
 
     _ensure_context_nodes(store, config)
     stitch_residuals = stitch(store, config, repo_root)
-    residuals.extend(stitch_residuals)
+    store.prune_dangling_edges()
+    if incremental:
+        old = [line for line in (store.get_meta("residuals") or "").splitlines() if line]
+        changed = present - skipped
+        preserved = [
+            line
+            for line in old
+            if any(rel in line for rel in skipped) and not any(rel in line for rel in changed)
+        ]
+        residuals = preserved + residuals + stitch_residuals
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for line in residuals:
+            if line not in seen:
+                seen.add(line)
+                deduped.append(line)
+        residuals = deduped
+    else:
+        residuals.extend(stitch_residuals)
     store.set_meta("residuals", "\n".join(residuals))
     store.set_meta("indexed_at", datetime.now(timezone.utc).isoformat())
     store.set_meta("incremental", "1" if incremental else "0")

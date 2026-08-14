@@ -73,3 +73,13 @@ def test_health_and_settings(tmp_path, monkeypatch):
     assert body["github_token_set"] is True
     assert "secret" not in body["github_token"]
     assert body["ai"]["provider"] == "anthropic"
+    kept = c.put("/api/settings", json={"github_token": "", "bitbucket_token": "", "ai_api_key": ""})
+    assert kept.json()["github_token_set"] is True
+
+
+def test_github_rejects_unsafe_repo_slug():
+    import pytest
+
+    gh = GitHubProvider("tok")
+    with pytest.raises(ValueError):
+        gh.list_pull_requests("../etc/passwd")

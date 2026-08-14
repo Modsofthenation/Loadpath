@@ -100,7 +100,7 @@ class GraphStore:
             (path, digest, language),
         )
 
-    def delete_file_nodes(self, path: str) -> None:
+    def delete_file_nodes(self, path: str, *, drop_incoming: bool = True) -> None:
         ids = [
             r["id"]
             for r in self.conn.execute("SELECT id FROM nodes WHERE file_path=?", (path,)).fetchall()
@@ -109,9 +109,21 @@ class GraphStore:
             self.conn.execute("DELETE FROM files WHERE path=?", (path,))
             return
         placeholders = ",".join("?" * len(ids))
-        self.conn.execute(f"DELETE FROM edges WHERE src IN ({placeholders}) OR dst IN ({placeholders})", ids + ids)
+        if drop_incoming:
+            self.conn.execute(
+                f"DELETE FROM edges WHERE src IN ({placeholders}) OR dst IN ({placeholders})",
+                ids + ids,
+            )
+        else:
+            # Reindex: keep edges from other files (e.g. view ENQUEUES → task).
+            self.conn.execute(f"DELETE FROM edges WHERE src IN ({placeholders})", ids)
         self.conn.execute("DELETE FROM nodes WHERE file_path=?", (path,))
         self.conn.execute("DELETE FROM files WHERE path=?", (path,))
+
+    def prune_dangling_edges(self) -> None:
+        self.conn.execute(
+            "DELETE FROM edges WHERE src NOT IN (SELECT id FROM nodes) OR dst NOT IN (SELECT id FROM nodes)"
+        )
 
     def upsert_graph(self, graph: ExtractedGraph) -> None:
         for node in graph.nodes:
@@ -296,6 +308,9 @@ class GraphStore:
 
     def file_count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) AS c FROM files").fetchone()["c"]
+
+    def indexed_paths(self) -> list[str]:
+        return [r["path"] for r in self.conn.execute("SELECT path FROM files").fetchall()]
 
     @staticmethod
     def _node_from_row(row: sqlite3.Row) -> dict[str, Any]:

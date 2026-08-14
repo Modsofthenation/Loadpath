@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+_SETTINGS_LOCK = threading.RLock()
 
 
 def settings_path() -> Path:
@@ -42,9 +46,25 @@ class AppSettings(BaseModel):
     connections: list[SCMConnection] = Field(default_factory=list)
 
     def save(self, path: Path | None = None) -> None:
+        with _SETTINGS_LOCK:
+            self._write(path)
+
+    def _write(self, path: Path | None = None) -> None:
         p = path or settings_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        try:
+            os.chmod(p.parent, 0o700)
+        except OSError:
+            pass
+        payload = self.model_dump_json(indent=2)
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        tmp.replace(p)
+        try:
+            os.chmod(p, 0o600)
+        except OSError:
+            pass
 
     @classmethod
     def load(cls, path: Path | None = None) -> AppSettings:
@@ -63,13 +83,20 @@ def mask_secret(value: str) -> str:
     return value[:4] + "…" + value[-2:]
 
 
+def _should_update_secret(value: str | None, current: str) -> bool:
+    if value is None or value == "" or "…" in value:
+        return False
+    return value != current
+
+
 def register_workspace(path: Path, name: str | None = None) -> AppSettings:
-    settings = AppSettings.load()
-    resolved = str(path.expanduser().resolve())
-    if not any(w.path == resolved for w in settings.workspaces):
-        settings.workspaces.append(Workspace(path=resolved, name=name or Path(resolved).name))
-        settings.save()
-    return settings
+    with _SETTINGS_LOCK:
+        settings = AppSettings.load()
+        resolved = str(path.expanduser().resolve())
+        if not any(w.path == resolved for w in settings.workspaces):
+            settings.workspaces.append(Workspace(path=resolved, name=name or Path(resolved).name))
+            settings._write()
+        return settings
 
 
 def public_settings(settings: AppSettings) -> dict[str, Any]:

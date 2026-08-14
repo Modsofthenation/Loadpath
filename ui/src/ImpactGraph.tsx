@@ -1,4 +1,4 @@
-import { Background, Controls, MiniMap, ReactFlow, type Edge, type Node } from "@xyflow/react";
+import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { layoutNodes, type GraphEdge, type GraphNode } from "./types";
 
@@ -44,10 +44,12 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
     }));
 
   return (
-    <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} fitView minZoom={0.2} data-testid="impact-graph">
-      <Background />
-      <MiniMap pannable zoomable />
-      <Controls />
-    </ReactFlow>
+    <ReactFlowProvider>
+      <ReactFlow nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} fitView minZoom={0.2} data-testid="impact-graph">
+        <Background />
+        <MiniMap pannable zoomable />
+        <Controls />
+      </ReactFlow>
+    </ReactFlowProvider>
   );
 }

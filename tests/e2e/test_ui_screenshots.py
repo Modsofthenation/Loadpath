@@ -13,9 +13,6 @@ import uvicorn
 from loadpath.server.app import create_app
 from tests.conftest import prepare_review_repo
 
-SCREENSHOT_DIR = Path(__file__).resolve().parents[2] / "docs" / "screenshots"
-PRETTY_REPO = Path("/tmp/acme-billing")
-
 
 def _free_port() -> int:
     sock = socket.socket()
@@ -32,9 +29,8 @@ def live_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir()
     repo = prepare_review_repo(tmp_path)
-    if PRETTY_REPO.exists():
-        shutil.rmtree(PRETTY_REPO)
-    shutil.copytree(repo, PRETTY_REPO)
+    pretty = tmp_path / "acme-billing"
+    shutil.copytree(repo, pretty)
     port = _free_port()
     server = uvicorn.Server(
         uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning")
@@ -48,12 +44,10 @@ def live_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[
     if not server.started:
         pytest.skip("uvicorn failed to start")
     try:
-        yield f"http://127.0.0.1:{port}", PRETTY_REPO
+        yield f"http://127.0.0.1:{port}", pretty
     finally:
         server.should_exit = True
         thread.join(timeout=5)
-        if PRETTY_REPO.exists():
-            shutil.rmtree(PRETTY_REPO, ignore_errors=True)
 
 
 def _playwright_page():
@@ -92,7 +86,7 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path):
         page.get_by_test_id("base-ref").fill("HEAD~1")
         page.get_by_test_id("head-ref").fill("HEAD")
 
-        dest = Path(os.environ.get("LOADPATH_SCREENSHOT_DIR", str(SCREENSHOT_DIR)))
+        dest = Path(os.environ.get("LOADPATH_SCREENSHOT_DIR", str(tmp_path / "shots")))
         dest.mkdir(parents=True, exist_ok=True)
 
         with page.expect_response(

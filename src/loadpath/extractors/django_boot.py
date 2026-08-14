@@ -12,7 +12,7 @@ from loadpath.types import Edge, EdgeType, ExtractedGraph, Node, NodeType, node_
 
 def try_boot_models(repo_root: Path, config: LoadpathConfig) -> ExtractedGraph:
     graph = ExtractedGraph()
-    settings_mod = _discover_settings_module(repo_root)
+    settings_mod = _discover_settings_module(repo_root, config.django_root)
     if not settings_mod:
         return graph
     try:
@@ -107,15 +107,26 @@ def try_boot_models(repo_root: Path, config: LoadpathConfig) -> ExtractedGraph:
     return graph
 
 
-def _discover_settings_module(repo_root: Path) -> str | None:
+def _discover_settings_module(repo_root: Path, django_root: str = "backend") -> str | None:
     env = os.environ.get("DJANGO_SETTINGS_MODULE")
     if env:
         return env
+    django_path = (repo_root / django_root).resolve()
+    candidates: list[Path] = []
     for settings in repo_root.rglob("settings.py"):
-        rel = settings.relative_to(repo_root).with_suffix("")
+        rel = settings.relative_to(repo_root)
         if any(part.startswith(".") for part in rel.parts):
             continue
         if "site-packages" in rel.parts:
             continue
-        return ".".join(rel.parts)
-    return None
+        candidates.append(settings)
+    if not candidates:
+        return None
+    for settings in candidates:
+        try:
+            rel = settings.resolve().relative_to(django_path).with_suffix("")
+            return ".".join(rel.parts)
+        except ValueError:
+            continue
+    rel = candidates[0].relative_to(repo_root).with_suffix("")
+    return ".".join(rel.parts)
