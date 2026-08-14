@@ -26,6 +26,7 @@ rules:
   - no_queryset_in_serializer
   - celery_tasks_must_be_idempotent_on_model_pk
   - queryset_nplusone
+  - queryset_missing_index
   - cascade_crosses_context
   - migration_blast_radius
 django_root: backend

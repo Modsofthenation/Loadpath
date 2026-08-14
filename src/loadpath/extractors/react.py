@@ -58,7 +58,12 @@ PATH_OBJ_RE = re.compile(
     r"""path\s*:\s*['"]([^'"]+)['"][^}]*?(?:element|Component)\s*:\s*<?\s*([A-Z][A-Za-z0-9_]*)""",
     re.S,
 )
-SWR_RE = re.compile(r"""useSWR\s*\(\s*(['"`][^'"`]+['"`]|[A-Za-z0-9_\.\[\]\s,"'`]+)""")
+INVALIDATE_RE = re.compile(
+    r"""invalidateQueries\s*\(\s*\{[^}]*queryKey\s*:\s*(\[[^\]]*\])""",
+    re.S,
+)
+DEFAULT_VALUE_RE = re.compile(r"""(?:defaultValue|name)\s*=\s*(?:\{[^}]*\.(\w+)|['"](\w+)['"])""")
+BOUNDARY_RE = re.compile(r"""\b(ErrorBoundary|Suspense)\b""")
 RTK_RE = re.compile(r"""createApi\s*\(\s*\{""")
 FEATURE_FOLDER_RE = re.compile(r"""features/([^/]+)""")
 
@@ -157,7 +162,13 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
         line = source[: m.start()].count("\n") + 1
         is_page = name.endswith("Page") or "pages/" in rel or name.endswith("Screen")
         ntype = NodeType.PAGE if is_page else NodeType.COMPONENT
-        n = add(ntype, name, f"{feature or 'app'}.{name}", line, {"feature": feature})
+        extra: dict = {"feature": feature}
+        if is_page:
+            extra["has_error_boundary"] = bool(BOUNDARY_RE.search(source))
+        defaults = [a or b for a, b in DEFAULT_VALUE_RE.findall(source)]
+        if defaults:
+            extra["form_fields"] = sorted(set(defaults))
+        n = add(ntype, name, f"{feature or 'app'}.{name}", line, extra)
         components.append(n)
         if feature:
             edge(n.id, node_id(NodeType.FEATURE_MODULE, f"features.{feature}"), EdgeType.BELONGS_TO)
@@ -199,6 +210,20 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
             )
             for h in hooks or components:
                 edge(h.id, qn.id, EdgeType.USES_QUERY_KEY)
+
+    for m in INVALIDATE_RE.finditer(source):
+        key_raw = m.group(1)
+        line = source[: m.start()].count("\n") + 1
+        key_name = re.sub(r"""\s+""", "", key_raw)
+        qn = add(
+            NodeType.QUERY_KEY,
+            key_name,
+            f"{feature or 'app'}.queryKey.{key_name}",
+            line,
+            {"raw": key_raw, "feature": feature, "invalidation": True},
+        )
+        for h in hooks or components:
+            edge(h.id, qn.id, EdgeType.USES_QUERY_KEY, extra={"invalidates": True})
 
     for m in TEMPLATE_FETCH_RE.finditer(source):
         url = m.group("turl") or m.group(3) or m.group(4)
@@ -279,7 +304,13 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
 
     if is_test:
         line = 1
-        tn = add(NodeType.REACT_TEST, stem, f"test.{rel}", line, {"file": rel})
+        tn = add(
+            NodeType.REACT_TEST,
+            stem,
+            f"test.{rel}",
+            line,
+            {"file": rel, "mentions": sorted(set(re.findall(r"""['"](\w+)['"]""", source)))},
+        )
         for m in RTL_RENDER_RE.finditer(source):
             name = m.group(1)
             edge(node_id(NodeType.PAGE, f"{feature or 'app'}.{name}"), tn.id, EdgeType.TESTED_BY)

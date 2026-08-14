@@ -268,6 +268,7 @@ class DjangoExtractor(ast.NodeVisitor):
             self._enqueue(node, fname, broker="celery")
         elif short in CELERY_CANVAS and self._looks_like_celery(fname):
             self.graph.residuals.append(f"Celery canvas {fname}() at {self.rel_path}:{node.lineno}")
+            self._enqueue_from_canvas(node)
         elif short == "send_task":
             self._send_task(node)
         elif short in DRAMATIQ_ENQUEUE and self._looks_like_dramatiq_send(fname):
@@ -468,6 +469,20 @@ class DjangoExtractor(ast.NodeVisitor):
                 Node(id=pid, type=NodeType.PERMISSION, name=perm, qualified_name=perm, extra={"from_view": qname})
             )
             self.add_edge(view.id, pid, EdgeType.HAS_PERMISSION)
+        for throttle in extra.get("throttles") or []:
+            tid = node_id(NodeType.THROTTLE, throttle)
+            self.graph.nodes.append(
+                Node(
+                    id=tid,
+                    type=NodeType.THROTTLE,
+                    name=throttle,
+                    qualified_name=throttle,
+                    extra={"from_view": qname},
+                )
+            )
+            self.add_edge(view.id, tid, EdgeType.HAS_PERMISSION)
+        if extra.get("pagination"):
+            extra["pagination_sink"] = True
         if queryset_model:
             self.add_edge(
                 view.id,
@@ -633,6 +648,18 @@ class DjangoExtractor(ast.NodeVisitor):
                     break
         return app, short, f"{app}.{short}"
 
+    def _enqueue_from_canvas(self, node: ast.Call) -> None:
+        for arg in list(node.args) + [kw.value for kw in node.keywords]:
+            for child in ast.walk(arg):
+                if not isinstance(child, ast.Call):
+                    continue
+                fname = _name(child.func) or ""
+                short = fname.split(".")[-1]
+                if short in CELERY_ENQUEUE or short in CELERY_SIGNATURE:
+                    self._enqueue(child, fname, broker="celery")
+                elif short in DRAMATIQ_ENQUEUE:
+                    self._enqueue(child, fname, broker="dramatiq")
+
     def _enqueue_from_on_commit(self, node: ast.Call) -> None:
         for arg in list(node.args) + [kw.value for kw in node.keywords]:
             for child in ast.walk(arg):
@@ -795,6 +822,13 @@ class DjangoExtractor(ast.NodeVisitor):
             return
         qname = f"{self.app}.{node.name}"
         extra = {"app": self.app, "nodeid": f"{self.rel_path}::{node.name}"}
+        mentions: set[str] = set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                mentions.add(child.value)
+            elif isinstance(child, ast.Attribute):
+                mentions.add(child.attr)
+        extra["mentions"] = sorted(mentions)
         test = self.add_node(NodeType.TEST, node.name, qname, node.lineno, extra)
         # crude: referenced class names in the test become tested_by
         for child in ast.walk(node):
@@ -993,6 +1027,9 @@ def extract_django_file(rel_path: str, source: str, config: LoadpathConfig) -> E
     from loadpath.orm.nplusone import apply_nplusone
 
     apply_nplusone(extractor.graph, tree)
+    from loadpath.orm.lookups import apply_lookups
+
+    apply_lookups(extractor.graph, tree)
     return extractor.graph
 
 

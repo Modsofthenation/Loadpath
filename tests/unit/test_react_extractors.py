@@ -71,3 +71,35 @@ def test_feature_context_from_path():
     )
     pages = [n for n in g.nodes if n.type in {NodeType.PAGE, NodeType.HOOK}]
     assert any(n.context == "identity" for n in pages)
+
+
+def test_form_default_values_and_missing_boundary():
+    g = extract_react_file(
+        "frontend/src/features/billing/InvoiceForm.tsx",
+        (FIXTURE / "frontend/src/features/billing/InvoiceForm.tsx").read_text(),
+        _cfg(),
+    )
+    form = next(n for n in g.nodes if n.name == "InvoiceForm")
+    assert "total" in (form.extra.get("form_fields") or [])
+    page = extract_react_file(
+        "frontend/src/features/billing/InvoicePage.tsx",
+        (FIXTURE / "frontend/src/features/billing/InvoicePage.tsx").read_text(),
+        _cfg(),
+    )
+    invoice_page = next(n for n in page.nodes if n.name == "InvoicePage")
+    assert invoice_page.extra.get("has_error_boundary") is False
+
+
+def test_invalidate_queries_marked():
+    src = """
+export function useSaveInvoice() {
+  return useMutation({
+    mutationFn: save,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["invoice", id] }),
+  });
+}
+"""
+    g = extract_react_file("frontend/src/features/billing/useSaveInvoice.ts", src, _cfg())
+    keys = [n for n in g.nodes if n.type is NodeType.QUERY_KEY]
+    assert keys
+    assert any((n.extra or {}).get("invalidation") for n in keys)

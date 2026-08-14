@@ -59,6 +59,11 @@ def render_markdown(review: dict) -> str:
         for c in (evolution.get("change_coupling") or [])[:4]:
             flag = " (cross-context)" if c.get("cross_context") else ""
             lines.append(f"- coupling `{c['a']}` ↔ `{c['b']}` ×{c['together']}{flag}")
+        for fn in (evolution.get("functions") or [])[:4]:
+            lines.append(f"- `{fn['path']}::{fn['name']}` cyclomatic {fn.get('complexity', 0)}")
+    knowledge = review.get("knowledge_owners") or []
+    if knowledge:
+        lines += ["", "### Knowledge on this path", ", ".join(f"`{k}`" for k in knowledge)]
     index = review.get("index") or {}
     counts = index.get("counts") or review.get("counts") or {}
     if counts:

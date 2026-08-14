@@ -41,6 +41,8 @@ def test_serializer_field_change_traces_to_react_form(tmp_path: Path):
     assert any(n["type"] == "react.page" and n["name"] == "InvoicePage" for n in review["nodes"])
     assert not any(n["name"] in {"MePage", "MeView", "MeSerializer"} for n in review["nodes"])
     assert review["suggested_reviewers"] == ["billing-team"]
+    assert "knowledge_owners" in review
+    assert not any(f["rule"] == "queryset_missing_index" for f in review["findings"] if not f.get("waived"))
     assert any(e["type"] == "consumed_by_client" for e in review["edges"])
     assert any(e["type"] == "matches_schema" for e in review["edges"])
 

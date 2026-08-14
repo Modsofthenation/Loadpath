@@ -49,6 +49,7 @@ def analyze_evolution(
                 pair_counts[pair] += 1
 
     complexity = _complexity_for_diff(repo_root, diff)
+    functions = _changed_functions(repo_root, diff)
     hotspots = []
     for path in impact_files:
         commits_n = file_commits.get(path, 0)
@@ -90,16 +91,17 @@ def analyze_evolution(
         if len(coupling) >= 12:
             break
 
-    notes = _notes(hotspots, coupling)
+    notes = _notes(hotspots, coupling, functions)
     return {
         "hotspots": hotspots[:16],
         "change_coupling": coupling,
+        "functions": functions[:12],
         "notes": notes,
         "commits_sampled": len(commits),
     }
 
 
-def _notes(hotspots: list[dict], coupling: list[dict]) -> list[str]:
+def _notes(hotspots: list[dict], coupling: list[dict], functions: list[dict] | None = None) -> list[str]:
     notes: list[str] = []
     for h in hotspots:
         if h["commits"] >= 5 and h["bus_factor"] == 1:
@@ -122,6 +124,11 @@ def _notes(hotspots: list[dict], coupling: list[dict]) -> list[str]:
         elif c["degree"] >= 0.6:
             notes.append(
                 f"Temporal coupling {c['a']} ↔ {c['b']} ({c['together']} co-changes) — files move together"
+            )
+    for fn in functions or []:
+        if fn.get("complexity", 0) >= 12:
+            notes.append(
+                f"{fn['path']}::{fn['name']} changed with cyclomatic complexity {fn['complexity']}"
             )
     # unique preserve order
     seen: set[str] = set()
@@ -165,6 +172,31 @@ def _git_commits(repo_root: Path, limit: int) -> list[dict]:
         if current is not None:
             current["files"].append(line.strip())
     return commits
+
+
+def _changed_functions(repo_root: Path, diff: DiffSet) -> list[dict]:
+    out: list[dict] = []
+    for fd in diff.files:
+        if fd.skip or not fd.path.endswith(".py"):
+            continue
+        changed = _changed_lines(fd)
+        path = repo_root / fd.path
+        if not path.is_file():
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            start = getattr(node, "lineno", 0) or 0
+            end = getattr(node, "end_lineno", start) or start
+            if changed and not any(start <= ln <= end for ln in changed):
+                continue
+            out.append({"path": fd.path, "name": node.name, "complexity": _cyclomatic(node)})
+    out.sort(key=lambda f: f["complexity"], reverse=True)
+    return out
 
 
 def _complexity_for_diff(repo_root: Path, diff: DiffSet) -> dict[str, int]:

@@ -147,6 +147,7 @@ AST is enough for review. If you need live `_meta` (db_table, resolved relations
 | `no_queryset_in_serializer` | Serializers must not run querysets |
 | `celery_tasks_must_be_idempotent_on_model_pk` | Celery and Dramatiq tasks take a model pk |
 | `queryset_nplusone` | Loops over querysets that touch related objects need `select_related` / `prefetch_related` |
+| `queryset_missing_index` | `.filter()` / `.order_by()` on a field that has no `db_index` / `unique` |
 | `cascade_crosses_context` | `on_delete=CASCADE` must not blast into another bounded context |
 | `migration_blast_radius` | `RemoveField` / `DeleteModel` still referenced by the typed graph |
 

@@ -123,3 +123,12 @@ def test_migration_blast_radius_keyword_order(tmp_path: Path):
     assert hits
     assert any("total" in f.message for f in hits)
     store.close()
+
+
+def test_missing_index_on_unindexed_filter(tmp_path: Path):
+    store = index_repo(FIXTURE, db_path=tmp_path / "g.sqlite3", incremental=False)
+    findings = evaluate(store, load_config(FIXTURE))
+    hits = [f for f in findings if f.rule == "queryset_missing_index" and not f.waived]
+    assert hits
+    assert any("status" in f.message for f in hits)
+    store.close()

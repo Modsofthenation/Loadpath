@@ -74,6 +74,7 @@ def _owner_node(graph: ExtractedGraph, name: str | None):
 
 def scan_nplusone(tree: ast.AST) -> list[NPlusOne]:
     findings: list[NPlusOne] = []
+    returns = _return_map(tree)
 
     def visit_function(fn: ast.FunctionDef | ast.AsyncFunctionDef, owner: str) -> None:
         bindings: dict[str, ast.AST] = {}
@@ -86,7 +87,7 @@ def scan_nplusone(tree: ast.AST) -> list[NPlusOne]:
                 if isinstance(stmt, ast.ClassDef):
                     continue
                 if isinstance(stmt, ast.For):
-                    _scan_for(stmt, bindings, owner, findings)
+                    _scan_for(stmt, bindings, owner, findings, returns)
                     walk_stmts(stmt.body)
                     walk_stmts(stmt.orelse)
                     continue
@@ -133,13 +134,49 @@ def _bind(stmt: ast.AST, bindings: dict[str, ast.AST]) -> None:
         bindings[stmt.target.id] = stmt.value
 
 
-def _scan_for(node: ast.For, bindings: dict[str, ast.AST], owner: str, findings: list[NPlusOne]) -> None:
+def _return_map(tree: ast.AST) -> dict[str, ast.AST]:
+    """One-hop helper returns (module + class methods)."""
+    out: dict[str, ast.AST] = {}
+
+    def take(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        for stmt in reversed(fn.body):
+            if isinstance(stmt, ast.Return) and stmt.value is not None:
+                out[fn.name] = stmt.value
+                return
+
+    if not isinstance(tree, ast.Module):
+        return out
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            take(node)
+        elif isinstance(node, ast.ClassDef):
+            for stmt in node.body:
+                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    take(stmt)
+    return out
+
+
+def _resolve_iter(source: ast.AST, bindings: dict[str, ast.AST], returns: dict[str, ast.AST]) -> ast.AST:
+    if isinstance(source, ast.Name) and source.id in bindings:
+        source = bindings[source.id]
+    if isinstance(source, ast.Call):
+        name = _call_name(source)
+        if name in returns:
+            source = returns[name]
+    return source
+
+
+def _scan_for(
+    node: ast.For,
+    bindings: dict[str, ast.AST],
+    owner: str,
+    findings: list[NPlusOne],
+    returns: dict[str, ast.AST] | None = None,
+) -> None:
     if not isinstance(node.target, ast.Name):
         return
     loop_var = node.target.id
-    source = node.iter
-    if isinstance(source, ast.Name) and source.id in bindings:
-        source = bindings[source.id]
+    source = _resolve_iter(node.iter, bindings, returns or {})
     qs_text, selects, prefetches, is_qs = _queryset_shape(source)
     if not is_qs:
         return
@@ -219,16 +256,31 @@ def _queryset_shape(node: ast.AST) -> tuple[str, set[str], set[str], bool]:
         elif short == "prefetch_related":
             if cleared:
                 prefetches.clear()
-            elif args:
-                prefetches.update(a.split("__")[0] for a in args)
             else:
-                prefetches.add("*")
+                string_args = [a for a in (_const_str(a) for a in call.args) if a]
+                prefetch_objs = [
+                    _const_str(arg.args[0])
+                    for arg in call.args
+                    if isinstance(arg, ast.Call) and _call_name(arg) == "Prefetch" and arg.args
+                ]
+                if string_args:
+                    prefetches.update(a.split("__")[0] for a in string_args)
+                for inner in prefetch_objs:
+                    if inner:
+                        prefetches.add(inner.split("__")[0])
+                if not string_args and not prefetch_objs and not any(
+                    isinstance(arg, ast.Call) and _call_name(arg) == "Prefetch" for arg in call.args
+                ):
+                    if not call.args:
+                        prefetches.add("*")
             for kw in call.keywords:
                 val = kw.value
                 if isinstance(val, ast.Call) and val.args:
                     inner = _const_str(val.args[0])
                     if inner:
                         prefetches.add(inner.split("__")[0])
+                elif _const_str(val):
+                    prefetches.add((_const_str(val) or "").split("__")[0])
     return text, selects, prefetches, looks
 
 
@@ -240,6 +292,8 @@ def _related_access(node: ast.AST, loop_var: str) -> tuple[str | None, str]:
             if not fields[0].startswith("_"):
                 return "prefetch_related", fields[0]
     if isinstance(node, ast.Attribute):
+        if node.attr in {"all", "filter", "exclude", "count", "exists", "first", "last"}:
+            return None, ""
         root, fields = _attr_root(node)
         if root != loop_var or not fields:
             return None, ""
