@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import { ImpactGraph } from "./ImpactGraph";
-import type { PullRequest, Review } from "./types";
+import type { ArchitectureReport, IndexedRepo, PullRequest, Review } from "./types";
 
-type Tab = "review" | "prs" | "graph" | "settings";
+type Tab = "review" | "architecture" | "graph" | "prs" | "settings";
+type GraphMode = "review" | "architecture";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("review");
@@ -11,6 +12,9 @@ export function App() {
   const [base, setBase] = useState("HEAD~1");
   const [head, setHead] = useState("HEAD");
   const [review, setReview] = useState<Review | null>(null);
+  const [architecture, setArchitecture] = useState<ArchitectureReport | null>(null);
+  const [repos, setRepos] = useState<IndexedRepo[]>([]);
+  const [graphMode, setGraphMode] = useState<GraphMode>("review");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [settings, setSettings] = useState<Record<string, unknown>>({});
@@ -21,16 +25,37 @@ export function App() {
 
   useEffect(() => {
     api.settings().then(setSettings).catch(() => undefined);
+    api.repos().then((r) => setRepos(r.repos)).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (tab !== "architecture" || !repo) return;
+    api.architecture(repo).then(setArchitecture).catch(() => undefined);
+  }, [tab, repo]);
+
+  const persistRepo = (path: string) => {
+    setRepo(path);
+    localStorage.setItem("loadpath.repo", path);
+  };
+
+  const loadArchitecture = async (path = repo) => {
+    if (!path) return null;
+    const report = await api.architecture(path);
+    setArchitecture(report);
+    return report;
+  };
 
   const runReview = async () => {
     setError("");
     setBusy("Tracing load path…");
-    localStorage.setItem("loadpath.repo", repo);
+    persistRepo(repo);
     try {
-      const r = await api.review(repo, base, head);
+      const r = await api.review(repo, base, head, true);
       setReview(r);
+      setGraphMode("review");
       setTab("review");
+      await api.repos().then((x) => setRepos(x.repos)).catch(() => undefined);
+      await loadArchitecture(repo);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -38,11 +63,18 @@ export function App() {
     }
   };
 
-  const runIndex = async () => {
+  const runIndex = async (incremental = true) => {
     setError("");
-    setBusy("Indexing…");
+    setBusy(incremental ? "Indexing…" : "Full reindex…");
+    persistRepo(repo);
     try {
-      await api.index(repo);
+      await api.index(repo, incremental);
+      const report = await loadArchitecture(repo);
+      await api.repos().then((x) => setRepos(x.repos)).catch(() => undefined);
+      if (report?.indexed) {
+        setGraphMode("architecture");
+        setTab("architecture");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -74,7 +106,11 @@ export function App() {
       ai_api_key: String(fd.get("ai_api_key") || ""),
       ai_model: String(fd.get("ai_model") || ""),
       ai_base_url: String(fd.get("ai_base_url") || ""),
-      workspaces: repo ? [{ path: repo, name: repo.split(/[\\/]/).pop() }] : [],
+      workspaces: repos.length
+        ? repos.map((r) => ({ path: r.path, name: r.name }))
+        : repo
+          ? [{ path: repo, name: repo.split(/[\\/]/).pop() }]
+          : [],
     };
     setSettings(await api.saveSettings(body));
   };
@@ -92,8 +128,20 @@ export function App() {
     }
   };
 
-  const graphNodes = useMemo(() => review?.nodes ?? [], [review]);
-  const graphEdges = useMemo(() => review?.edges ?? [], [review]);
+  const graphNodes = useMemo(() => {
+    if (graphMode === "architecture") return architecture?.nodes ?? [];
+    return review?.nodes ?? [];
+  }, [graphMode, architecture, review]);
+  const graphEdges = useMemo(() => {
+    if (graphMode === "architecture") return architecture?.edges ?? [];
+    return review?.edges ?? [];
+  }, [graphMode, architecture, review]);
+
+  const indexLine = review?.index
+    ? `${review.index.counts.nodes} nodes / ${review.index.counts.edges} edges · ${review.index.incremental ? "incremental" : "full"}`
+    : architecture?.indexed
+      ? `${architecture.counts.nodes} nodes / ${architecture.counts.edges} edges indexed`
+      : "Not indexed";
 
   return (
     <div className="app">
@@ -101,6 +149,13 @@ export function App() {
         <div className="brand">Loadpath</div>
         <button data-testid="tab-review" className={tab === "review" ? "active" : ""} onClick={() => setTab("review")}>
           Review
+        </button>
+        <button
+          data-testid="tab-architecture"
+          className={tab === "architecture" ? "active" : ""}
+          onClick={() => setTab("architecture")}
+        >
+          Architecture
         </button>
         <button data-testid="tab-graph" className={tab === "graph" ? "active" : ""} onClick={() => setTab("graph")}>
           Impact graph
@@ -112,10 +167,27 @@ export function App() {
           Settings
         </button>
         <div style={{ flex: 1 }} />
-        <div className="muted">{busy || "Django + React load paths"}</div>
+        <div className="muted">{busy || indexLine}</div>
       </nav>
       <div className="main">
         <div className="topbar" data-testid="topbar">
+          {repos.length > 0 ? (
+            <select
+              data-testid="workspace-select"
+              value={repos.some((r) => r.path === repo) ? repo : ""}
+              onChange={(e) => {
+                if (e.target.value) persistRepo(e.target.value);
+              }}
+            >
+              <option value="">Indexed repos…</option>
+              {repos.map((r) => (
+                <option key={r.path} value={r.path}>
+                  {r.name}
+                  {r.indexed ? ` (${r.counts.nodes})` : ""}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <input
             data-testid="repo-path"
             className="path"
@@ -125,7 +197,9 @@ export function App() {
           />
           <input data-testid="base-ref" value={base} onChange={(e) => setBase(e.target.value)} placeholder="base" />
           <input data-testid="head-ref" value={head} onChange={(e) => setHead(e.target.value)} placeholder="head" />
-          <button data-testid="btn-index" onClick={runIndex}>Index</button>
+          <button data-testid="btn-index" onClick={() => runIndex(true)}>
+            Index
+          </button>
           <button data-testid="btn-review" className="btn primary" onClick={runReview}>
             Review
           </button>
@@ -147,6 +221,15 @@ export function App() {
                     </span>
                   ))}
                   <pre className="headline">{review.headline}</pre>
+                  {review.index ? (
+                    <>
+                      <div className="kicker">Index</div>
+                      <div className="muted">
+                        Walked {review.index.counts.nodes} nodes / {review.index.counts.edges} edges
+                        {review.index.reindexed ? " after an incremental refresh" : " from the existing index"}.
+                      </div>
+                    </>
+                  ) : null}
                   <div className="kicker">Read this</div>
                   {review.read_order.map((f) => (
                     <div key={f.path}>
@@ -188,20 +271,112 @@ export function App() {
                 </>
               ) : (
                 <p className="muted">
-                  Point at a Django + React monorepo with <code>loadpath.yml</code>, then review a git
-                  range. The graph — not hunk comments — is the artifact.
+                  Index a Django + React monorepo with <code>loadpath.yml</code>, inspect architecture, then review a
+                  git range against that graph.
                 </p>
               )}
             </aside>
             <div className="graph-wrap" data-testid="review-graph">
-              {review ? <ImpactGraph nodes={graphNodes} edges={graphEdges} /> : null}
+              {review ? <ImpactGraph nodes={review.nodes} edges={review.edges} /> : null}
+            </div>
+          </div>
+        )}
+
+        {tab === "architecture" && (
+          <div className="content" data-testid="architecture-panel">
+            <aside className="brief" data-testid="architecture-brief">
+              {architecture?.indexed ? (
+                <>
+                  <div className="level high">INDEXED — {architecture.counts.nodes} nodes</div>
+                  <span className="chip">
+                    {architecture.counts.edges} edges
+                  </span>
+                  {architecture.has_config ? <span className="chip">loadpath.yml</span> : null}
+                  <div className="muted" style={{ marginTop: 8 }}>
+                    {architecture.indexed_at ? `Last index ${architecture.indexed_at}` : "Indexed"}
+                    {architecture.incremental ? " · incremental" : " · full"}
+                  </div>
+                  <div className="kicker">Bounded contexts</div>
+                  {Object.values(architecture.contexts).map((ctx) => (
+                    <div key={ctx.name} className="muted">
+                      <strong>{ctx.name}</strong> — {(ctx.django_apps || []).join(", ") || "no apps"} ·{" "}
+                      {(ctx.owners || []).join(", ") || "unowned"}
+                    </div>
+                  ))}
+                  <div className="kicker">Rules</div>
+                  {(architecture.rules || []).map((rule) => (
+                    <div key={rule} className="muted">
+                      {rule}
+                    </div>
+                  ))}
+                  <div className="kicker">Findings on the indexed graph</div>
+                  {architecture.findings.filter((f) => !f.waived).length === 0 ? (
+                    <div className="muted">No architecture rule hits on the full graph.</div>
+                  ) : (
+                    architecture.findings
+                      .filter((f) => !f.waived)
+                      .map((f) => (
+                        <div key={f.rule + f.message} className="muted">
+                          <span className={`chip ${f.severity}`}>{f.severity}</span>
+                          {f.message}
+                        </div>
+                      ))
+                  )}
+                  <div className="kicker">Types</div>
+                  <div className="muted">
+                    {Object.entries(architecture.type_counts || {})
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 12)
+                      .map(([t, n]) => `${t.split(".").pop()} ${n}`)
+                      .join(" · ")}
+                  </div>
+                  <button className="btn" style={{ marginTop: 12 }} onClick={() => runIndex(false)} data-testid="btn-full-reindex">
+                    Full reindex
+                  </button>
+                  <button className="btn primary" style={{ marginTop: 8 }} onClick={runReview}>
+                    Review against this index
+                  </button>
+                </>
+              ) : (
+                <p className="muted" data-testid="architecture-empty">
+                  Index this repo to build the architecture graph. Review then walks that same graph for a git range —
+                  it does not start from a hunk list.
+                </p>
+              )}
+            </aside>
+            <div className="graph-wrap" data-testid="architecture-graph">
+              {architecture?.indexed ? (
+                <ImpactGraph nodes={architecture.nodes} edges={architecture.edges} />
+              ) : null}
             </div>
           </div>
         )}
 
         {tab === "graph" && (
-          <div className="graph-wrap" data-testid="graph-full" style={{ height: "100%" }}>
-            {review ? <ImpactGraph nodes={graphNodes} edges={graphEdges} /> : <p className="muted">Run a review first.</p>}
+          <div className="graph-wrap" data-testid="graph-full" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+            <div className="graph-modes">
+              <button
+                data-testid="graph-mode-review"
+                className={graphMode === "review" ? "active" : ""}
+                onClick={() => setGraphMode("review")}
+              >
+                This review
+              </button>
+              <button
+                data-testid="graph-mode-architecture"
+                className={graphMode === "architecture" ? "active" : ""}
+                onClick={() => setGraphMode("architecture")}
+              >
+                Indexed architecture
+              </button>
+            </div>
+            {graphNodes.length ? (
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <ImpactGraph nodes={graphNodes} edges={graphEdges} />
+              </div>
+            ) : (
+              <p className="muted">Index the repo or run a review first.</p>
+            )}
           </div>
         )}
 
@@ -219,7 +394,9 @@ export function App() {
                 value={scmRepo}
                 onChange={(e) => setScmRepo(e.target.value)}
               />
-              <button data-testid="btn-list-prs" onClick={loadPrs}>List PRs</button>
+              <button data-testid="btn-list-prs" onClick={loadPrs}>
+                List PRs
+              </button>
             </div>
             {prs.map((p) => (
               <article className="pr" data-testid={`pr-${p.number}`} key={`${p.provider}-${p.number}`}>
@@ -253,8 +430,8 @@ export function App() {
           <form className="settings" data-testid="settings-form" onSubmit={saveSettings}>
             <h1>Keys & providers</h1>
             <p className="muted">
-              Tokens stay on this machine in ~/.loadpath/settings.json. GitHub and Bitbucket power the
-              PR list. AI is used only for residual uncertainty the graph could not close.
+              Tokens stay on this machine in ~/.loadpath/settings.json. GitHub and Bitbucket power the PR list. Indexed
+              repos are remembered as workspaces. AI is used only for residual uncertainty the graph could not close.
             </p>
             <label>GitHub token</label>
             <input name="github_token" type="password" placeholder="ghp_…" />

@@ -45,6 +45,17 @@ def render_markdown(review: dict) -> str:
             lines.append(f"- {r}")
     if review["low_risk"]:
         lines += ["", "_Fast-track: `loadpath:low-risk`. Human review can be a glance._"]
+    index = review.get("index") or {}
+    counts = index.get("counts") or review.get("counts") or {}
+    if counts:
+        mode = "incremental" if index.get("incremental") else "full"
+        lines += [
+            "",
+            "### Index",
+            f"{counts.get('nodes', 0)} nodes / {counts.get('edges', 0)} edges"
+            + (f" · {mode}" if index else "")
+            + (f" · {index['indexed_at']}" if index.get("indexed_at") else ""),
+        ]
     return "\n".join(lines) + "\n"
 
 

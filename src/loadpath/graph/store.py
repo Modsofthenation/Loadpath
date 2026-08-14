@@ -290,6 +290,13 @@ class GraphStore:
         e = self.conn.execute("SELECT COUNT(*) AS c FROM edges").fetchone()["c"]
         return {"nodes": n, "edges": e}
 
+    def type_counts(self) -> dict[str, int]:
+        rows = self.conn.execute("SELECT type, COUNT(*) AS c FROM nodes GROUP BY type").fetchall()
+        return {r["type"]: r["c"] for r in rows}
+
+    def file_count(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) AS c FROM files").fetchone()["c"]
+
     @staticmethod
     def _node_from_row(row: sqlite3.Row) -> dict[str, Any]:
         extra = json.loads(row["extra"] or "{}")

@@ -63,6 +63,15 @@ def mask_secret(value: str) -> str:
     return value[:4] + "…" + value[-2:]
 
 
+def register_workspace(path: Path, name: str | None = None) -> AppSettings:
+    settings = AppSettings.load()
+    resolved = str(path.expanduser().resolve())
+    if not any(w.path == resolved for w in settings.workspaces):
+        settings.workspaces.append(Workspace(path=resolved, name=name or Path(resolved).name))
+        settings.save()
+    return settings
+
+
 def public_settings(settings: AppSettings) -> dict[str, Any]:
     data = settings.model_dump()
     data["github_token"] = mask_secret(settings.github_token)

@@ -22,7 +22,25 @@ def test_api_health_index_review_graph_settings(tmp_path, monkeypatch):
 
     indexed = client.post("/api/index", json={"repo_path": str(repo), "incremental": False})
     assert indexed.status_code == 200, indexed.text
-    assert indexed.json()["counts"]["nodes"] > 20
+    summary = indexed.json()
+    assert summary["counts"]["nodes"] > 20
+    assert "billing" in summary["contexts"]
+    assert summary["indexed_at"]
+    assert "django.task" in summary["type_counts"]
+
+    status = client.get("/api/index", params={"repo_path": str(repo)})
+    assert status.json()["indexed"] is True
+    assert "nodes" not in status.json() or status.json().get("nodes") is None
+
+    repos = client.get("/api/repos")
+    assert any(r["path"] == str(repo.resolve()) for r in repos.json()["repos"])
+
+    arch = client.get("/api/architecture", params={"repo_path": str(repo)})
+    assert arch.status_code == 200
+    body_arch = arch.json()
+    assert body_arch["indexed"] is True
+    assert any(n["name"] == "InvoicePage" for n in body_arch["nodes"])
+    assert "celery_tasks_must_be_idempotent_on_model_pk" in body_arch["rules"]
 
     review = client.post(
         "/api/review",
@@ -38,9 +56,12 @@ def test_api_health_index_review_graph_settings(tmp_path, monkeypatch):
     assert "markdown" in body
     assert "Celery" in body["headline"] or "celery" in body["headline"].lower()
     assert "Dramatiq" in body["headline"] or "dramatiq" in body["headline"].lower()
+    assert body["index"]["counts"]["nodes"] > 20
+    assert body["index"]["reindexed"] is False
 
-    graph = client.get("/api/graph", params={"repo_path": str(repo)})
+    graph = client.get("/api/graph", params={"repo_path": str(repo), "scope": "architecture"})
     assert graph.status_code == 200
+    assert graph.json()["scope"] == "architecture"
     assert graph.json()["counts"]["edges"] > 0
 
     cfg = client.get("/api/config", params={"repo_path": str(repo)})
@@ -57,6 +78,21 @@ def test_api_health_index_review_graph_settings(tmp_path, monkeypatch):
     home = client.get("/")
     assert home.status_code == 200
     assert b"Loadpath" in home.content
+
+
+def test_review_without_index_is_conflict(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    repo = prepare_review_repo(tmp_path)
+    db = repo / ".loadpath" / "graph.sqlite3"
+    if db.exists():
+        db.unlink()
+    client = TestClient(create_app())
+    review = client.post(
+        "/api/review",
+        json={"repo_path": str(repo), "base": "HEAD~1", "head": "HEAD", "reindex": False},
+    )
+    assert review.status_code == 409
 
 
 @respx.mock

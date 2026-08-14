@@ -11,13 +11,14 @@ from pydantic import BaseModel, Field
 
 from loadpath import __version__
 from loadpath.ai.providers import client_for, residual_prompt
+from loadpath.architecture.snapshot import architecture_graph, architecture_report, summarize_index
 from loadpath.config import load_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_repo
 from loadpath.providers.scm import provider_for
 from loadpath.review.engine import run_review
 from loadpath.review.render import render_html, render_markdown
-from loadpath.settings import AppSettings, public_settings, settings_path
+from loadpath.settings import AppSettings, public_settings, register_workspace, settings_path
 
 
 class IndexRequest(BaseModel):
@@ -30,6 +31,7 @@ class ReviewRequest(BaseModel):
     base: str = "origin/main"
     head: str | None = None
     reindex: bool = True
+    incremental: bool = True
 
 
 class SettingsUpdate(BaseModel):
@@ -105,9 +107,47 @@ def create_app() -> FastAPI:
         if not root.is_dir():
             raise HTTPException(404, f"Repo not found: {root}")
         store = index_repo(root, incremental=body.incremental)
-        counts = store.counts()
+        register_workspace(root)
+        summary = summarize_index(store, load_config(root))
         store.close()
-        return {"ok": True, "counts": counts, "db": str(default_db_path(root))}
+        return summary
+
+    @app.get("/api/index")
+    def api_index_status(repo_path: str) -> dict[str, Any]:
+        root = Path(repo_path).expanduser().resolve()
+        if not root.is_dir():
+            raise HTTPException(404, f"Repo not found: {root}")
+        report = architecture_report(root)
+        report.pop("nodes", None)
+        report.pop("edges", None)
+        return report
+
+    @app.get("/api/repos")
+    def api_repos() -> dict[str, Any]:
+        settings = AppSettings.load()
+        repos = []
+        for workspace in settings.workspaces:
+            path = Path(workspace.path)
+            item: dict[str, Any] = {
+                "path": workspace.path,
+                "name": workspace.name or path.name,
+                "exists": path.is_dir(),
+                "indexed": False,
+                "counts": {"nodes": 0, "edges": 0},
+            }
+            if path.is_dir():
+                report = architecture_report(path)
+                item.update(
+                    {
+                        "indexed": report["indexed"],
+                        "counts": report.get("counts") or {"nodes": 0, "edges": 0},
+                        "indexed_at": report.get("indexed_at"),
+                        "contexts": list((report.get("contexts") or {}).keys()),
+                        "has_config": report.get("has_config", False),
+                    }
+                )
+            repos.append(item)
+        return {"repos": repos}
 
     @app.post("/api/review")
     def api_review(body: ReviewRequest) -> dict[str, Any]:
@@ -115,10 +155,19 @@ def create_app() -> FastAPI:
         if not root.is_dir():
             raise HTTPException(404, f"Repo not found: {root}")
         try:
-            review = run_review(root, base=body.base, head=body.head, reindex=body.reindex)
+            review = run_review(
+                root,
+                base=body.base,
+                head=body.head,
+                reindex=body.reindex,
+                incremental=body.incremental,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(409, str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(400, str(exc)) from exc
         review["markdown"] = render_markdown(review)
+        register_workspace(root)
         return review
 
     @app.get("/api/reviews")
@@ -143,15 +192,26 @@ def create_app() -> FastAPI:
         return item
 
     @app.get("/api/graph")
-    def api_graph(repo_path: str) -> dict[str, Any]:
+    def api_graph(repo_path: str, scope: str = "full") -> dict[str, Any]:
         root = Path(repo_path).expanduser().resolve()
         db = default_db_path(root)
         if not db.is_file():
-            raise HTTPException(404, "Index the repo first")
+            raise HTTPException(409, "Index the repo first")
         store = GraphStore(db)
-        payload = {"nodes": store.nodes(), "edges": store.edges(), "counts": store.counts()}
+        if scope == "architecture":
+            nodes, edges = architecture_graph(store)
+        else:
+            nodes, edges = store.nodes(), store.edges()
+        payload = {"nodes": nodes, "edges": edges, "counts": store.counts(), "scope": scope}
         store.close()
         return payload
+
+    @app.get("/api/architecture")
+    def api_architecture(repo_path: str) -> dict[str, Any]:
+        root = Path(repo_path).expanduser().resolve()
+        if not root.is_dir():
+            raise HTTPException(404, f"Repo not found: {root}")
+        return architecture_report(root)
 
     @app.get("/api/config")
     def api_config(repo_path: str) -> dict[str, Any]:

@@ -205,13 +205,19 @@ def run_review(
     config: LoadpathConfig | None = None,
     diff: DiffSet | None = None,
     reindex: bool = True,
+    incremental: bool = True,
 ) -> dict:
     repo_root = repo_root.resolve()
     config = config or load_config(repo_root)
+    graph_db = db_path or default_db_path(repo_root)
     if reindex:
-        store = index_repo(repo_root, db_path=db_path, config=config)
+        store = index_repo(repo_root, db_path=graph_db, config=config, incremental=incremental)
     else:
-        store = GraphStore(db_path or default_db_path(repo_root))
+        if not graph_db.is_file():
+            raise FileNotFoundError(
+                f"No index at {graph_db}. Run `loadpath index` or review with reindex enabled."
+            )
+        store = GraphStore(graph_db)
 
     diff = diff or git_diff(repo_root, base, head)
     clusters, impact_nodes, impact_edges = cluster_diff(store, diff)
@@ -269,6 +275,14 @@ def run_review(
         "nodes": impact_nodes,
         "edges": impact_edges,
         "counts": store.counts(),
+        "index": {
+            "db": str(store.db_path),
+            "counts": store.counts(),
+            "type_counts": store.type_counts(),
+            "indexed_at": store.get_meta("indexed_at"),
+            "reindexed": reindex,
+            "incremental": incremental if reindex else store.get_meta("incremental") == "1",
+        },
         "headline": _headline(confidence, title, sinks, tests_note, arch_note, residuals, reviewers),
     }
     store.save_review(payload["id"], payload["created_at"], str(repo_root), diff.base, diff.head, payload)

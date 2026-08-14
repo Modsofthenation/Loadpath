@@ -8,13 +8,24 @@ from tests.conftest import prepare_review_repo
 runner = CliRunner()
 
 
-def test_cli_index_review_json_and_html(tmp_path):
+def test_cli_index_review_json_and_html(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
     repo = prepare_review_repo(tmp_path)
     result = runner.invoke(app, ["index", str(repo)])
     assert result.exit_code == 0, result.output
     assert "nodes" in result.output
+    assert "billing" in result.output
 
-    md = runner.invoke(app, ["review", str(repo), "--base", "HEAD~1", "--head", "HEAD"])
+    arch = runner.invoke(app, ["architecture", str(repo)])
+    assert arch.exit_code == 0, arch.output
+    assert "billing" in arch.output
+    assert "identity" in arch.output
+
+    md = runner.invoke(
+        app,
+        ["review", str(repo), "--base", "HEAD~1", "--head", "HEAD", "--no-reindex"],
+    )
     assert md.exit_code == 0, md.output
     assert "Loadpath" in md.output
     assert "MEDIUM" in md.output or "LOW" in md.output or "HIGH" in md.output
@@ -47,6 +58,7 @@ def test_cli_help():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Loadpath" in result.output
+    assert "architecture" in result.output
 
 
 def test_cli_serve_help():

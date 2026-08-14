@@ -54,6 +54,47 @@ export type Review = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   markdown?: string;
+  index?: {
+    db: string;
+    counts: { nodes: number; edges: number };
+    type_counts?: Record<string, number>;
+    indexed_at?: string | null;
+    reindexed: boolean;
+    incremental: boolean;
+  };
+};
+
+export type ArchitectureReport = {
+  ok: boolean;
+  indexed: boolean;
+  repo_root: string;
+  db?: string;
+  indexed_at?: string | null;
+  incremental?: boolean;
+  counts: { nodes: number; edges: number };
+  type_counts: Record<string, number>;
+  file_count?: number;
+  contexts: Record<
+    string,
+    { name: string; django_apps: string[]; react: string[]; public_api: string[]; owners: string[] }
+  >;
+  rules: string[];
+  findings: Finding[];
+  residuals: string[];
+  has_config?: boolean;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+};
+
+export type IndexedRepo = {
+  path: string;
+  name: string;
+  exists: boolean;
+  indexed: boolean;
+  counts: { nodes: number; edges: number };
+  indexed_at?: string | null;
+  contexts?: string[];
+  has_config?: boolean;
 };
 
 export type PullRequest = {

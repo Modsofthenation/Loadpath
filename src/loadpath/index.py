@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from pathlib import Path
 
 from loadpath.config import LoadpathConfig, load_config
@@ -98,8 +99,9 @@ def index_repo(
     _ensure_context_nodes(store, config)
     stitch_residuals = stitch(store, config, repo_root)
     residuals.extend(stitch_residuals)
-    if residuals:
-        store.set_meta("residuals", "\n".join(residuals))
+    store.set_meta("residuals", "\n".join(residuals))
+    store.set_meta("indexed_at", datetime.now(timezone.utc).isoformat())
+    store.set_meta("incremental", "1" if incremental else "0")
     store.conn.commit()
     return store
 

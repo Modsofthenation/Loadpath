@@ -25,13 +25,19 @@ plus the jobs the view enqueues (`send_invoice_email.delay`, `rebuild_ledger.sen
 
 ### Review
 
-Confidence brief, read-order, clusters, architecture findings, residual list, and the impact subgraph for the git range.
+Confidence brief, read-order, clusters, architecture findings on the impact path, residual list, and the subgraph for the git range. Review walks the **indexed** graph (incremental refresh by default).
 
 ![Review](docs/screenshots/review.png)
 
+### Architecture
+
+Index a repo first. The architecture tab is the full typed graph plus `loadpath.yml` contexts and rules — not a PR diff. Findings here are repo-wide; review then scopes them to the change.
+
+![Architecture](docs/screenshots/architecture.png)
+
 ### Impact graph
 
-Full-canvas layered graph: Django models and serializers on the left, views/tasks in the middle, OpenAPI stitch, React hooks and pages on the right. Dashed edges are inferred (URL/Zod overlap); solid edges are extracted or generated-client stitches.
+Toggle **This review** (impact subgraph) vs **Indexed architecture** (the repo map). Dashed edges are inferred (URL/Zod overlap); solid edges are extracted or generated-client stitches.
 
 ![Impact graph](docs/screenshots/graph.png)
 
@@ -64,12 +70,18 @@ loadpath --help
 # Index a monorepo (SQLite graph at .loadpath/graph.sqlite3, incremental on file hashes)
 loadpath index /path/to/repo
 
-# Review a git range → markdown (also --format html|json)
+# Inspect bounded contexts, rules, and type counts from that index
+loadpath architecture /path/to/repo
+
+# Review a git range against the index (incremental refresh; --no-reindex to reuse as-is)
 loadpath review /path/to/repo --base origin/main --head HEAD
+loadpath review /path/to/repo --base origin/main --no-reindex
 
 # Cross-platform app (API + visual graph + PR list)
 loadpath serve --port 7345
 ```
+
+**Flow:** `index` builds the architecture graph → `architecture` shows contexts and rule hits on the whole repo → `review` walks that same graph for a git range. The app mirrors this: Index registers a workspace, Architecture inspects it, Review traces a change through it.
 
 Put `loadpath.yml` at the repo root (see [`loadpath.yml.example`](loadpath.yml.example) and [`fixtures/demo_monorepo/loadpath.yml`](fixtures/demo_monorepo/loadpath.yml)). The tool is opinionated about *your* architecture, not a generic module graph.
 
@@ -160,10 +172,11 @@ cd ui && npm test
 | --- | --- |
 | `tests/unit/` | Django/React extractors, architecture rules, stitch, SCM/AI providers |
 | `tests/integration/test_review_vertical_slice.py` | Serializer field change reaches InvoicePage/Zod, not MePage; reviewers `billing-team` |
-| `tests/e2e/test_cli_review.py` | `loadpath index` / `review` markdown, JSON, HTML |
-| `tests/e2e/test_api_flow.py` | health, index, review, graph, settings, GitHub + Bitbucket PR list |
+| `tests/e2e/test_cli_review.py` | `loadpath index` / `architecture` / `review` markdown, JSON, HTML |
+| `tests/e2e/test_api_flow.py` | health, index, architecture, review-from-index, graph, settings, GitHub + Bitbucket PR list |
+| `tests/e2e/test_index_architecture_flow.py` | index snapshot, review without index, review walking an existing graph |
 | `tests/e2e/test_brokers_and_django.py` | Celery + Dramatiq sinks, actor-only PR, non-idempotent Dramatiq warning, destructive migration, cross-context blocker, boot overlay, management commands, beat/canvas |
-| `tests/e2e/test_ui_screenshots.py` | Playwright: Review, Impact graph, Pull requests, Settings → `docs/screenshots/` |
+| `tests/e2e/test_ui_screenshots.py` | Playwright: Architecture, Review, Impact graph, Pull requests, Settings → `docs/screenshots/` |
 
 CI installs Chromium and runs the full suite.
 

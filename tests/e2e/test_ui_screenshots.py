@@ -26,7 +26,11 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def live_app(tmp_path: Path) -> Iterator[tuple[str, Path]]:
+def live_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[str, Path]]:
+    original_home = Path.home()
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(original_home / ".cache" / "ms-playwright"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
     repo = prepare_review_repo(tmp_path)
     if PRETTY_REPO.exists():
         shutil.rmtree(PRETTY_REPO)
@@ -87,6 +91,23 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path):
         page.get_by_test_id("repo-path").fill(str(repo))
         page.get_by_test_id("base-ref").fill("HEAD~1")
         page.get_by_test_id("head-ref").fill("HEAD")
+
+        dest = Path(os.environ.get("LOADPATH_SCREENSHOT_DIR", str(SCREENSHOT_DIR)))
+        dest.mkdir(parents=True, exist_ok=True)
+
+        with page.expect_response(
+            lambda r: "/api/index" in r.url and r.request.method == "POST",
+            timeout=60_000,
+        ) as pending_index:
+            page.get_by_test_id("btn-index").click()
+        if not pending_index.value.ok:
+            pytest.fail(f"index API {pending_index.value.status}: {pending_index.value.text()}")
+        page.get_by_test_id("architecture-brief").wait_for(timeout=15_000)
+        page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=15_000)
+        page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+        page.wait_for_timeout(800)
+        page.screenshot(path=str(dest / "architecture.png"), full_page=False)
+
         with page.expect_response(
             lambda r: "/api/review" in r.url and r.request.method == "POST",
             timeout=60_000,
@@ -103,9 +124,6 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path):
         assert "MEDIUM" in brief or "LOW" in brief or "HIGH" in brief
         page.locator(".react-flow__node").first.wait_for(timeout=15_000)
         page.wait_for_timeout(800)
-
-        dest = Path(os.environ.get("LOADPATH_SCREENSHOT_DIR", str(SCREENSHOT_DIR)))
-        dest.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(dest / "review.png"), full_page=False)
 
         page.get_by_test_id("tab-graph").click()
@@ -127,7 +145,7 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path):
         page.wait_for_timeout(200)
         page.screenshot(path=str(dest / "settings.png"), full_page=False)
 
-        for name in ("review.png", "graph.png", "pull-requests.png", "settings.png"):
+        for name in ("architecture.png", "review.png", "graph.png", "pull-requests.png", "settings.png"):
             assert (dest / name).stat().st_size > 1000
     finally:
         browser.close()
