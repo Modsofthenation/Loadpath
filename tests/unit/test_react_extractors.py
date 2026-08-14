@@ -103,3 +103,5 @@ export function useSaveInvoice() {
     keys = [n for n in g.nodes if n.type is NodeType.QUERY_KEY]
     assert keys
     assert any((n.extra or {}).get("invalidation") for n in keys)
+    hook = next(n for n in g.nodes if n.name == "useSaveInvoice")
+    assert hook.extra.get("mutation") is True

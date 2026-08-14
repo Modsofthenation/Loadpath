@@ -210,6 +210,9 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
             )
             for h in hooks or components:
                 edge(h.id, qn.id, EdgeType.USES_QUERY_KEY)
+            if m.group(0).startswith("useMutation"):
+                for h in hooks:
+                    h.extra["mutation"] = True
 
     for m in INVALIDATE_RE.finditer(source):
         key_raw = m.group(1)

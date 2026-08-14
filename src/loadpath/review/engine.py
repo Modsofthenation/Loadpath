@@ -191,7 +191,8 @@ def _react_path_residuals(impact_nodes: list[dict], diff: DiffSet | None) -> lis
     mutations = [
         n
         for n in impact_nodes
-        if n["type"] == NodeType.HOOK.value and "Mutation" in (n.get("name") or "")
+        if n["type"] == NodeType.HOOK.value
+        and ((n.get("extra") or {}).get("mutation") or "Mutation" in (n.get("name") or ""))
     ]
     if query_keys and mutations and not invalidations:
         out.append(

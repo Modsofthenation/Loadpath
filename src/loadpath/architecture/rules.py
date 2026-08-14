@@ -327,9 +327,14 @@ def _missing_index(store: GraphStore) -> list[Finding]:
     indexed_types = {"ForeignKey", "OneToOneField", "ManyToManyField"}
     for node in store.nodes():
         lookups = (node.get("extra") or {}).get("lookups") or []
+        owner_app = (node.get("extra") or {}).get("app")
         for hit in lookups:
             for fname in hit.get("fields") or []:
                 matches = fields_by_name.get(fname) or []
+                if owner_app:
+                    scoped = [f for f in matches if (f.get("extra") or {}).get("app") == owner_app]
+                    if scoped:
+                        matches = scoped
                 if not matches:
                     continue
                 uncovered = [
