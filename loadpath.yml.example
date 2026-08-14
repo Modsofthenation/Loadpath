@@ -1,0 +1,29 @@
+# Loadpath architecture manifest
+contexts:
+  billing:
+    django_apps: [billing]
+    react: [frontend/src/features/billing]
+    public_api:
+      - "GET /api/invoices"
+      - "POST /api/invoices"
+      - "GET /api/invoices/{id}"
+    owners: [billing-team]
+  identity:
+    django_apps: [accounts]
+    react: [frontend/src/features/auth]
+    public_api:
+      - "POST /api/login"
+      - "GET /api/me"
+    owners: [identity-team]
+layers:
+  django: [route, view, service, model]
+  react: [route, page, feature, shared]
+rules:
+  - views_cannot_import_other_context_models
+  - react_feature_may_only_call_own_or_shared_api
+  - serializers_are_the_only_published_contract
+  - no_queryset_in_serializer
+  - celery_tasks_must_be_idempotent_on_model_pk
+django_root: backend
+react_root: frontend/src
+openapi_paths: []

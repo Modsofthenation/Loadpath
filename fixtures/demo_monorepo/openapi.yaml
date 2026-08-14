@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: Demo API
+  version: "1.0.0"
+paths:
+  /api/invoices:
+    get:
+      operationId: listInvoices
+      responses:
+        "200":
+          description: ok
+    post:
+      operationId: createInvoice
+      responses:
+        "201":
+          description: created
+  /api/invoices/{id}:
+    get:
+      operationId: getInvoice
+      responses:
+        "200":
+          description: ok
+    put:
+      operationId: updateInvoice
+      responses:
+        "200":
+          description: ok
+  /api/me:
+    get:
+      operationId: getMe
+      responses:
+        "200":
+          description: ok
+  /api/login:
+    post:
+      operationId: login
+      responses:
+        "200":
+          description: ok
