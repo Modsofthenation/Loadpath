@@ -54,3 +54,72 @@ def test_react_feature_calling_other_context_api(tmp_path: Path):
     ]
     assert hits, [f.message for f in findings]
     store.close()
+
+
+def test_nplusone_rule_on_fixture_service(tmp_path: Path):
+    store = index_repo(FIXTURE, db_path=tmp_path / "g.sqlite3", incremental=False)
+    findings = evaluate(store, load_config(FIXTURE))
+    hits = [f for f in findings if f.rule == "queryset_nplusone" and not f.waived]
+    assert hits
+    assert any("account" in f.message for f in hits)
+    store.close()
+
+
+def test_cascade_across_contexts_is_warning(tmp_path: Path):
+    import shutil
+
+    root = tmp_path / "repo"
+    shutil.copytree(FIXTURE, root)
+    models = root / "backend/billing/models.py"
+    models.write_text(
+        models.read_text().replace(
+            'account = models.ForeignKey("accounts.UserProfile", null=True, on_delete=models.SET_NULL)',
+            'account = models.ForeignKey("accounts.UserProfile", null=True, on_delete=models.CASCADE)',
+        )
+    )
+    store = index_repo(root, db_path=tmp_path / "g.sqlite3", incremental=False)
+    findings = evaluate(store, load_config(root))
+    hits = [f for f in findings if f.rule == "cascade_crosses_context" and not f.waived]
+    assert hits, [f.message for f in findings]
+    assert any("Deleting" in f.message and "UserProfile" in f.message for f in hits)
+    store.close()
+
+
+def test_migration_blast_radius_for_remove_field(tmp_path: Path):
+    import shutil
+
+    root = tmp_path / "repo"
+    shutil.copytree(FIXTURE, root)
+    (root / "backend/billing/migrations/0002_remove_total.py").write_text(
+        "from django.db import migrations\n\n"
+        "class Migration(migrations.Migration):\n"
+        "    operations = [migrations.RemoveField(model_name='Invoice', name='total')]\n"
+    )
+    models = root / "backend/billing/models.py"
+    models.write_text(models.read_text().replace("    total = models.DecimalField(max_digits=10, decimal_places=2)\n", ""))
+    store = index_repo(root, db_path=tmp_path / "g.sqlite3", incremental=False)
+    findings = evaluate(store, load_config(root))
+    hits = [f for f in findings if f.rule == "migration_blast_radius" and not f.waived]
+    assert hits
+    assert any("InvoiceSerializer.total" in f.message or "total" in f.message for f in hits)
+    store.close()
+
+
+def test_migration_blast_radius_keyword_order(tmp_path: Path):
+    import shutil
+
+    root = tmp_path / "repo"
+    shutil.copytree(FIXTURE, root)
+    (root / "backend/billing/migrations/0002_remove_total.py").write_text(
+        "from django.db import migrations\n\n"
+        "class Migration(migrations.Migration):\n"
+        "    operations = [migrations.RemoveField(name='total', model_name='Invoice')]\n"
+    )
+    models = root / "backend/billing/models.py"
+    models.write_text(models.read_text().replace("    total = models.DecimalField(max_digits=10, decimal_places=2)\n", ""))
+    store = index_repo(root, db_path=tmp_path / "g.sqlite3", incremental=False)
+    findings = evaluate(store, load_config(root))
+    hits = [f for f in findings if f.rule == "migration_blast_radius" and not f.waived]
+    assert hits
+    assert any("total" in f.message for f in hits)
+    store.close()

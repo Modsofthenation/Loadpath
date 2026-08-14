@@ -15,6 +15,9 @@ RULE_DOCS = {
     "no_queryset_in_serializer": "Serializers must not run querysets.",
     "celery_tasks_must_be_idempotent_on_model_pk": "Celery and Dramatiq tasks must take a model pk/id, not a full object payload.",
     "async_tasks_must_be_idempotent_on_model_pk": "Celery and Dramatiq tasks must take a model pk/id, not a full object payload.",
+    "queryset_nplusone": "Querysets iterated in a loop must select_related/prefetch_related related objects they touch.",
+    "cascade_crosses_context": "on_delete=CASCADE must not blast into another bounded context.",
+    "migration_blast_radius": "Destructive migrations must not drop fields/models still referenced on the load path.",
 }
 
 
@@ -63,6 +66,12 @@ def evaluate(store: GraphStore, config: LoadpathConfig, changed_ids: set[str] | 
         findings.extend(_queryset_in_serializer(store))
     if "celery_tasks_must_be_idempotent_on_model_pk" in enabled or "async_tasks_must_be_idempotent_on_model_pk" in enabled:
         findings.extend(_task_idempotency(store, changed_ids))
+    if "queryset_nplusone" in enabled:
+        findings.extend(_nplusone(store))
+    if "cascade_crosses_context" in enabled:
+        findings.extend(_cascade_crosses_context(store, config))
+    if "migration_blast_radius" in enabled:
+        findings.extend(_migration_blast_radius(store))
 
     for f in findings:
         f.waived = _waived(config, f.rule, f.node_id)
@@ -282,3 +291,155 @@ def _task_idempotency(store: GraphStore, changed_ids: set[str] | None) -> list[F
                 )
             )
     return out
+
+
+def _nplusone(store: GraphStore) -> list[Finding]:
+    out: list[Finding] = []
+    for node in store.nodes():
+        hits = (node.get("extra") or {}).get("nplusone") or []
+        for hit in hits:
+            accessed = ", ".join(hit.get("accessed") or []) or "related fields"
+            fix = hit.get("suggested_fix") or ".select_related()"
+            out.append(
+                Finding(
+                    rule="queryset_nplusone",
+                    severity=RuleSeverity.WARNING,
+                    message=(
+                        f"{node['name']} loops `{hit.get('loop_var')}` over a queryset and touches {accessed} "
+                        f"without {fix} ({node.get('file_path')}:{hit.get('line')})"
+                    ),
+                    node_id=node["id"],
+                    file_path=node.get("file_path"),
+                    extra=hit,
+                )
+            )
+    return out
+
+
+def _cascade_crosses_context(store: GraphStore, config: LoadpathConfig) -> list[Finding]:
+    out: list[Finding] = []
+    fields = {n["id"]: n for n in store.nodes([NodeType.FIELD])}
+    models = {n["id"]: n for n in store.nodes([NodeType.MODEL])}
+    for edge in store.edges():
+        if edge["type"] != EdgeType.RELATES_TO.value:
+            continue
+        if (edge.get("extra") or {}).get("on_delete") != "CASCADE":
+            continue
+        field = fields.get(edge["src"])
+        target = models.get(edge["dst"]) or store.get_node(edge["dst"])
+        if not field or not target:
+            continue
+        src_model = field["qualified_name"].rsplit(".", 1)[0]
+        src_app = (field.get("extra") or {}).get("app") or src_model.split(".")[0]
+        dst_app = (target.get("extra") or {}).get("app") or (target.get("qualified_name") or "").split(".")[0]
+        sctx = field.get("context") or config.context_for_django_app(src_app)
+        dctx = target.get("context") or config.context_for_django_app(dst_app)
+        if sctx and dctx and sctx != dctx:
+            out.append(
+                Finding(
+                    rule="cascade_crosses_context",
+                    severity=RuleSeverity.WARNING,
+                    message=(
+                        f"Deleting {target.get('qualified_name')} ({dctx}) CASCADE-deletes "
+                        f"{src_model} via {field['name']} ({sctx})"
+                    ),
+                    node_id=field["id"],
+                    file_path=field.get("file_path"),
+                    extra={"target_context": dctx, "on_delete": "CASCADE"},
+                )
+            )
+    return out
+
+
+def _migration_blast_radius(store: GraphStore) -> list[Finding]:
+    out: list[Finding] = []
+    for op in store.nodes([NodeType.MIGRATION_OP]):
+        extra = op.get("extra") or {}
+        kind = extra.get("op")
+        if kind not in {"RemoveField", "DeleteModel"}:
+            continue
+        args = extra.get("args") or []
+        app = extra.get("app") or ""
+        still: list[dict] = []
+        if kind == "RemoveField":
+            model = extra.get("model_name") or (args[0] if args else None)
+            field = extra.get("field_name") or (args[1] if len(args) > 1 else None)
+            if not model or not field:
+                continue
+            still.extend(_remaining_field_refs(store, app, model, field))
+        else:
+            model = extra.get("model_name") or extra.get("name") or (args[0] if args else None)
+            if not model:
+                continue
+            still.extend(_remaining_model_refs(store, app, model))
+        seen: set[str] = set()
+        uniq: list[dict] = []
+        for node in still:
+            if node["id"] in seen:
+                continue
+            seen.add(node["id"])
+            uniq.append(node)
+        if not uniq:
+            continue
+        names = ", ".join(sorted({n["qualified_name"] for n in uniq})[:6])
+        out.append(
+            Finding(
+                rule="migration_blast_radius",
+                severity=RuleSeverity.WARNING,
+                message=f"{op['name']} still referenced by {names}",
+                node_id=op["id"],
+                file_path=op.get("file_path"),
+                extra={"op": kind, "still": [n["id"] for n in uniq[:8]]},
+            )
+        )
+    return out
+
+
+def _qnames(store: GraphStore, ntype: NodeType, qname: str) -> list[dict]:
+    want = qname.lower()
+    return [n for n in store.nodes([ntype]) if (n.get("qualified_name") or "").lower() == want]
+
+
+def _ids_for(store: GraphStore, ntype: NodeType, qname: str) -> set[str]:
+    ids = {node_id(ntype, qname)}
+    ids.update(n["id"] for n in _qnames(store, ntype, qname))
+    return ids
+
+
+def _remaining_field_refs(store: GraphStore, app: str, model: str, field: str) -> list[dict]:
+    still = list(_qnames(store, NodeType.FIELD, f"{app}.{model}.{field}"))
+    model_ids = _ids_for(store, NodeType.MODEL, f"{app}.{model}")
+    serializer_ids: set[str] = set()
+    want_model = f"{app}.{model}".lower()
+    for edge in store.edges():
+        if edge["type"] != EdgeType.SERIALIZES.value:
+            continue
+        dst = (edge.get("dst") or "").lower()
+        if edge["dst"] in model_ids or dst.endswith(":" + want_model):
+            serializer_ids.add(edge["src"])
+    for edge in store.edges():
+        if edge["type"] != EdgeType.HAS_FIELD.value or edge["src"] not in serializer_ids:
+            continue
+        child = store.get_node(edge["dst"])
+        if child and child.get("name") == field:
+            still.append(child)
+    return still
+
+
+def _remaining_model_refs(store: GraphStore, app: str, model: str) -> list[dict]:
+    still = list(_qnames(store, NodeType.MODEL, f"{app}.{model}"))
+    model_ids = _ids_for(store, NodeType.MODEL, f"{app}.{model}")
+    want = f"{app}.{model}".lower()
+    for edge in store.edges():
+        dst = (edge.get("dst") or "").lower()
+        if edge["dst"] not in model_ids and not dst.endswith(":" + want):
+            continue
+        if edge["type"] in {
+            EdgeType.SERIALIZES.value,
+            EdgeType.QUERIES_MODEL.value,
+            EdgeType.RELATES_TO.value,
+        }:
+            src = store.get_node(edge["src"])
+            if src:
+                still.append(src)
+    return still

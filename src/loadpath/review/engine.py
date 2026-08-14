@@ -11,6 +11,7 @@ from loadpath.index import default_db_path, index_repo
 from loadpath.review.cluster import cluster_diff
 from loadpath.review.confidence import score_confidence
 from loadpath.review.diff import DiffSet, git_diff
+from loadpath.review.evolution import analyze_evolution
 from loadpath.types import (
     ChangeKind,
     GENERATED_PATH_MARKERS,
@@ -162,6 +163,11 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict]) -> list[str]:
             residuals.append(f"Inferred client {n.get('name')} in {n.get('file_path')}")
         if extra.get("queryset_in_serializer"):
             residuals.append(f"Queryset inside serializer {n['qualified_name']}")
+        for hit in extra.get("nplusone") or []:
+            accessed = ", ".join(hit.get("accessed") or []) or "related fields"
+            residuals.append(
+                f"N+1 {accessed} in {n.get('file_path')}:{hit.get('line')} — {hit.get('suggested_fix')}"
+            )
     seen = set()
     out = []
     for r in residuals:
@@ -234,7 +240,13 @@ def run_review(
         or not impact_ids
     ]
     residuals = collect_residuals(store, impact_nodes)
+    evolution = analyze_evolution(repo_root, diff, impact_nodes, config)
     confidence = score_confidence(store, impact_nodes, impact_edges, scoped, residuals)
+    if evolution.get("notes") and confidence["level"] == "high":
+        confidence["level"] = "medium"
+        reasons = list(confidence.get("reasons") or [])
+        reasons = [evolution["notes"][0], *reasons][:3]
+        confidence["reasons"] = reasons
     kinds = classify_change(impact_nodes, scoped, seeds=store.nodes_in_files(diff.paths))
     read, skip = read_order_files(diff, impact_nodes)
     reviewers = suggested_reviewers(config, impact_nodes)
@@ -272,6 +284,7 @@ def run_review(
         "sinks": sinks,
         "tests_note": tests_note,
         "architecture_note": arch_note,
+        "evolution": evolution,
         "nodes": impact_nodes,
         "edges": impact_edges,
         "counts": store.counts(),
@@ -283,7 +296,9 @@ def run_review(
             "reindexed": reindex,
             "incremental": incremental if reindex else store.get_meta("incremental") == "1",
         },
-        "headline": _headline(confidence, title, sinks, tests_note, arch_note, residuals, reviewers),
+        "headline": _headline(
+            confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution
+        ),
     }
     store.save_review(payload["id"], payload["created_at"], str(repo_root), diff.base, diff.head, payload)
     store.close()
@@ -349,7 +364,7 @@ def _arch_note(findings: list, kinds: list[str], impact_nodes: list[dict] | None
     return "no cross-context rule hits"
 
 
-def _headline(confidence, title, sinks, tests_note, arch_note, residuals, reviewers) -> str:
+def _headline(confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution=None) -> str:
     sink_bits = []
     routes = [s["name"] for s in sinks if s["type"] == NodeType.ROUTE.value]
     celery_tasks = [s["name"] for s in sinks if s["type"] == NodeType.TASK.value and s.get("broker") == "celery"]
@@ -372,11 +387,14 @@ def _headline(confidence, title, sinks, tests_note, arch_note, residuals, review
         sink_bits.append("React " + ", ".join(pages[:4]))
     residual = residuals[0] if residuals else "none"
     owners = ", ".join(reviewers) if reviewers else "context owners"
+    pressure = (evolution or {}).get("notes") or []
+    churn = pressure[0] if pressure else "none"
     return (
         f"Loadpath: {confidence['level'].upper()} — {title}\n"
         f"Sinks: {'; '.join(sink_bits) or 'none typed'}\n"
         f"Tests: {tests_note}\n"
         f"Architecture: {arch_note}\n"
         f"Residual: {residual}\n"
+        f"Churn: {churn}\n"
         f"Suggested reviewers: {owners}"
     )

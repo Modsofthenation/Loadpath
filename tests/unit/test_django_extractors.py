@@ -264,3 +264,79 @@ class BadSerializer(serializers.ModelSerializer):
     g = extract_django_file("backend/billing/serializers.py", src, _cfg())
     ser = next(n for n in g.nodes if n.type is NodeType.SERIALIZER)
     assert ser.extra.get("queryset_in_serializer") is True
+
+
+def test_nplusone_related_access_in_loop():
+    src = """
+from billing.models import Invoice
+
+def overdue_account_emails():
+    names = []
+    for invoice in Invoice.objects.filter(status="open"):
+        names.append(invoice.account.email)
+    return names
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    hits = svc.extra.get("nplusone") or []
+    assert hits
+    assert hits[0]["kind"] == "select_related"
+    assert "account" in hits[0]["accessed"]
+    assert "select_related" in hits[0]["suggested_fix"]
+
+
+def test_nplusone_silent_when_select_related():
+    src = """
+from billing.models import Invoice
+
+def overdue_account_emails():
+    names = []
+    for invoice in Invoice.objects.filter(status="open").select_related("account"):
+        names.append(invoice.account.email)
+    return names
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    assert not svc.extra.get("nplusone")
+
+
+def test_nplusone_ignores_non_queryset_and_private_attrs():
+    src = """
+def walk_cache():
+    for invoice in fetch_all():
+        print(invoice.account.email)
+        print(invoice._state.db)
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "walk_cache")
+    assert not svc.extra.get("nplusone")
+
+
+def test_nplusone_uses_binding_before_loop_only():
+    src = """
+from billing.models import Invoice
+
+def overdue_account_emails():
+    for invoice in qs:
+        names = invoice.account.email
+    qs = Invoice.objects.filter(status="open")
+    return names
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    assert not svc.extra.get("nplusone")
+
+
+def test_nplusone_select_related_none_clears_cover():
+    src = """
+from billing.models import Invoice
+
+def overdue_account_emails():
+    names = []
+    for invoice in Invoice.objects.select_related("account").select_related(None):
+        names.append(invoice.account.email)
+    return names
+"""
+    g = extract_django_file("backend/billing/services.py", src, _cfg())
+    svc = next(n for n in g.nodes if n.name == "overdue_account_emails")
+    assert svc.extra.get("nplusone")

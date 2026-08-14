@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { ImpactGraph } from "./ImpactGraph";
+import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
 import type { ArchitectureReport, IndexedRepo, PullRequest, Review } from "./types";
 
 type Tab = "review" | "architecture" | "graph" | "prs" | "settings";
@@ -22,8 +23,14 @@ export function App() {
   const [scmRepo, setScmRepo] = useState("");
   const [provider, setProvider] = useState("github");
   const [aiNote, setAiNote] = useState("");
+  const [theme, setTheme] = useState<ThemeId>(readTheme);
   const repoRef = useRef(repo);
   repoRef.current = repo;
+
+  const persistTheme = (id: ThemeId) => {
+    setTheme(id);
+    applyTheme(id);
+  };
 
   useEffect(() => {
     api.settings().then(setSettings).catch(() => undefined);
@@ -178,6 +185,21 @@ export function App() {
         <button data-testid="tab-settings" className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
           Settings
         </button>
+        <div className="theme-pick">
+          <label htmlFor="theme-select">Theme</label>
+          <select
+            id="theme-select"
+            data-testid="theme-select"
+            value={theme}
+            onChange={(e) => persistTheme(e.target.value as ThemeId)}
+          >
+            {THEMES.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div style={{ flex: 1 }} />
         <div className="muted">{busy || indexLine}</div>
       </nav>
@@ -274,6 +296,24 @@ export function App() {
                       {r}
                     </div>
                   ))}
+                  {(review.evolution?.notes?.length || review.evolution?.hotspots?.some((h) => h.commits)) ? (
+                    <>
+                      <div className="kicker">Churn & coupling</div>
+                      {(review.evolution?.notes || []).map((note) => (
+                        <div key={note} className="muted">
+                          {note}
+                        </div>
+                      ))}
+                      {(review.evolution?.hotspots || [])
+                        .filter((h) => h.commits)
+                        .slice(0, 6)
+                        .map((h) => (
+                          <div key={h.path} className="muted">
+                            <span className="file">{h.path}</span> — {h.commits} commits, bus factor {h.bus_factor}
+                          </div>
+                        ))}
+                    </>
+                  ) : null}
                   <button className="btn" onClick={askAi} style={{ marginTop: 12 }}>
                     Ask configured model
                   </button>
@@ -445,6 +485,22 @@ export function App() {
               Tokens stay on this machine in ~/.loadpath/settings.json. GitHub and Bitbucket power the PR list. Indexed
               repos are remembered as workspaces. AI is used only for residual uncertainty the graph could not close.
             </p>
+            <h1>Theme</h1>
+            <p className="muted">Appearance is local to this browser. Pick a palette that matches how you review.</p>
+            <div className="theme-grid" data-testid="theme-grid">
+              {THEMES.map((t) => (
+                <button
+                  type="button"
+                  key={t.id}
+                  className={theme === t.id ? "theme-swatch active" : "theme-swatch"}
+                  data-testid={`theme-${t.id}`}
+                  onClick={() => persistTheme(t.id)}
+                >
+                  <div className="name">{t.label}</div>
+                  <div className="group">{t.group}</div>
+                </button>
+              ))}
+            </div>
             <label>GitHub token</label>
             <input name="github_token" type="password" placeholder="ghp_…" />
             <label>Bitbucket token</label>

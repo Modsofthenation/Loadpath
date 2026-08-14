@@ -45,6 +45,20 @@ def render_markdown(review: dict) -> str:
             lines.append(f"- {r}")
     if review["low_risk"]:
         lines += ["", "_Fast-track: `loadpath:low-risk`. Human review can be a glance._"]
+    evolution = review.get("evolution") or {}
+    if evolution.get("notes") or evolution.get("hotspots"):
+        lines += ["", "### Churn & coupling"]
+        for note in evolution.get("notes") or []:
+            lines.append(f"- {note}")
+        for h in (evolution.get("hotspots") or [])[:6]:
+            if h.get("commits"):
+                lines.append(
+                    f"- `{h['path']}` — {h['commits']} commits, bus factor {h.get('bus_factor', 0)}"
+                    + (f", complexity {h['complexity']}" if h.get("complexity") else "")
+                )
+        for c in (evolution.get("change_coupling") or [])[:4]:
+            flag = " (cross-context)" if c.get("cross_context") else ""
+            lines.append(f"- coupling `{c['a']}` ↔ `{c['b']}` ×{c['together']}{flag}")
     index = review.get("index") or {}
     counts = index.get("counts") or review.get("counts") or {}
     if counts:
