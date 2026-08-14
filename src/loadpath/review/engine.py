@@ -7,11 +7,12 @@ from uuid import uuid4
 from loadpath.architecture.rules import evaluate
 from loadpath.config import LoadpathConfig, load_config
 from loadpath.graph.store import GraphStore
-from loadpath.index import default_db_path, index_repo
+from loadpath.index import default_db_path, index_drift, index_repo
 from loadpath.review.cluster import cluster_diff
 from loadpath.review.confidence import score_confidence
 from loadpath.review.diff import DiffSet, git_diff
 from loadpath.review.evolution import analyze_evolution
+from loadpath.workspace import git_dirty_paths, resolve_review_range
 from loadpath.types import (
     ChangeKind,
     GENERATED_PATH_MARKERS,
@@ -205,19 +206,28 @@ def is_low_risk(kinds: list[str], confidence: dict, findings: list) -> bool:
 
 def run_review(
     repo_root: Path,
-    base: str = "origin/main",
+    base: str = "HEAD~1",
     head: str | None = None,
     db_path: Path | None = None,
     config: LoadpathConfig | None = None,
     diff: DiffSet | None = None,
     reindex: bool = True,
     incremental: bool = True,
+    *,
+    three_dot: bool = True,
+    draft_config: bool = False,
 ) -> dict:
     repo_root = repo_root.resolve()
     config = config or load_config(repo_root)
     graph_db = db_path or default_db_path(repo_root)
     if reindex:
-        store = index_repo(repo_root, db_path=graph_db, config=config, incremental=incremental)
+        store = index_repo(
+            repo_root,
+            db_path=graph_db,
+            config=config,
+            incremental=incremental,
+            draft_config=draft_config,
+        )
     else:
         if not graph_db.is_file():
             raise FileNotFoundError(
@@ -225,7 +235,9 @@ def run_review(
             )
         store = GraphStore(graph_db)
 
-    diff = diff or git_diff(repo_root, base, head)
+    range_info = resolve_review_range(repo_root, base, head, three_dot=three_dot)
+    diff = diff or git_diff(repo_root, base, head, three_dot=three_dot)
+    dirty = git_dirty_paths(repo_root)
     clusters, impact_nodes, impact_edges = cluster_diff(store, diff)
     seed_ids = {n["id"] for n in store.nodes_in_files(diff.paths)}
     findings = evaluate(store, config, changed_ids=seed_ids)
@@ -247,6 +259,12 @@ def run_review(
         reasons = list(confidence.get("reasons") or [])
         reasons = [evolution["notes"][0], *reasons][:3]
         confidence["reasons"] = reasons
+    boot = store.get_meta("django_boot") or "off"
+    if boot == "failed" and confidence["level"] == "high":
+        confidence["level"] = "medium"
+        reasons = list(confidence.get("reasons") or [])
+        detail = store.get_meta("django_boot_detail") or "django.setup() failed"
+        confidence["reasons"] = [detail, *reasons][:3]
     kinds = classify_change(impact_nodes, scoped, seeds=store.nodes_in_files(diff.paths))
     read, skip = read_order_files(diff, impact_nodes)
     reviewers = suggested_reviewers(config, impact_nodes)
@@ -263,6 +281,9 @@ def run_review(
     sinks = _sink_summaries(impact_nodes, store)
     tests_note = _tests_note(confidence, impact_nodes)
     arch_note = _arch_note(scoped, kinds, impact_nodes)
+    drift = index_drift(store, repo_root, config)
+    dirty_set = set(dirty)
+    overlap = [p for p in diff.paths if p in dirty_set]
 
     payload = {
         "id": str(uuid4()),
@@ -293,8 +314,23 @@ def run_review(
             "counts": store.counts(),
             "type_counts": store.type_counts(),
             "indexed_at": store.get_meta("indexed_at"),
-            "reindexed": reindex,
+            "reindexed": reindex and store.get_meta("reindex_skipped") != "1",
             "incremental": incremental if reindex else store.get_meta("incremental") == "1",
+            "reindex_skipped": store.get_meta("reindex_skipped") == "1",
+            "files_extracted": int(store.get_meta("files_extracted") or 0),
+            "stale": drift["stale"],
+            "django_boot": boot,
+            "django_boot_detail": store.get_meta("django_boot_detail") or "",
+        },
+        "workspace": {
+            "dirty": dirty[:40],
+            "dirty_count": len(dirty),
+            "dirty_overlaps_review": bool(overlap),
+            "dirty_overlap": overlap[:20],
+            "merge_base": range_info.get("merge_base"),
+            "three_dot": three_dot,
+            "base_sha": range_info.get("base_sha"),
+            "head_sha": range_info.get("head_sha"),
         },
         "headline": _headline(
             confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution

@@ -30,7 +30,17 @@ export const api = {
   review: (repo_path: string, base: string, head?: string, reindex = true) =>
     req<Review>("/api/review", {
       method: "POST",
-      body: JSON.stringify({ repo_path, base, head: head || null, reindex, incremental: true }),
+      body: JSON.stringify({ repo_path, base, head: head || null, reindex, incremental: true, three_dot: true }),
+    }),
+  init: (repo_path: string, overwrite = false) =>
+    req<{ wrote: boolean; message: string; django_root: string; react_root: string; has_config: boolean }>(
+      "/api/init",
+      { method: "POST", body: JSON.stringify({ repo_path, overwrite }) },
+    ),
+  postComment: (provider: string, repo: string, number: number, markdown: string) =>
+    req<{ id: string; url: string; updated: boolean }>("/api/prs/comment", {
+      method: "POST",
+      body: JSON.stringify({ provider, repo, number, markdown }),
     }),
   graph: (repo_path: string, scope: "full" | "architecture" = "full") =>
     req<{ nodes: unknown[]; edges: unknown[]; counts: { nodes: number; edges: number } }>(

@@ -8,7 +8,7 @@ from typing import Any
 from loadpath.architecture.rules import evaluate
 from loadpath.config import LoadpathConfig, load_config
 from loadpath.graph.store import GraphStore
-from loadpath.index import default_db_path
+from loadpath.index import default_db_path, index_drift
 from loadpath.types import NodeType
 
 ARCHITECTURE_NODE_TYPES = {
@@ -44,6 +44,8 @@ def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]
         }
         for name, ctx in config.contexts.items()
     }
+    drift = index_drift(store, config.repo_root, config)
+    boot_residuals = [line for line in residuals if "django.setup()" in line]
     return {
         "ok": True,
         "indexed": True,
@@ -51,6 +53,13 @@ def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]
         "db": str(store.db_path),
         "indexed_at": store.get_meta("indexed_at"),
         "incremental": store.get_meta("incremental") == "1",
+        "reindex_skipped": store.get_meta("reindex_skipped") == "1",
+        "files_extracted": int(store.get_meta("files_extracted") or 0),
+        "files_skipped": int(store.get_meta("files_skipped") or 0),
+        "django_boot": store.get_meta("django_boot") or "off",
+        "django_boot_detail": store.get_meta("django_boot_detail") or "",
+        "stale": drift["stale"],
+        "drift": drift,
         "counts": store.counts(),
         "type_counts": store.type_counts(),
         "file_count": store.file_count(),
@@ -58,6 +67,7 @@ def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]
         "rules": list(config.rules),
         "findings": findings,
         "residuals": residuals[:40],
+        "boot_residuals": boot_residuals,
         "has_config": (config.repo_root / "loadpath.yml").is_file(),
     }
 
@@ -77,6 +87,9 @@ def architecture_report(repo_root: Path, db_path: Path | None = None) -> dict[st
         return {
             "ok": False,
             "indexed": False,
+            "stale": True,
+            "django_boot": "off",
+            "django_boot_detail": "",
             "repo_root": str(repo_root),
             "db": str(db),
             "has_config": (repo_root / "loadpath.yml").is_file(),

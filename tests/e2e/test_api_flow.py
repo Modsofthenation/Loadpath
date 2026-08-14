@@ -39,6 +39,7 @@ def test_api_health_index_review_graph_settings(tmp_path, monkeypatch):
     assert arch.status_code == 200
     body_arch = arch.json()
     assert body_arch["indexed"] is True
+    assert "django_boot" in body_arch
     assert any(n["name"] == "InvoicePage" for n in body_arch["nodes"])
     assert "celery_tasks_must_be_idempotent_on_model_pk" in body_arch["rules"]
 
@@ -58,6 +59,13 @@ def test_api_health_index_review_graph_settings(tmp_path, monkeypatch):
     assert "Dramatiq" in body["headline"] or "dramatiq" in body["headline"].lower()
     assert body["index"]["counts"]["nodes"] > 20
     assert body["index"]["reindexed"] is False
+    assert "workspace" in body
+    assert body["index"]["django_boot"] == "off"
+
+    init = client.post("/api/init", json={"repo_path": str(repo)})
+    assert init.status_code == 200
+    assert init.json()["wrote"] is False
+    assert init.json()["django_root"] == "backend"
 
     graph = client.get("/api/graph", params={"repo_path": str(repo), "scope": "architecture"})
     assert graph.status_code == 200
@@ -124,6 +132,23 @@ def test_api_lists_github_and_bitbucket_prs(tmp_path, monkeypatch):
     gh = client.post("/api/prs", json={"provider": "github", "repo": "acme/demo"})
     assert gh.status_code == 200, gh.text
     assert gh.json()["pull_requests"][0]["number"] == 42
+
+    respx.get("https://api.github.com/repos/acme/demo/issues/42/comments").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.post("https://api.github.com/repos/acme/demo/issues/42/comments").mock(
+        return_value=httpx.Response(
+            201,
+            json={"id": 88, "html_url": "https://github.com/acme/demo/pull/42#issuecomment-88"},
+        )
+    )
+    posted = client.post(
+        "/api/prs/comment",
+        json={"provider": "github", "repo": "acme/demo", "number": 42, "markdown": "## Loadpath: MEDIUM"},
+    )
+    assert posted.status_code == 200, posted.text
+    assert posted.json()["updated"] is False
+    assert posted.json()["id"] == "88"
 
     respx.get("https://api.bitbucket.org/2.0/repositories/acme/demo/pullrequests").mock(
         return_value=httpx.Response(

@@ -63,12 +63,33 @@ def render_markdown(review: dict) -> str:
     counts = index.get("counts") or review.get("counts") or {}
     if counts:
         mode = "incremental" if index.get("incremental") else "full"
+        skipped = " · hashes unchanged, extract skipped" if index.get("reindex_skipped") else ""
+        boot = index.get("django_boot")
+        boot_bit = f" · django boot {boot}" if boot and boot != "off" else ""
+        stale = " · STALE" if index.get("stale") else ""
         lines += [
             "",
             "### Index",
             f"{counts.get('nodes', 0)} nodes / {counts.get('edges', 0)} edges"
             + (f" · {mode}" if index else "")
+            + skipped
+            + boot_bit
+            + stale
             + (f" · {index['indexed_at']}" if index.get("indexed_at") else ""),
+        ]
+    workspace = review.get("workspace") or {}
+    if workspace.get("dirty_overlaps_review"):
+        lines += [
+            "",
+            "### Working tree",
+            "Uncommitted files overlap this review: "
+            + ", ".join(f"`{p}`" for p in (workspace.get("dirty_overlap") or [])[:8]),
+        ]
+    elif workspace.get("dirty_count"):
+        lines += [
+            "",
+            "### Working tree",
+            f"{workspace['dirty_count']} uncommitted file(s); they are not in this git range.",
         ]
     return "\n".join(lines) + "\n"
 

@@ -22,15 +22,15 @@ def test_index_stitches_django_route_to_react_client(tmp_path: Path):
     store.close()
 
 
-def test_index_is_incremental(tmp_path: Path):
+def test_incremental_index_skips_when_hashes_match(tmp_path: Path):
     db = tmp_path / "graph.sqlite3"
     store = index_repo(FIXTURE, db_path=db, incremental=False)
-    first = store.counts()
     store.close()
     store = index_repo(FIXTURE, db_path=db, incremental=True)
-    second = store.counts()
+    assert store.get_meta("reindex_skipped") == "1"
+    assert store.get_meta("files_extracted") == "0"
+    assert store.get_meta("django_boot") == "off"
     store.close()
-    assert first["nodes"] == second["nodes"]
 
 
 def test_incremental_index_drops_deleted_files(tmp_path: Path):

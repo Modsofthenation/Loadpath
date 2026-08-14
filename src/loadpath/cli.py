@@ -9,6 +9,7 @@ from rich.markdown import Markdown
 
 from loadpath import __version__
 from loadpath.architecture.snapshot import architecture_report
+from loadpath.detect import write_draft_config
 from loadpath.index import default_db_path, index_repo
 from loadpath.review.engine import run_review
 from loadpath.review.render import render_html, render_markdown
@@ -25,6 +26,20 @@ def _version(version: bool = typer.Option(False, "--version", help="Show version
 
 
 @app.command()
+def init(
+    repo: Path = typer.Argument(Path("."), exists=True, file_okay=False),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing loadpath.yml"),
+) -> None:
+    """Detect Django/React roots and draft loadpath.yml (does not overwrite by default)."""
+    layout = write_draft_config(repo, overwrite=overwrite)
+    console.print(layout["message"])
+    console.print(f"Django root: {layout['django_root']}")
+    console.print(f"React root: {layout['react_root']}")
+    names = ", ".join((layout.get("contexts") or {}).keys()) or "none"
+    console.print(f"Contexts: {names}")
+
+
+@app.command()
 def index(
     repo: Path = typer.Argument(Path("."), exists=True, file_okay=False),
     full: bool = typer.Option(False, "--full", help="Re-extract every file"),
@@ -34,13 +49,28 @@ def index(
     from loadpath.config import load_config
     from loadpath.settings import register_workspace
 
-    store = index_repo(repo, incremental=not full)
+    store = index_repo(repo, incremental=not full, draft_config=True)
     register_workspace(repo)
     summary = summarize_index(store, load_config(repo))
     counts = summary["counts"]
-    console.print(f"Indexed {counts['nodes']} nodes / {counts['edges']} edges → {default_db_path(repo)}")
+    extracted = summary.get("files_extracted") or 0
+    skipped = summary.get("reindex_skipped")
+    if skipped:
+        console.print(f"Index already current ({counts['nodes']} nodes / {counts['edges']} edges) → {default_db_path(repo)}")
+    else:
+        console.print(
+            f"Indexed {counts['nodes']} nodes / {counts['edges']} edges"
+            f" (extracted {extracted} files) → {default_db_path(repo)}"
+        )
     contexts = ", ".join(summary["contexts"]) or "none"
     console.print(f"Contexts: {contexts}")
+    boot = summary.get("django_boot") or "off"
+    if boot != "off":
+        console.print(f"Django boot: {boot}")
+        if summary.get("django_boot_detail"):
+            console.print(str(summary["django_boot_detail"]))
+    if summary.get("stale"):
+        console.print("Index still looks stale after extract.")
     findings = [f for f in summary["findings"] if not f.get("waived")]
     if findings:
         console.print(f"Architecture findings: {len(findings)}")
@@ -50,15 +80,18 @@ def index(
 @app.command()
 def review(
     repo: Path = typer.Argument(Path("."), exists=True, file_okay=False),
-    base: str = typer.Option("origin/main", "--base", "-b"),
-    head: Optional[str] = typer.Option(None, "--head"),
+    base: str = typer.Option("HEAD~1", "--base", "-b"),
+    head: Optional[str] = typer.Option("HEAD", "--head"),
     format: str = typer.Option("markdown", "--format", "-f", help="markdown|json|html"),
     out: Optional[Path] = typer.Option(None, "--out", "-o"),
     reindex: bool = typer.Option(True, "--reindex/--no-reindex", help="Refresh the index before walking the diff"),
     full: bool = typer.Option(False, "--full", help="Full reindex instead of incremental"),
+    three_dot: bool = typer.Option(True, "--three-dot/--two-dot", help="PR-shaped range (merge-base...head)"),
 ) -> None:
     """Review a git range as clustered load paths + confidence brief."""
-    payload = run_review(repo, base=base, head=head, reindex=reindex, incremental=not full)
+    payload = run_review(
+        repo, base=base, head=head, reindex=reindex, incremental=not full, three_dot=three_dot
+    )
     if format == "json":
         import json
 
@@ -88,6 +121,11 @@ def architecture(
         raise typer.Exit(code=1)
     counts = report["counts"]
     console.print(f"{counts['nodes']} nodes / {counts['edges']} edges")
+    boot = report.get("django_boot") or "off"
+    if boot != "off":
+        console.print(f"Django boot: {boot}")
+    if report.get("stale"):
+        console.print("Index is stale — re-run `loadpath index`.")
     console.print("Contexts: " + (", ".join(report["contexts"]) or "none"))
     for name, ctx in (report.get("contexts") or {}).items():
         owners = ", ".join(ctx.get("owners") or []) or "—"

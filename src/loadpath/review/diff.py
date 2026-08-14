@@ -35,20 +35,39 @@ def is_skippable(path: str) -> bool:
     return any(m in n for m in GENERATED_PATH_MARKERS if m != "generated/")
 
 
-def git_diff(repo_root: Path, base: str, head: str | None = None) -> DiffSet:
+def _range_args(base: str, head: str | None, three_dot: bool) -> list[str]:
+    if head and three_dot:
+        return [f"{base}...{head}"]
+    if head:
+        return [base, head]
+    return [base]
+
+
+def git_diff(
+    repo_root: Path,
+    base: str,
+    head: str | None = None,
+    *,
+    three_dot: bool = True,
+) -> DiffSet:
     repo_root = repo_root.resolve()
-    args = ["git", "-C", str(repo_root), "diff", "--numstat", "-M", base]
-    if head:
-        args.append(head)
-    numstat = subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL)
-    name_args = ["git", "-C", str(repo_root), "diff", "--name-status", "-M", base]
-    if head:
-        name_args.append(head)
-    namestat = subprocess.check_output(name_args, text=True, stderr=subprocess.DEVNULL)
-    patch_args = ["git", "-C", str(repo_root), "diff", "-U3", base]
-    if head:
-        patch_args.append(head)
-    patch = subprocess.check_output(patch_args, text=True, stderr=subprocess.DEVNULL, errors="replace")
+    spec = _range_args(base, head, three_dot)
+    numstat = subprocess.check_output(
+        ["git", "-C", str(repo_root), "diff", "--numstat", "-M", *spec],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    )
+    namestat = subprocess.check_output(
+        ["git", "-C", str(repo_root), "diff", "--name-status", "-M", *spec],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    )
+    patch = subprocess.check_output(
+        ["git", "-C", str(repo_root), "diff", "-U3", *spec],
+        text=True,
+        stderr=subprocess.DEVNULL,
+        errors="replace",
+    )
     patches = _split_patches(patch)
 
     added_map: dict[str, tuple[int, int]] = {}

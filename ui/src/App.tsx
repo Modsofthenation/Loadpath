@@ -10,18 +10,20 @@ type GraphMode = "review" | "architecture";
 export function App() {
   const [tab, setTab] = useState<Tab>("review");
   const [repo, setRepo] = useState(localStorage.getItem("loadpath.repo") || "");
-  const [base, setBase] = useState("HEAD~1");
-  const [head, setHead] = useState("HEAD");
+  const [base, setBase] = useState(localStorage.getItem("loadpath.base") || "HEAD~1");
+  const [head, setHead] = useState(localStorage.getItem("loadpath.head") || "HEAD");
   const [review, setReview] = useState<Review | null>(null);
   const [architecture, setArchitecture] = useState<ArchitectureReport | null>(null);
   const [repos, setRepos] = useState<IndexedRepo[]>([]);
   const [graphMode, setGraphMode] = useState<GraphMode>("review");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [copied, setCopied] = useState("");
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [prs, setPrs] = useState<PullRequest[]>([]);
-  const [scmRepo, setScmRepo] = useState("");
-  const [provider, setProvider] = useState("github");
+  const [scmRepo, setScmRepo] = useState(localStorage.getItem("loadpath.scmRepo") || "");
+  const [provider, setProvider] = useState(localStorage.getItem("loadpath.provider") || "github");
+  const [prNumber, setPrNumber] = useState(localStorage.getItem("loadpath.prNumber") || "");
   const [aiNote, setAiNote] = useState("");
   const [theme, setTheme] = useState<ThemeId>(readTheme);
   const repoRef = useRef(repo);
@@ -57,6 +59,24 @@ export function App() {
     localStorage.setItem("loadpath.repo", path);
   };
 
+  const persistRefs = (nextBase: string, nextHead: string) => {
+    setBase(nextBase);
+    setHead(nextHead);
+    localStorage.setItem("loadpath.base", nextBase);
+    localStorage.setItem("loadpath.head", nextHead);
+  };
+
+  const persistPr = (nextProvider: string, nextRepo: string, number?: string) => {
+    setProvider(nextProvider);
+    setScmRepo(nextRepo);
+    localStorage.setItem("loadpath.provider", nextProvider);
+    localStorage.setItem("loadpath.scmRepo", nextRepo);
+    if (number !== undefined) {
+      setPrNumber(number);
+      localStorage.setItem("loadpath.prNumber", number);
+    }
+  };
+
   const loadArchitecture = async (path = repo) => {
     if (!path) return null;
     const report = await api.architecture(path);
@@ -68,6 +88,7 @@ export function App() {
     setError("");
     setBusy("Tracing load path…");
     persistRepo(repo);
+    persistRefs(base, head);
     try {
       const r = await api.review(repo, base, head, true);
       setReview(r);
@@ -94,6 +115,47 @@ export function App() {
         setGraphMode("architecture");
         setTab("architecture");
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const draftConfig = async () => {
+    setError("");
+    setBusy("Detecting layout…");
+    persistRepo(repo);
+    try {
+      const layout = await api.init(repo);
+      setCopied(layout.message);
+      await api.repos().then((x) => setRepos(x.repos)).catch(() => undefined);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const copyMarkdown = async () => {
+    if (!review?.markdown) return;
+    try {
+      await navigator.clipboard.writeText(review.markdown);
+      setCopied("Copied markdown brief");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const postComment = async () => {
+    if (!review?.markdown || !scmRepo || !prNumber) {
+      setError("Pick a pull request first (Pull requests tab), then post the brief.");
+      return;
+    }
+    setBusy("Posting Loadpath brief…");
+    try {
+      const posted = await api.postComment(provider, scmRepo, Number(prNumber), review.markdown);
+      setCopied(posted.updated ? "Updated the Loadpath PR comment" : "Posted the Loadpath PR comment");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -157,9 +219,9 @@ export function App() {
   }, [graphMode, architecture, review]);
 
   const indexLine = review?.index
-    ? `${review.index.counts.nodes} nodes / ${review.index.counts.edges} edges · ${review.index.incremental ? "incremental" : "full"}`
+    ? `${review.index.counts.nodes} nodes / ${review.index.counts.edges} edges · ${review.index.incremental ? "incremental" : "full"}${review.index.stale ? " · STALE" : ""}${review.index.django_boot && review.index.django_boot !== "off" ? ` · boot ${review.index.django_boot}` : ""}`
     : architecture?.indexed
-      ? `${architecture.counts.nodes} nodes / ${architecture.counts.edges} edges indexed`
+      ? `${architecture.counts.nodes} nodes / ${architecture.counts.edges} edges indexed${architecture.stale ? " · STALE" : ""}`
       : "Not indexed";
 
   return (
@@ -229,8 +291,21 @@ export function App() {
             value={repo}
             onChange={(e) => setRepo(e.target.value)}
           />
-          <input data-testid="base-ref" value={base} onChange={(e) => setBase(e.target.value)} placeholder="base" />
-          <input data-testid="head-ref" value={head} onChange={(e) => setHead(e.target.value)} placeholder="head" />
+          <input
+            data-testid="base-ref"
+            value={base}
+            onChange={(e) => persistRefs(e.target.value, head)}
+            placeholder="base"
+          />
+          <input
+            data-testid="head-ref"
+            value={head}
+            onChange={(e) => persistRefs(base, e.target.value)}
+            placeholder="head"
+          />
+          <button data-testid="btn-init" onClick={draftConfig}>
+            Draft config
+          </button>
           <button data-testid="btn-index" onClick={() => runIndex(true)}>
             Index
           </button>
@@ -239,6 +314,22 @@ export function App() {
           </button>
         </div>
         {error ? <div className="error">{error}</div> : null}
+        {copied ? <div className="banner" data-testid="status-note">{copied}</div> : null}
+        {(review?.index?.stale || architecture?.stale) && (tab === "review" || tab === "architecture") ? (
+          <div className="banner stale" data-testid="index-stale">
+            Index is stale — files changed since the last extract. Index again before trusting this walk.
+          </div>
+        ) : null}
+        {(review?.index?.django_boot === "failed" || architecture?.django_boot === "failed") ? (
+          <div className="banner warn" data-testid="django-boot-failed">
+            {review?.index?.django_boot_detail || architecture?.django_boot_detail || "django.setup() failed"}
+          </div>
+        ) : null}
+        {review?.workspace?.dirty_overlaps_review && tab === "review" ? (
+          <div className="banner warn" data-testid="dirty-tree">
+            Uncommitted files overlap this review: {(review.workspace.dirty_overlap || []).slice(0, 6).join(", ")}
+          </div>
+        ) : null}
 
         {tab === "review" && (
           <div className="content" data-testid="review-layout">
@@ -260,7 +351,15 @@ export function App() {
                       <div className="kicker">Index</div>
                       <div className="muted">
                         Walked {review.index.counts.nodes} nodes / {review.index.counts.edges} edges
-                        {review.index.reindexed ? " after an incremental refresh" : " from the existing index"}.
+                        {review.index.reindex_skipped
+                          ? " from an unchanged index"
+                          : review.index.reindexed
+                            ? " after an incremental refresh"
+                            : " from the existing index"}
+                        {review.index.django_boot && review.index.django_boot !== "off"
+                          ? ` · Django boot ${review.index.django_boot}`
+                          : ""}
+                        {review.workspace?.three_dot ? " · three-dot range" : ""}
                       </div>
                     </>
                   ) : null}
@@ -314,18 +413,35 @@ export function App() {
                         ))}
                     </>
                   ) : null}
-                  <button className="btn" onClick={askAi} style={{ marginTop: 12 }}>
-                    Ask configured model
-                  </button>
+                  <div className="btn-row">
+                    <button className="btn" onClick={askAi}>
+                      Ask configured model
+                    </button>
+                    <button className="btn" data-testid="btn-copy-markdown" onClick={copyMarkdown}>
+                      Copy markdown
+                    </button>
+                    <button className="btn" data-testid="btn-post-comment" onClick={postComment}>
+                      Post to PR
+                    </button>
+                  </div>
                   {aiNote ? <pre className="headline">{aiNote}</pre> : null}
                   <div className="kicker">Reviewers</div>
                   <div className="muted">{review.suggested_reviewers.join(", ") || "—"}</div>
                 </>
               ) : (
-                <p className="muted">
-                  Index a Django + React monorepo with <code>loadpath.yml</code>, inspect architecture, then review a
-                  git range against that graph.
-                </p>
+                <div className="empty" data-testid="review-empty">
+                  <p>
+                    The graph is the architecture. The brief is the force of this diff — not a hunk list.
+                  </p>
+                  <ol>
+                    <li>Point at a Django + React monorepo (or pick an indexed workspace).</li>
+                    <li>
+                      Index it. Missing <code>loadpath.yml</code> is drafted from <code>manage.py</code> and{" "}
+                      <code>src/features</code>.
+                    </li>
+                    <li>Review a git range, or pick a pull request so base/head become a three-dot merge-base.</li>
+                  </ol>
+                </div>
               )}
             </aside>
             <div className="graph-wrap" data-testid="review-graph">
@@ -347,6 +463,10 @@ export function App() {
                   <div className="muted" style={{ marginTop: 8 }}>
                     {architecture.indexed_at ? `Last index ${architecture.indexed_at}` : "Indexed"}
                     {architecture.incremental ? " · incremental" : " · full"}
+                    {architecture.stale ? " · stale" : ""}
+                    {architecture.django_boot && architecture.django_boot !== "off"
+                      ? ` · Django boot ${architecture.django_boot}`
+                      : ""}
                   </div>
                   <div className="kicker">Bounded contexts</div>
                   {Object.values(architecture.contexts).map((ctx) => (
@@ -435,7 +555,11 @@ export function App() {
         {tab === "prs" && (
           <div className="pr-list" data-testid="pr-list">
             <div className="topbar" style={{ border: 0, padding: 0, marginBottom: 12 }}>
-              <select data-testid="pr-provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
+              <select
+                data-testid="pr-provider"
+                value={provider}
+                onChange={(e) => persistPr(e.target.value, scmRepo, prNumber)}
+              >
                 <option value="github">GitHub</option>
                 <option value="bitbucket">Bitbucket</option>
               </select>
@@ -444,7 +568,7 @@ export function App() {
                 className="path"
                 placeholder="owner/repo"
                 value={scmRepo}
-                onChange={(e) => setScmRepo(e.target.value)}
+                onChange={(e) => persistPr(provider, e.target.value, prNumber)}
               />
               <button data-testid="btn-list-prs" onClick={loadPrs}>
                 List PRs
@@ -465,8 +589,8 @@ export function App() {
                   <button
                     className="btn"
                     onClick={() => {
-                      setBase(p.target_branch);
-                      setHead(p.source_branch);
+                      persistRefs(p.target_branch, p.source_branch);
+                      persistPr(p.provider, p.repo, String(p.number));
                       setTab("review");
                     }}
                   >

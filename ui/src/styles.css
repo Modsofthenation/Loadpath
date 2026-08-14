@@ -480,6 +480,26 @@ h1 { font-size: 18px; margin: 0 0 6px; }
 .file { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--accent); }
 .muted { color: var(--muted); font-size: 13px; line-height: 1.45; }
 .error { color: var(--low); padding: 8px 16px; }
+.banner {
+  margin: 0 16px 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.banner.warn { border-color: var(--medium); color: var(--medium); }
+.banner.stale { border-color: var(--low); color: var(--low); }
+.empty {
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.empty ol { margin: 8px 0 0 18px; padding: 0; }
+.empty code { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--accent); }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .pr-list { padding: 16px; overflow: auto; }
 .pr {
   border: 1px solid var(--line);
