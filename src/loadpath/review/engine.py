@@ -298,11 +298,13 @@ def _sink_summaries(nodes: list[dict], store: GraphStore) -> list[dict]:
     out = []
     for n in nodes:
         if n["type"] in interesting:
+            extra = n.get("extra") or {}
+            name = extra.get("mounted_at") or extra.get("full_path") or n["name"]
             out.append(
                 {
                     "id": n["id"],
                     "type": n["type"],
-                    "name": n["name"],
+                    "name": name,
                     "file_path": n.get("file_path"),
                     "context": n.get("context"),
                 }

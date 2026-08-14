@@ -107,3 +107,6 @@ def test_api_review_endpoint(tmp_path: Path):
     g = client.get("/api/graph", params={"repo_path": str(repo)})
     assert g.status_code == 200
     assert g.json()["counts"]["nodes"] > 0
+    home = client.get("/")
+    assert home.status_code == 200
+    assert b"Loadpath" in home.content
