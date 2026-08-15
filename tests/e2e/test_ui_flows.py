@@ -483,3 +483,52 @@ def test_ui_architecture_brief_paints_before_graph(live_app, browser_page):
     page.get_by_test_id("graph-loading").wait_for(state="hidden", timeout=20_000)
     wait_visible_graph(page)
 
+
+@pytest.mark.playwright
+def test_ui_whatif_banner_and_back_to_git_range(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+    _index_repo(page, repo)
+    page.get_by_test_id("btn-review").click()
+    page.get_by_test_id("brief").locator(".level").wait_for(timeout=30_000)
+    wait_visible_graph(page)
+    git_title = page.get_by_test_id("brief").locator(".level").inner_text()
+    assert "What if" not in git_title
+
+    page.get_by_test_id("graph-search").fill("InvoiceSerializer")
+    page.get_by_test_id("graph-search-hits").wait_for(timeout=8_000)
+    page.get_by_test_id("graph-search-hits").locator("button").first.click()
+    inspector = page.get_by_test_id("graph-inspector")
+    inspector.wait_for(timeout=10_000)
+    hint = page.get_by_test_id("whatif-hint").inner_text().lower()
+    assert "no git range" in hint
+    assert "isolate" in hint
+
+    with page.expect_response(
+        lambda r: "/api/whatif" in r.url and r.request.method == "POST",
+        timeout=30_000,
+    ) as pending:
+        page.get_by_test_id("btn-whatif").click()
+    if not pending.value.ok:
+        pytest.fail(f"whatif API {pending.value.status}: {pending.value.text()}")
+
+    banner = page.get_by_test_id("whatif-banner")
+    banner.wait_for(timeout=15_000)
+    banner_text = banner.inner_text().lower()
+    assert "hypothetical" in banner_text
+    assert "base/head" in banner_text
+    page.get_by_test_id("whatif-chip").wait_for()
+    brief = page.get_by_test_id("brief").locator(".level").inner_text()
+    assert "What if" in brief
+    assert page.get_by_test_id("btn-post-comment").is_disabled()
+    assert page.get_by_test_id("btn-exit-whatif").inner_text().strip() == "Back to git range"
+
+    page.get_by_test_id("btn-exit-whatif").click()
+    banner.wait_for(state="hidden", timeout=10_000)
+    restored = page.get_by_test_id("brief").locator(".level").inner_text()
+    assert restored == git_title
+    assert page.get_by_test_id("whatif-chip").count() == 0
+    assert page.get_by_test_id("btn-post-comment").is_enabled()
+

@@ -205,7 +205,7 @@ loadpath index /tmp/acme-billing
 loadpath serve --open
 ```
 
-Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path. Default range is `HEAD~1`…`HEAD`. Toggle **Include uncommitted** to walk the working tree. Click a node → **What if this changes** to walk sinks without a git range. The read-order list is a guided tour (prev/next highlights the file on the graph).
+Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path. Default range is `HEAD~1`…`HEAD`. Toggle **Include uncommitted** to walk the working tree. Click a node → **What if this changes** to walk sinks as if that node changed — no git range, and **Back to git range** restores the last real review. Isolate path to sinks only filters the current map. The read-order list is a guided tour (prev/next highlights the file on the graph).
 
 ## GitHub Action merge gate
 

@@ -123,6 +123,7 @@ export type Review = {
   suggested_tests?: { sink: string; type: string; kind: string; title: string; body: string }[];
   trend?: { note: string; points: { id: string; created_at: string; level: string; sinks?: number }[] };
   what_if?: boolean;
+  node?: GraphNode;
   evolution?: {
     hotspots: { path: string; commits: number; bus_factor: number; complexity?: number }[];
     change_coupling: { a: string; b: string; together: number; cross_context?: boolean }[];

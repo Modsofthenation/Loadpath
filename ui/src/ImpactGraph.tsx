@@ -256,14 +256,33 @@ function GraphInspector({
         empty="This node does not point at anything in this graph."
         onSelect={onSelect}
       />
+      {onWhatIf ? (
+        <p className="whatif-hint" data-testid="whatif-hint">
+          {onIsolate
+            ? "Walks a new path from this node with no git range. Isolate (next) only hides the rest of this map."
+            : "Walks a new path from this node with no git range — as if this changed, regardless of Base/Head."}
+        </p>
+      ) : null}
       <div className="btn-row">
         {onWhatIf ? (
-          <button type="button" className="btn" data-testid="btn-whatif" onClick={() => onWhatIf(node.id)}>
+          <button
+            type="button"
+            className="btn"
+            data-testid="btn-whatif"
+            title="Start a hypothetical walk from this node. Does not use Base/Head."
+            onClick={() => onWhatIf(node.id)}
+          >
             What if this changes
           </button>
         ) : null}
         {onIsolate ? (
-          <button type="button" className="btn" data-testid="btn-isolate" onClick={() => onIsolate(node.id)}>
+          <button
+            type="button"
+            className="btn"
+            data-testid="btn-isolate"
+            title="Hide nodes that are not on a path from here to a sink. Does not start a new walk."
+            onClick={() => onIsolate(node.id)}
+          >
             Isolate path to sinks
           </button>
         ) : null}

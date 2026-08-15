@@ -1371,6 +1371,24 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
 }
 .banner.warn { border-color: var(--medium); color: var(--medium); }
 .banner.stale { border-color: var(--low); color: var(--low); }
+.banner.whatif {
+  border-color: var(--accent);
+  align-items: center;
+}
+.banner.whatif .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.chip.whatif {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.whatif-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
 .banner .dismiss {
   background: transparent;
   border: 0;

@@ -61,6 +61,7 @@ export function App() {
   const [base, setBase] = useState(localStorage.getItem("loadpath.base") || "HEAD~1");
   const [head, setHead] = useState(localStorage.getItem("loadpath.head") || "HEAD");
   const [review, setReview] = useState<Review | null>(null);
+  const [rangeReview, setRangeReview] = useState<Review | null>(null);
   const [architecture, setArchitecture] = useState<ArchitectureReport | null>(null);
   const [repos, setRepos] = useState<IndexedRepo[]>([]);
   const [graphMode, setGraphMode] = useState<GraphMode>("review");
@@ -238,8 +239,9 @@ export function App() {
     setSelectedId(pinnedId && next.nodes.some((n) => n.id === pinnedId) ? pinnedId : null);
     setIsolateSource(null);
     setReviewDiff(null);
-    if (next.id && !next.what_if) {
-      localStorage.setItem("loadpath.lastReviewId", next.id);
+    if (!next.what_if) {
+      setRangeReview(next);
+      if (next.id) localStorage.setItem("loadpath.lastReviewId", next.id);
     }
   };
 
@@ -448,6 +450,7 @@ export function App() {
     setError("");
     setCopied("");
     setReview(null);
+    setRangeReview(null);
     setArchitecture(null);
     setGraphMode("architecture");
     persistRepo(next);
@@ -543,6 +546,10 @@ export function App() {
 
   const postComment = async () => {
     if (busyRef.current) return;
+    if (review?.what_if) {
+      setError("What-if walks are hypothetical — they are not posted to a pull request. Restore the git-range walk first.");
+      return;
+    }
     if (!review?.markdown || !scmRepo || !prNumber) {
       setError("Pick a pull request first (Pull requests tab), then post the brief.");
       return;
@@ -629,6 +636,24 @@ export function App() {
     } finally {
       markBusy("");
     }
+  };
+
+  const exitWhatIf = () => {
+    if (rangeReview) {
+      rememberReview(rangeReview);
+      setGraphMode("review");
+      setTab("review");
+      setCopied("Restored the last git-range walk");
+      return;
+    }
+    setReview(null);
+    setTourIndex(0);
+    setSelectedId(null);
+    setIsolateSource(null);
+    setReviewDiff(null);
+    setGraphMode("architecture");
+    setTab("architecture");
+    setCopied("");
   };
 
   const reviewRemotePr = async (item: PullRequest) => {
@@ -901,6 +926,16 @@ export function App() {
 
   const paletteActions: PaletteAction[] = [
     { id: "review", group: "Run", label: "Review this range", hint: "⌘/Ctrl+Enter", run: () => void runReview() },
+    ...(review?.what_if
+      ? [
+          {
+            id: "exit-whatif",
+            group: "Review",
+            label: rangeReview ? "Back to git-range walk" : "Exit what-if walk",
+            run: exitWhatIf,
+          },
+        ]
+      : []),
     { id: "index", group: "Run", label: "Index repository", run: () => void runIndex(true) },
     { id: "watch", group: "Run", label: watchEnabled ? "Stop watching working tree" : "Watch working tree", run: () => {
       const next = !watchEnabled;
@@ -1138,6 +1173,7 @@ export function App() {
                 {review.confidence.level.toUpperCase()}
               </div>
               <div className="muted">
+                {review.what_if ? "what-if · " : ""}
                 {review.confidence.covered_sinks}/{review.confidence.sinks} sinks
               </div>
             </div>
@@ -1190,6 +1226,18 @@ export function App() {
           {review?.workspace?.dirty_overlaps_review && tab === "review" ? (
             <div className="banner warn" data-testid="dirty-tree">
               Uncommitted files overlap this review: {(review.workspace.dirty_overlap || []).slice(0, 6).join(", ")}
+            </div>
+          ) : null}
+          {review?.what_if ? (
+            <div className="banner whatif" data-testid="whatif-banner">
+              <span>
+                Hypothetical walk from{" "}
+                <strong>{review.node?.name || "this node"}</strong>. Loadpath ignored Base/Head and asked which sinks
+                would feel this node change — not a filter of the current map.
+              </span>
+              <button type="button" className="btn" data-testid="btn-exit-whatif" onClick={exitWhatIf}>
+                {rangeReview ? "Back to git range" : "Back to architecture"}
+              </button>
             </div>
           ) : null}
           {workspaceLoading ? (
@@ -1835,6 +1883,11 @@ function ReviewBrief({
             ))}
           </ul>
         ) : null}
+        {review.what_if ? (
+          <span className="chip whatif" data-testid="whatif-chip">
+            what-if
+          </span>
+        ) : null}
         {review.low_risk ? <span className="chip">low-risk</span> : null}
         {review.change_kinds.map((k) => (
           <span className="chip" key={k}>
@@ -2128,7 +2181,14 @@ function ReviewBrief({
         <button type="button" className="btn" data-testid="btn-export-html" onClick={onExport}>
           Save HTML
         </button>
-        <button type="button" className="btn" data-testid="btn-post-comment" onClick={onPost}>
+        <button
+          type="button"
+          className="btn"
+          data-testid="btn-post-comment"
+          disabled={busy || Boolean(review.what_if)}
+          title={review.what_if ? "Hypothetical walks are not posted to a pull request" : undefined}
+          onClick={onPost}
+        >
           Post to PR
         </button>
       </div>
