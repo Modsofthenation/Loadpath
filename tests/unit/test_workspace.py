@@ -70,3 +70,8 @@ def test_list_git_refs_includes_commits_and_branches(tmp_path: Path):
     empty = list_git_refs(tmp_path / "not-a-repo")
     assert empty["git"] is False
     assert empty["commits"] == []
+    nested = repo / "backend"
+    nested.mkdir()
+    from_subdir = list_git_refs(nested)
+    assert from_subdir["git"] is True
+    assert from_subdir["commits"]

@@ -8,6 +8,7 @@ from typing import Any
 
 _GIT_TIMEOUT = 8
 _MAX_DIR_ENTRIES = 400
+_MAX_DIR_SCAN = 2000
 DEFAULT_COMMIT_LIMIT = 50
 _MAX_COMMIT_LIMIT = 100
 _MAX_BRANCHES = 50
@@ -45,17 +46,31 @@ def resolve_existing_dir(path: str | None) -> Path:
         current = parent
 
 
+def _is_git_root(path: Path) -> bool:
+    git = path / ".git"
+    try:
+        return git.is_dir() or git.is_file()
+    except OSError:
+        return False
+
+
 def list_directory(path: str | None = None) -> dict[str, Any]:
     """List child directories for the in-app repository picker."""
     home = Path.home().resolve()
     root = resolve_existing_dir(path)
     parent = str(root.parent) if root.parent != root else None
     entries: list[dict[str, Any]] = []
+    truncated = False
     try:
-        children = list(root.iterdir())
+        children = root.iterdir()
     except OSError:
-        children = []
+        children = iter(())
+    scanned = 0
     for child in children:
+        scanned += 1
+        if scanned > _MAX_DIR_SCAN:
+            truncated = True
+            break
         name = child.name
         if name.startswith("."):
             continue
@@ -70,19 +85,19 @@ def list_directory(path: str | None = None) -> dict[str, Any]:
                 "name": name,
                 "path": str(resolved),
                 "is_dir": True,
-                "is_git": (resolved / ".git").exists(),
+                "is_git": _is_git_root(resolved),
             }
         )
     entries.sort(key=lambda item: (not item["is_git"], item["name"].lower()))
-    truncated = len(entries) > _MAX_DIR_ENTRIES
-    if truncated:
+    if len(entries) > _MAX_DIR_ENTRIES:
+        truncated = True
         entries = entries[:_MAX_DIR_ENTRIES]
     return {
         "path": str(root),
         "name": root.name or str(root),
         "parent": parent,
         "home": str(home),
-        "is_git": (root / ".git").exists(),
+        "is_git": _is_git_root(root),
         "truncated": truncated,
         "entries": entries,
     }
@@ -102,7 +117,13 @@ def list_git_refs(repo_root: Path, *, commit_limit: int = DEFAULT_COMMIT_LIMIT) 
         "commits": [],
         "presets": ["HEAD", "HEAD~1"],
     }
-    if not repo_root.is_dir() or not (repo_root / ".git").exists():
+    if not repo_root.is_dir():
+        return payload
+    try:
+        inside = _git_output(repo_root, "rev-parse", "--is-inside-work-tree").strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return payload
+    if inside != "true":
         return payload
     payload["git"] = True
     head = git_rev_parse(repo_root, "HEAD")
