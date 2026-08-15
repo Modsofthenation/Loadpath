@@ -23,7 +23,9 @@ function LoadNode({ data, selected }: { data: { name: string; type: string }; se
   return (
     <div className={selected ? "lp-node selected" : "lp-node"}>
       <div className="t">{typeLabel(data.type)}</div>
-      <div className="n">{data.name}</div>
+      <div className="n" title={data.name}>
+        {data.name}
+      </div>
     </div>
   );
 }
