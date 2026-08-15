@@ -71,9 +71,16 @@ def test_cli_help():
     assert "Loadpath" in result.output
     assert "architecture" in result.output
     assert "init" in result.output
+    assert "mcp" in result.output
 
 
 def test_cli_serve_help():
     result = runner.invoke(app, ["serve", "--help"])
     assert result.exit_code == 0
     assert "port" in result.output.lower()
+
+
+def test_cli_mcp_help():
+    result = runner.invoke(app, ["mcp", "--help"])
+    assert result.exit_code == 0
+    assert "stdio" in result.output.lower()

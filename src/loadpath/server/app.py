@@ -10,6 +10,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from loadpath import __version__
+from loadpath.mcp.oauth import SCOPE
+from loadpath.mcp.server import (
+    add_mcp_auth_middleware,
+    build_mcp_http,
+    copy_mcp_routes,
+    create_mcp_server,
+    mcp_lifespan,
+    public_base_url,
+    resource_url,
+)
 from loadpath.ai.providers import client_for, residual_prompt
 from loadpath.architecture.snapshot import architecture_graph, architecture_report, summarize_index
 from loadpath.config import load_config
@@ -74,23 +84,70 @@ class ResidualRequest(BaseModel):
     review: dict[str, Any] = Field(default_factory=dict)
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="Loadpath", version=__version__)
+def create_app(
+    public_url: str | None = None,
+    oauth_pin: str | None = None,
+    oauth_auto_approve: bool | None = None,
+) -> FastAPI:
+    base = public_base_url(public_url=public_url)
+    mcp = create_mcp_server(
+        http=True,
+        public_url=base,
+        oauth_pin=oauth_pin,
+        auto_approve=oauth_auto_approve,
+    )
+    mcp_http = build_mcp_http(mcp)
+    app = FastAPI(title="Loadpath", version=__version__, lifespan=mcp_lifespan(mcp))
+    app.state.mcp = mcp
+    app.state.mcp_http = mcp_http
+    add_mcp_auth_middleware(app, mcp)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://127.0.0.1:7345",
-            "http://localhost:7345",
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
-        ],
+        allow_origins=["*"],
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["WWW-Authenticate", "Mcp-Session-Id", "mcp-session-id"],
     )
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "version": __version__}
+        return {"status": "ok", "version": __version__, "mcp": "/mcp"}
+
+    @app.get("/.well-known/oauth-authorization-server")
+    @app.get("/.well-known/openid-configuration")
+    def oauth_authorization_server() -> dict[str, Any]:
+        issuer = base.rstrip("/")
+        return {
+            "issuer": issuer,
+            "authorization_endpoint": f"{issuer}/authorize",
+            "token_endpoint": f"{issuer}/token",
+            "registration_endpoint": f"{issuer}/register",
+            "revocation_endpoint": f"{issuer}/revoke",
+            "scopes_supported": [SCOPE],
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": [
+                "none",
+                "client_secret_post",
+                "client_secret_basic",
+            ],
+            "code_challenge_methods_supported": ["S256"],
+            "client_id_metadata_document_supported": True,
+            "authorization_response_iss_parameter_supported": True,
+        }
+
+    @app.get("/.well-known/oauth-protected-resource")
+    def oauth_protected_resource_root() -> dict[str, Any]:
+        issuer = base.rstrip("/")
+        resource = resource_url(issuer)
+        return {
+            "resource": resource,
+            "authorization_servers": [issuer],
+            "scopes_supported": [SCOPE],
+            "bearer_methods_supported": ["header"],
+            "resource_name": "Loadpath",
+        }
 
     @app.get("/api/settings")
     def get_settings() -> dict[str, Any]:
@@ -317,6 +374,8 @@ def create_app() -> FastAPI:
             raise HTTPException(502, str(exc)) from exc
         return {"note": text}
 
+    copy_mcp_routes(app, mcp_http)
+
     static_dir = Path(__file__).resolve().parent.parent / "static"
     if static_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
@@ -327,10 +386,19 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
-def serve(host: str = "127.0.0.1", port: int = 7345, open_browser: bool = True) -> None:
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 7345,
+    open_browser: bool = True,
+    public_url: str | None = None,
+    oauth_pin: str | None = None,
+) -> None:
     import uvicorn
 
     settings_path().parent.mkdir(parents=True, exist_ok=True)
+    display = "127.0.0.1" if host in {"0.0.0.0", "::", "[::]"} else host
+    base = public_base_url(host=host, port=port, public_url=public_url)
+    application = create_app(public_url=base, oauth_pin=oauth_pin)
     if open_browser:
-        webbrowser.open(f"http://{host}:{port}")
-    uvicorn.run("loadpath.server.app:app", host=host, port=port, reload=False)
+        webbrowser.open(f"http://{display}:{port}")
+    uvicorn.run(application, host=host, port=port, reload=False)

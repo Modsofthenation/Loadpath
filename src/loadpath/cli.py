@@ -141,11 +141,31 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(7345, "--port"),
     open_browser: bool = typer.Option(True, "--open/--no-open"),
+    public_url: Optional[str] = typer.Option(
+        None,
+        "--public-url",
+        help="Public base URL for MCP OAuth (https://… when tunneling). Default is http://<host>:<port>.",
+    ),
+    oauth_pin: Optional[str] = typer.Option(
+        None,
+        "--oauth-pin",
+        help="Optional PIN on the OAuth consent screen (recommended when --public-url is set).",
+    ),
 ) -> None:
-    """Start the Loadpath app (API + UI)."""
+    """Start the Loadpath app (API + UI + MCP /mcp with OAuth)."""
     from loadpath.server.app import serve as run_server
 
-    run_server(host=host, port=port, open_browser=open_browser)
+    run_server(host=host, port=port, open_browser=open_browser, public_url=public_url, oauth_pin=oauth_pin)
+
+
+@app.command("mcp")
+def mcp_stdio() -> None:
+    """Run Loadpath as a local stdio MCP server (Cursor / Claude Desktop). No OAuth."""
+    import asyncio
+
+    from loadpath.mcp.server import run_stdio
+
+    asyncio.run(run_stdio())
 
 
 if __name__ == "__main__":

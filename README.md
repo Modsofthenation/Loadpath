@@ -21,7 +21,7 @@ plus the jobs the view enqueues (`send_invoice_email.delay`, `rebuild_ledger.sen
 
 ## App
 
-`loadpath serve --port 7345` opens a local desktop-style UI: icon rail, labeled toolbar, merge-box confidence, and an inspectable impact graph. Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close. A dozen themes (Obsidian, Nord, Solarized, Paper, high-contrast, …) live in Settings and `localStorage`. Last repo, git range, and SCM slug are remembered the same way. Copy the markdown brief, or post **one** PR comment (updated in place) from the Review tab. Keyboard: `1`–`5` switches tabs. Outside Settings and Pull requests, `⌘`/`Ctrl`+`Enter` runs a review.
+`loadpath serve --port 7345` opens a local desktop-style UI: icon rail, labeled toolbar, merge-box confidence, and an inspectable impact graph. The same process hosts MCP at `/mcp` (OAuth). Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close. A dozen themes (Obsidian, Nord, Solarized, Paper, high-contrast, …) live in Settings and `localStorage`. Last repo, git range, and SCM slug are remembered the same way. Copy the markdown brief, or post **one** PR comment (updated in place) from the Review tab. Keyboard: `1`–`5` switches tabs. Outside Settings and Pull requests, `⌘`/`Ctrl`+`Enter` runs a review.
 
 ### Review
 
@@ -80,11 +80,41 @@ loadpath architecture /path/to/repo
 loadpath review /path/to/repo --base HEAD~1 --head HEAD
 loadpath review /path/to/repo --base origin/main --head HEAD --no-reindex
 
-# Cross-platform app (API + visual graph + PR list)
+# Cross-platform app (API + visual graph + PR list + MCP /mcp with OAuth)
 loadpath serve --port 7345
+
+# Local stdio MCP for Cursor / Claude Desktop (no OAuth)
+loadpath mcp
 ```
 
 **Flow:** `index` builds the architecture graph → `architecture` shows contexts and rule hits on the whole repo → `review` walks that same graph for a git range. The app mirrors this: Index registers a workspace, Architecture inspects it, Review traces a change through it.
+
+## MCP (Cursor, Claude, ChatGPT, Gemini)
+
+`loadpath serve` exposes Streamable HTTP MCP at `/mcp`, protected with OAuth 2.1 (PKCE, dynamic client registration, Client ID Metadata Documents). Cloud hosts need HTTPS; set `--public-url` to the public origin when tunneling. `--oauth-pin` adds a PIN on the consent page.
+
+```bash
+loadpath serve --host 0.0.0.0 --port 7345 --public-url https://your-tunnel.example --oauth-pin 123456
+```
+
+MCP URL: `https://your-tunnel.example/mcp` (or `http://127.0.0.1:7345/mcp` on the same machine).
+
+**Cursor (stdio, local)** — `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "loadpath": {
+      "command": "loadpath",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**Cursor / Claude / ChatGPT / Gemini (HTTP + OAuth)** — add that MCP URL in the host’s connectors. The first connect opens a consent page on the Loadpath machine. Tokens stay in `~/.loadpath/oauth.json`.
+
+Tools: `list_workspaces`, `init_repo`, `index_repo`, `architecture`, `review`, `detect_repo`, `list_pull_requests`, `post_review_comment`. `review` returns the load-path brief (confidence, sinks, reviewers) — not hunk comments.
 
 Put `loadpath.yml` at the repo root (see [`loadpath.yml.example`](loadpath.yml.example) and [`fixtures/demo_monorepo/loadpath.yml`](fixtures/demo_monorepo/loadpath.yml)). The tool is opinionated about *your* architecture, not a generic module graph.
 
@@ -183,6 +213,7 @@ cd ui && npm test
 | `tests/integration/test_review_vertical_slice.py` | Serializer field change reaches InvoicePage/Zod, not MePage; reviewers `billing-team` |
 | `tests/e2e/test_cli_review.py` | `loadpath index` / `architecture` / `review` markdown, JSON, HTML |
 | `tests/e2e/test_api_flow.py` | health, index, architecture, review-from-index, graph, settings, GitHub + Bitbucket PR list |
+| `tests/e2e/test_mcp_oauth.py` | OAuth metadata/DCR/PKCE, consent, CIMD, MCP `review` stays on the billing load path |
 | `tests/e2e/test_index_architecture_flow.py` | index snapshot, review without index, review walking an existing graph |
 | `tests/e2e/test_brokers_and_django.py` | Celery + Dramatiq sinks, actor-only PR, non-idempotent Dramatiq warning, destructive migration, cross-context blocker, boot overlay, management commands, beat/canvas |
 | `tests/e2e/test_ui_screenshots.py` | Playwright: Architecture, Review, Impact graph, Pull requests, Settings → `docs/screenshots/` |
