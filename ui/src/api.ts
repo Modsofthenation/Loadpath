@@ -1,4 +1,4 @@
-import type { ArchitectureReport, FsListing, GitRefs, IndexedRepo, PullRequest, Review } from "./types";
+import type { ArchitectureReport, FsListing, GitRefs, IndexedRepo, PullRequest, RemoteRepo, Review } from "./types";
 
 export function formatApiError(text: string, fallback = "Request failed"): string {
   const trimmed = (text || "").trim();
@@ -37,7 +37,14 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-const BLANK_SETTINGS_KEYS = ["github_token", "bitbucket_token", "ai_api_key", "ai_model", "ai_base_url"];
+const BLANK_SETTINGS_KEYS = [
+  "github_token",
+  "bitbucket_token",
+  "bitbucket_oauth_client_secret",
+  "ai_api_key",
+  "ai_model",
+  "ai_base_url",
+];
 
 export const api = {
   health: () => req<{ status: string; version: string }>("/api/health"),
@@ -86,6 +93,36 @@ export const api = {
     req<{ pull_requests: PullRequest[] }>("/api/prs", {
       method: "POST",
       body: JSON.stringify({ provider, repo, state }),
+    }),
+  scmRepos: (provider: string) =>
+    req<{ provider: string; user: { login: string; name: string; url: string }; repos: RemoteRepo[] }>(
+      `/api/scm/repos?provider=${encodeURIComponent(provider)}`,
+    ),
+  oauthStatus: () =>
+    req<{
+      github: { connected: boolean; user: string; token_set: boolean; oauth_ready: boolean };
+      bitbucket: { connected: boolean; user: string; token_set: boolean; oauth_ready: boolean };
+    }>("/api/oauth/status"),
+  githubOAuthStart: () =>
+    req<{
+      flow_id: string;
+      user_code: string;
+      verification_uri: string;
+      verification_uri_complete: string;
+      interval: number;
+      expires_in: number;
+    }>("/api/oauth/github/start", { method: "POST", body: "{}" }),
+  githubOAuthPoll: (flow_id: string) =>
+    req<{ status: string; interval?: number; user?: string; connected?: boolean }>("/api/oauth/github/poll", {
+      method: "POST",
+      body: JSON.stringify({ flow_id }),
+    }),
+  bitbucketOAuthStart: () =>
+    req<{ flow_id: string; authorize_url: string }>("/api/oauth/bitbucket/start"),
+  oauthDisconnect: (provider: string) =>
+    req<Record<string, unknown>>("/api/oauth/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ provider }),
     }),
   residual: (review: Review) =>
     req<{ note: string }>("/api/ai/residual", {

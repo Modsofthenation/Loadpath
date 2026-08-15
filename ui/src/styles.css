@@ -1384,6 +1384,26 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
 }
 .pr-toolbar .field { flex: 1; }
 .pr-toolbar .field.provider { flex: 0 0 140px; }
+.scm-count { margin: 0 0 12px; font-size: 12px; }
+.scm-login {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.scm-login:first-of-type { border-top: 0; padding-top: 0; }
+.scm-login .btn-row { margin-top: 0; }
+.scm-login p { margin: 2px 0 0; }
+.oauth-code {
+  font-size: 13px;
+  margin: 0;
+}
+.oauth-code code {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
 .pr {
   border: 1px solid var(--line);
   background: var(--surface);

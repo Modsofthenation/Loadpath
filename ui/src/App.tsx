@@ -6,7 +6,7 @@ import { ImpactGraph } from "./ImpactGraph";
 import { RefCombobox } from "./RefCombobox";
 import { RepoExplorer } from "./RepoExplorer";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
-import type { ArchitectureReport, DeepeningCandidate, GitRefs, IndexedRepo, PullRequest, Review } from "./types";
+import type { ArchitectureReport, DeepeningCandidate, GitRefs, IndexedRepo, PullRequest, RemoteRepo, Review } from "./types";
 
 type Tab = "review" | "architecture" | "graph" | "prs" | "settings";
 type GraphMode = "review" | "architecture";
@@ -18,6 +18,20 @@ const TABS: { id: Tab; label: string; testId: string; shortcut: string; icon: ty
   { id: "prs", label: "Pull requests", testId: "tab-prs", shortcut: "4", icon: IconPrs },
   { id: "settings", label: "Settings", testId: "tab-settings", shortcut: "5", icon: IconSettings },
 ];
+
+function openOAuthUrl(url: string, host: string, pathPrefix: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) return;
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname !== host && !hostname.endsWith(`.${host}`)) return;
+  if (!parsed.pathname.startsWith(pathPrefix)) return;
+  window.open(parsed.toString(), "_blank", "noopener,noreferrer");
+}
 
 export function App() {
   const [tab, setTab] = useState<Tab>("review");
@@ -33,6 +47,7 @@ export function App() {
   const [copied, setCopied] = useState("");
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [prs, setPrs] = useState<PullRequest[]>([]);
+  const [remoteRepos, setRemoteRepos] = useState<RemoteRepo[]>([]);
   const [scmRepo, setScmRepo] = useState(localStorage.getItem("loadpath.scmRepo") || "");
   const [provider, setProvider] = useState(localStorage.getItem("loadpath.provider") || "github");
   const [prNumber, setPrNumber] = useState(localStorage.getItem("loadpath.prNumber") || "");
@@ -41,6 +56,13 @@ export function App() {
   const [settingsReady, setSettingsReady] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [gitRefs, setGitRefs] = useState<GitRefs | null>(null);
+  const [githubFlow, setGithubFlow] = useState<{
+    flow_id: string;
+    user_code: string;
+    verification_uri_complete: string;
+    interval: number;
+  } | null>(null);
+  const [bitbucketWaiting, setBitbucketWaiting] = useState(false);
   const repoRef = useRef(repo);
   repoRef.current = repo;
   const explorerOpenRef = useRef(false);
@@ -133,6 +155,108 @@ export function App() {
       localStorage.setItem("loadpath.prNumber", number);
     }
   };
+
+  const tokenSetFor = (name: string) =>
+    name === "github" ? Boolean(settings.github_token_set) : Boolean(settings.bitbucket_token_set);
+
+  const loadRemoteRepos = useCallback(async (name = provider) => {
+    try {
+      const listed = await api.scmRepos(name);
+      setRemoteRepos(listed.repos);
+      if (listed.user?.login) {
+        setSettings((current) => ({
+          ...current,
+          ...(name === "github" ? { github_user: listed.user.login } : { bitbucket_user: listed.user.login }),
+        }));
+      }
+    } catch {
+      setRemoteRepos([]);
+    }
+  }, [provider]);
+
+  useEffect(() => {
+    if (tab !== "prs") return;
+    let cancelled = false;
+    loadRemoteRepos(provider).catch(() => {
+      if (!cancelled) setRemoteRepos([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, provider, loadRemoteRepos]);
+
+  useEffect(() => {
+    if (!githubFlow) return;
+    let cancelled = false;
+    let timer = 0;
+    const tick = async () => {
+      try {
+        const result = await api.githubOAuthPoll(githubFlow.flow_id);
+        if (cancelled) return;
+        if (result.status === "complete") {
+          setGithubFlow(null);
+          const next = await api.settings();
+          setSettings(next);
+          setCopied(result.user ? `Signed in to GitHub as ${result.user}` : "Signed in to GitHub");
+          void loadRemoteRepos("github");
+          return;
+        }
+        if (result.status === "pending" || result.status === "slow_down") {
+          timer = window.setTimeout(tick, Math.max(result.interval || githubFlow.interval, 5) * 1000);
+          return;
+        }
+        setGithubFlow(null);
+        setError(result.status === "denied" ? "GitHub sign-in was denied." : "GitHub sign-in expired. Try again.");
+      } catch (e) {
+        if (cancelled) return;
+        setGithubFlow(null);
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    timer = window.setTimeout(tick, Math.max(githubFlow.interval, 5) * 1000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [githubFlow, loadRemoteRepos]);
+
+  useEffect(() => {
+    if (!bitbucketWaiting) return;
+    let cancelled = false;
+    let timer = 0;
+    const started = Date.now();
+    const tick = async () => {
+      try {
+        const status = await api.oauthStatus();
+        if (cancelled) return;
+        if (status.bitbucket.connected) {
+          setBitbucketWaiting(false);
+          const next = await api.settings();
+          setSettings(next);
+          setCopied(
+            status.bitbucket.user ? `Signed in to Bitbucket as ${status.bitbucket.user}` : "Signed in to Bitbucket",
+          );
+          void loadRemoteRepos("bitbucket");
+          return;
+        }
+        if (Date.now() - started > 180_000) {
+          setBitbucketWaiting(false);
+          setError("Bitbucket sign-in timed out. Finish in the browser, or try again.");
+          return;
+        }
+        timer = window.setTimeout(tick, 1500);
+      } catch (e) {
+        if (cancelled) return;
+        setBitbucketWaiting(false);
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    timer = window.setTimeout(tick, 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [bitbucketWaiting, loadRemoteRepos]);
 
   const loadArchitecture = async (path = repo) => {
     if (!path.trim()) return null;
@@ -237,10 +361,46 @@ export function App() {
     try {
       const r = await api.prs(provider, scmRepo);
       setPrs(r.pull_requests);
+      const match = remoteRepos.find((item) => item.slug.toLowerCase() === scmRepo.trim().toLowerCase());
+      if (match?.local_path) persistRepo(match.local_path);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       markBusy("");
+    }
+  };
+
+  const startGithubLogin = async () => {
+    setError("");
+    try {
+      const flow = await api.githubOAuthStart();
+      setGithubFlow(flow);
+      openOAuthUrl(flow.verification_uri_complete, "github.com", "/login/device");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const startBitbucketLogin = async () => {
+    setError("");
+    try {
+      const flow = await api.bitbucketOAuthStart();
+      setBitbucketWaiting(true);
+      openOAuthUrl(flow.authorize_url, "bitbucket.org", "/site/oauth2/authorize");
+    } catch (e) {
+      setBitbucketWaiting(false);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const disconnectProvider = async (name: string) => {
+    setError("");
+    try {
+      setSettings(await api.oauthDisconnect(name));
+      if (provider === name) setRemoteRepos([]);
+      setCopied(`Disconnected ${name}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -249,8 +409,11 @@ export function App() {
     const fd = new FormData(evt.currentTarget);
     const body = {
       github_token: String(fd.get("github_token") || ""),
+      github_oauth_client_id: String(fd.get("github_oauth_client_id") || ""),
       bitbucket_token: String(fd.get("bitbucket_token") || ""),
       bitbucket_username: String(fd.get("bitbucket_username") || ""),
+      bitbucket_oauth_client_id: String(fd.get("bitbucket_oauth_client_id") || ""),
+      bitbucket_oauth_client_secret: String(fd.get("bitbucket_oauth_client_secret") || ""),
       ai_provider: String(fd.get("ai_provider") || "none"),
       ai_api_key: String(fd.get("ai_api_key") || ""),
       ai_model: String(fd.get("ai_model") || ""),
@@ -643,20 +806,50 @@ export function App() {
                   <span>Repository</span>
                   <input
                     data-testid="pr-repo"
-                    placeholder="owner/repo"
+                    placeholder={remoteRepos.length ? "Search your repos" : "owner/repo"}
                     value={scmRepo}
                     onChange={(e) => persistPr(provider, e.target.value, prNumber)}
+                    list="scm-repos"
                     spellCheck={false}
                   />
+                  <datalist id="scm-repos">
+                    {remoteRepos.map((item) => (
+                      <option key={item.slug} value={item.slug}>
+                        {item.private ? "private" : "public"}
+                        {item.local_path ? " · local" : ""}
+                      </option>
+                    ))}
+                  </datalist>
                 </label>
+                <button
+                  type="button"
+                  data-testid="btn-refresh-repos"
+                  className="btn"
+                  disabled={!!busy || !tokenSetFor(provider)}
+                  onClick={() => {
+                    void loadRemoteRepos(provider);
+                  }}
+                >
+                  My repos
+                </button>
                 <button type="button" data-testid="btn-list-prs" className="btn" disabled={!!busy} onClick={loadPrs}>
                   List PRs
                 </button>
               </div>
+              {remoteRepos.length > 0 ? (
+                <p className="muted scm-count" data-testid="scm-repo-count">
+                  {remoteRepos.length} {provider} repositor{remoteRepos.length === 1 ? "y" : "ies"}
+                  {provider === "github" && settings.github_user ? ` · @${String(settings.github_user)}` : ""}
+                  {provider === "bitbucket" && settings.bitbucket_user ? ` · ${String(settings.bitbucket_user)}` : ""}
+                </p>
+              ) : null}
               {prs.length === 0 ? (
                 <div className="empty" data-testid="pr-empty">
                   <h2>No pull requests loaded</h2>
-                  <p>Enter an owner/repo, then list open PRs. Reviewing a PR fills base and head from its SHAs.</p>
+                  <p>
+                    Sign in under Settings (or paste a token), load your repositories, then list open PRs. Reviewing a
+                    PR fills base and head from its SHAs.
+                  </p>
                 </div>
               ) : (
                 prs.map((p) => (
@@ -682,6 +875,8 @@ export function App() {
                         onClick={() => {
                           persistRefs(p.base_sha || p.target_branch, p.head_sha || p.source_branch);
                           persistPr(p.provider, p.repo, String(p.number));
+                          const match = remoteRepos.find((item) => item.slug.toLowerCase() === p.repo.toLowerCase());
+                          if (match?.local_path) persistRepo(match.local_path);
                           setTab("review");
                         }}
                       >
@@ -725,9 +920,117 @@ export function App() {
               </section>
               <section className="settings-card">
                 <h2>Source control</h2>
-                <label htmlFor="github_token">GitHub token</label>
+                <p className="muted">
+                  Sign in with OAuth to list every repository the account can access. Tokens stay in
+                  ~/.loadpath/settings.json. A classic PAT still works if you prefer not to register an OAuth app.
+                </p>
+                <div className="scm-login" data-testid="scm-github">
+                  <div>
+                    <strong>GitHub</strong>
+                    <p className="muted">
+                      {settings.github_token_set
+                        ? settings.github_user
+                          ? `Signed in as @${String(settings.github_user)}`
+                          : "Token saved on this machine"
+                        : "Not connected"}
+                    </p>
+                  </div>
+                  <div className="btn-row">
+                    {settings.github_token_set ? (
+                      <button type="button" className="btn" data-testid="btn-github-disconnect" onClick={() => void disconnectProvider("github")}>
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn primary"
+                        data-testid="btn-github-login"
+                        disabled={!!githubFlow || !settings.github_oauth_ready}
+                        onClick={() => void startGithubLogin()}
+                      >
+                        {githubFlow ? "Waiting for GitHub…" : "Sign in with GitHub"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {githubFlow ? (
+                  <p className="oauth-code" data-testid="github-user-code">
+                    Enter <code>{githubFlow.user_code}</code> at GitHub if the browser did not fill it in.
+                  </p>
+                ) : null}
+                {!settings.github_oauth_ready ? (
+                  <p className="muted">
+                    Sign-in needs a GitHub OAuth App with Device Flow enabled. Set LOADPATH_GITHUB_CLIENT_ID or paste
+                    the client ID below.
+                  </p>
+                ) : null}
+                <label htmlFor="github_oauth_client_id">GitHub OAuth client ID</label>
+                <input
+                  id="github_oauth_client_id"
+                  name="github_oauth_client_id"
+                  data-testid="github-oauth-client-id"
+                  placeholder="Ov23…"
+                  defaultValue={String(settings.github_oauth_client_id || "")}
+                  autoComplete="off"
+                />
+                <label htmlFor="github_token">GitHub token (optional PAT)</label>
                 <input id="github_token" name="github_token" type="password" placeholder="ghp_…" autoComplete="off" />
-                <label htmlFor="bitbucket_token">Bitbucket token</label>
+                <div className="scm-login" data-testid="scm-bitbucket">
+                  <div>
+                    <strong>Bitbucket</strong>
+                    <p className="muted">
+                      {settings.bitbucket_token_set
+                        ? settings.bitbucket_user
+                          ? `Signed in as ${String(settings.bitbucket_user)}`
+                          : "Token saved on this machine"
+                        : "Not connected"}
+                    </p>
+                  </div>
+                  <div className="btn-row">
+                    {settings.bitbucket_token_set ? (
+                      <button
+                        type="button"
+                        className="btn"
+                        data-testid="btn-bitbucket-disconnect"
+                        onClick={() => void disconnectProvider("bitbucket")}
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn primary"
+                        data-testid="btn-bitbucket-login"
+                        disabled={bitbucketWaiting || !settings.bitbucket_oauth_ready}
+                        onClick={() => void startBitbucketLogin()}
+                      >
+                        {bitbucketWaiting ? "Waiting for Bitbucket…" : "Sign in with Bitbucket"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {!settings.bitbucket_oauth_ready ? (
+                  <p className="muted">
+                    Sign-in needs a Bitbucket OAuth consumer (key + secret). Callback URL:{" "}
+                    <code>/api/oauth/bitbucket/callback</code> on this app origin.
+                  </p>
+                ) : null}
+                <label htmlFor="bitbucket_oauth_client_id">Bitbucket OAuth key</label>
+                <input
+                  id="bitbucket_oauth_client_id"
+                  name="bitbucket_oauth_client_id"
+                  data-testid="bitbucket-oauth-client-id"
+                  defaultValue={String(settings.bitbucket_oauth_client_id || "")}
+                  autoComplete="off"
+                />
+                <label htmlFor="bitbucket_oauth_client_secret">Bitbucket OAuth secret</label>
+                <input
+                  id="bitbucket_oauth_client_secret"
+                  name="bitbucket_oauth_client_secret"
+                  type="password"
+                  autoComplete="off"
+                />
+                <label htmlFor="bitbucket_token">Bitbucket token (optional app password)</label>
                 <input id="bitbucket_token" name="bitbucket_token" type="password" autoComplete="off" />
                 <label htmlFor="bitbucket_username">Bitbucket username (app passwords)</label>
                 <input

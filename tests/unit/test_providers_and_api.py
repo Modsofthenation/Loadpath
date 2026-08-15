@@ -105,3 +105,116 @@ def test_github_rejects_unsafe_repo_slug():
     gh = GitHubProvider("tok")
     with pytest.raises(ValueError):
         gh.list_pull_requests("../etc/passwd")
+
+
+def test_parse_remote_url_github_and_bitbucket():
+    from loadpath.providers.scm import parse_remote_url
+
+    assert parse_remote_url("git@github.com:Acme/Demo.git") == ("github", "Acme/Demo")
+    assert parse_remote_url("https://github.com/Acme/Demo") == ("github", "Acme/Demo")
+    assert parse_remote_url("https://x-access-token:tok@github.com/acme/demo.git") == ("github", "acme/demo")
+    assert parse_remote_url("https://bitbucket.org/acme/demo.git") == ("bitbucket", "acme/demo")
+    assert parse_remote_url("git@bitbucket.org:acme/demo.git") == ("bitbucket", "acme/demo")
+    assert parse_remote_url("https://gitlab.com/acme/demo.git") is None
+
+
+def test_github_lists_repositories_across_pages():
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/user":
+            return httpx.Response(200, json={"login": "ada", "html_url": "https://github.com/ada"})
+        page = int(request.url.params.get("page") or "1")
+        if page == 1:
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "full_name": "acme/demo",
+                        "html_url": "https://github.com/acme/demo",
+                        "private": True,
+                        "default_branch": "main",
+                        "updated_at": "2026-08-14T00:00:00Z",
+                        "description": "billing",
+                    }
+                ]
+                + [
+                    {
+                        "full_name": f"acme/r{i}",
+                        "html_url": f"https://github.com/acme/r{i}",
+                        "private": False,
+                        "default_branch": "main",
+                        "updated_at": "2026-08-14T00:00:00Z",
+                        "description": "",
+                    }
+                    for i in range(99)
+                ],
+            )
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "full_name": "acme/extra",
+                    "html_url": "https://github.com/acme/extra",
+                    "private": False,
+                    "default_branch": "main",
+                    "updated_at": "2026-08-14T00:00:00Z",
+                    "description": "",
+                }
+            ],
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    gh = GitHubProvider("tok", client=client)
+    assert gh.current_user()["login"] == "ada"
+    repos = gh.list_repositories(limit=120)
+    slugs = {r.slug for r in repos}
+    assert "acme/demo" in slugs
+    assert "acme/extra" in slugs
+    assert len(repos) == 101
+
+
+def test_bitbucket_lists_repositories_via_next():
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/2.0/user":
+            return httpx.Response(200, json={"username": "bob", "display_name": "Bob"})
+        if "after=" in str(request.url):
+            return httpx.Response(
+                200,
+                json={
+                    "values": [
+                        {
+                            "full_name": "acme/ledger",
+                            "links": {"html": {"href": "https://bitbucket.org/acme/ledger"}},
+                            "is_private": True,
+                            "mainbranch": {"name": "main"},
+                            "updated_on": "2026-08-14T00:00:00Z",
+                            "description": "",
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "values": [
+                    {
+                        "full_name": "acme/demo",
+                        "links": {"html": {"href": "https://bitbucket.org/acme/demo"}},
+                        "is_private": False,
+                        "mainbranch": {"name": "main"},
+                        "updated_on": "2026-08-14T00:00:00Z",
+                        "description": "app",
+                    }
+                ],
+                "next": "https://api.bitbucket.org/2.0/repositories?role=member&pagelen=50&after=token",
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    bb = BitbucketProvider("tok", client=client)
+    assert bb.current_user()["login"] == "bob"
+    repos = bb.list_repositories()
+    assert [r.slug for r in repos] == ["acme/demo", "acme/ledger"]

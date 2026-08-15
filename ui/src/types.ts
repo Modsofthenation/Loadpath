@@ -162,6 +162,19 @@ export type PullRequest = {
   base_sha?: string;
 };
 
+export type RemoteRepo = {
+  provider: string;
+  slug: string;
+  name: string;
+  owner: string;
+  url: string;
+  private: boolean;
+  default_branch?: string;
+  updated_at?: string;
+  description?: string;
+  local_path?: string | null;
+};
+
 export type FsEntry = {
   name: string;
   path: string;
