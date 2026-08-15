@@ -113,6 +113,19 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     inspector = page.get_by_test_id("graph-inspector")
     inspector.wait_for(timeout=10_000)
     assert inspector.inner_text().strip()
+    overflow = inspector.evaluate(
+        """el => {
+            const pane = el.parentElement;
+            const box = el.getBoundingClientRect();
+            const paneBox = pane.getBoundingClientRect();
+            return {
+                content: el.scrollWidth <= el.clientWidth + 1,
+                in_pane: box.right <= paneBox.right + 1 && box.left >= paneBox.left - 1,
+            };
+        }"""
+    )
+    assert overflow["content"], "selected-node inspector overflows horizontally"
+    assert overflow["in_pane"], "selected-node inspector extends outside the graph pane"
 
     page.get_by_test_id("graph-mode-architecture").click()
     assert page.get_by_test_id("graph-mode-architecture").get_attribute("aria-pressed") == "true"

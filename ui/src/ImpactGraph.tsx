@@ -10,7 +10,7 @@ import {
   type NodeMouseHandler,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { typeLabel } from "./format";
+import { typeLabel, wrapHint } from "./format";
 import { layoutNodes, type GraphEdge, type GraphNode } from "./types";
 
 const WEIGHT_COLOR: Record<string, string> = {
@@ -23,7 +23,9 @@ function LoadNode({ data, selected }: { data: { name: string; type: string }; se
   return (
     <div className={selected ? "lp-node selected" : "lp-node"}>
       <div className="t">{typeLabel(data.type)}</div>
-      <div className="n">{data.name}</div>
+      <div className="n" title={data.name}>
+        {data.name}
+      </div>
     </div>
   );
 }
@@ -109,15 +111,16 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
       {selected ? (
         <aside className="inspector" data-testid="graph-inspector">
           <div className="t">{typeLabel(selected.type)}</div>
-          <div className="n">{selected.name}</div>
-          {selected.context ? <div className="muted">{selected.context}</div> : null}
+          <div className="n">{wrapHint(selected.name)}</div>
+          {selected.context ? <div className="muted">{wrapHint(selected.context)}</div> : null}
           {selected.file_path ? (
             <div className="file">
-              {selected.file_path}
-              {selected.start_line ? `:${selected.start_line}` : ""}
+              {wrapHint(
+                `${selected.file_path}${selected.start_line ? `:${selected.start_line}` : ""}`,
+              )}
             </div>
           ) : null}
-          <div className="muted">{selected.qualified_name}</div>
+          <div className="muted">{wrapHint(selected.qualified_name)}</div>
         </aside>
       ) : null}
     </div>

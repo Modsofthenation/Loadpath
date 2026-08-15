@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWhen, kindLabel, repoName, typeLabel } from "./format";
+import { formatWhen, kindLabel, repoName, typeLabel, wrapHint } from "./format";
 
 describe("display helpers", () => {
   it("humanizes kinds and types", () => {
@@ -12,5 +12,11 @@ describe("display helpers", () => {
     expect(formatWhen("not-a-date")).toBe("not-a-date");
     expect(formatWhen()).toBe("");
     expect(formatWhen("2026-08-14T00:00:00Z")).toMatch(/2026/);
+  });
+
+  it("inserts wrap hints after identifier separators", () => {
+    expect(wrapHint("tests/unit/test_django_extractors.py")).toBe(
+      "tests/\u200bunit/\u200btest_\u200bdjango_\u200bextractors.\u200bpy",
+    );
   });
 });
