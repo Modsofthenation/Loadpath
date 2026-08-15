@@ -80,6 +80,25 @@ def test_cli_serve_help():
     assert "port" in result.output.lower()
 
 
+def test_python_module_entrypoint_help():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
+    result = subprocess.run(
+        [sys.executable, "-m", "loadpath", "--help"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "serve" in result.stdout.lower()
+
+
 def test_cli_mcp_help():
     result = runner.invoke(app, ["mcp", "--help"])
     assert result.exit_code == 0

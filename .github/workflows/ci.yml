@@ -29,3 +29,5 @@ jobs:
           npm install
           npm test
           npm run build
+      - name: Desktop unit tests
+        run: node --test desktop/backend.test.mjs desktop/urls.test.mjs

@@ -64,6 +64,32 @@ cd ui && npm install && npm run build && cd ..
 loadpath --help
 ```
 
+## Desktop app (Windows, macOS, Linux)
+
+Electron wraps the same local app: it starts the Loadpath backend and opens it in a native window. Tokens still live in `~/.loadpath/settings.json`.
+
+**From source**
+
+```bash
+pip install -e .
+cd ui && npm install && npm run build && cd ..
+cd desktop && npm install && npm start
+```
+
+Requires Python 3.12+ on `PATH` (`python` on Windows, `python3` elsewhere), or set `LOADPATH_PYTHON`.
+
+**Installers**
+
+GitHub → Actions → **Desktop builds** → **Run workflow**. That manual job builds:
+
+| OS | Artifact |
+| --- | --- |
+| Linux | AppImage and `.deb` |
+| Windows | NSIS `.exe` |
+| macOS | `.dmg` and `.zip` (unsigned) |
+
+macOS Gatekeeper will block the unsigned app until you open it from Finder with right-click → Open. The workflow smokes `/api/health` on the bundled Python sidecar before packaging.
+
 ## CLI
 
 ```bash
@@ -205,6 +231,7 @@ Line coverage on changed files is the wrong metric. Loadpath scores the **impact
 ```bash
 pytest
 cd ui && npm test
+node --test desktop/*.test.mjs
 ```
 
 | Suite | What it covers |
@@ -217,6 +244,7 @@ cd ui && npm test
 | `tests/e2e/test_index_architecture_flow.py` | index snapshot, review without index, review walking an existing graph |
 | `tests/e2e/test_brokers_and_django.py` | Celery + Dramatiq sinks, actor-only PR, non-idempotent Dramatiq warning, destructive migration, cross-context blocker, boot overlay, management commands, beat/canvas |
 | `tests/e2e/test_ui_screenshots.py` | Playwright: Architecture, Review, Impact graph, Pull requests, Settings → `docs/screenshots/` |
+| `desktop/*.test.mjs` | Electron sidecar command, health-wait, and external-URL allowlist |
 
 CI installs Chromium and runs the full suite.
 
