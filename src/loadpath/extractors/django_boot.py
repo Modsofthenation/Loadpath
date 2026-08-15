@@ -131,6 +131,22 @@ def _parse_boot_payload(stdout: str | None) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _live_field_constraints(field: object) -> dict[str, object]:
+    extra: dict[str, object] = {}
+    for key in ("null", "blank"):
+        val = getattr(field, key, None)
+        if isinstance(val, bool):
+            extra[key] = val
+    for key in ("primary_key", "auto_now", "auto_now_add"):
+        if getattr(field, key, False) is True:
+            extra[key] = True
+    for key in ("max_length", "max_digits", "decimal_places"):
+        val = getattr(field, key, None)
+        if isinstance(val, int) and not isinstance(val, bool):
+            extra[key] = val
+    return extra
+
+
 def _boot_inprocess(repo_root: Path, config: LoadpathConfig) -> ExtractedGraph:
     graph = ExtractedGraph()
     settings_mod = _discover_settings_module(repo_root, config.django_root)
@@ -181,6 +197,7 @@ def _boot_inprocess(repo_root: Path, config: LoadpathConfig) -> ExtractedGraph:
                     "field_type": field.__class__.__name__,
                     "booted": True,
                 }
+                extra.update(_live_field_constraints(field))
                 if getattr(field, "is_relation", False):
                     remote = getattr(field, "related_model", None)
                     on_delete = getattr(getattr(field, "remote_field", None), "on_delete", None)

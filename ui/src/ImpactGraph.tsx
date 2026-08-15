@@ -179,6 +179,14 @@ function GraphInspector({
       {info.file ? <div className="file">{wrapHint(info.file)}</div> : null}
       <div className="muted">{wrapHint(info.qualifiedName)}</div>
       <div className="muted inspector-layer">layer · {info.layer}</div>
+      <div className="muted inspector-degree" data-testid="graph-inspector-degree">
+        {info.degreeIn} in · {info.degreeOut} out
+      </div>
+      {info.pathSummary ? (
+        <p className="inspector-path" data-testid="graph-inspector-path">
+          {info.pathSummary}
+        </p>
+      ) : null}
       {info.facts.length ? (
         <dl className="inspector-facts" data-testid="graph-inspector-facts">
           {info.facts.map((fact) => (

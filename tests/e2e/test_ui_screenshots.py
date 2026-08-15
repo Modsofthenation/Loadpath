@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.conftest import wait_visible_graph
+
 THEME_SHOTS = (
     "obsidian",
     "nord",
@@ -43,8 +45,7 @@ def _shot(page, dest: Path, name: str) -> None:
 
 
 def _wait_graph(page) -> None:
-    page.locator(".react-flow__node").first.wait_for(timeout=15_000)
-    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
+    wait_visible_graph(page)
 
 
 @pytest.mark.playwright
@@ -123,6 +124,8 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path, browser_page):
     inspector = page.get_by_test_id("graph-inspector")
     inspector.wait_for(timeout=5_000)
     assert page.get_by_test_id("graph-inspector-purpose").inner_text().strip()
+    assert "in ·" in page.get_by_test_id("graph-inspector-degree").inner_text()
+    assert page.get_by_test_id("graph-inspector-path").inner_text().strip()
     _shot(page, dest, "review-inspector.png")
     page.get_by_test_id("graph-inspector-close").click()
     inspector.wait_for(state="hidden")

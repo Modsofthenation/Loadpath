@@ -107,4 +107,20 @@ describe("load-path layout", () => {
     const routeOrder = pos.get("a")!.y - pos.get("b")!.y;
     expect(urlOrder * routeOrder).toBeGreaterThan(0);
   });
+
+  it("places isolated nodes at finite non-overlapping positions", () => {
+    const nodes = [
+      node("a", "django.test", "test_one"),
+      node("b", "django.test", "test_two"),
+      node("c", "django.view", "LonelyView"),
+    ];
+    const pos = layoutNodes(nodes, []);
+    const points = [...pos.values()];
+    expect(points).toHaveLength(3);
+    expect(points.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true);
+    const ys = points.filter((p) => p.x === points[0]!.x).map((p) => p.y).sort((a, b) => a - b);
+    if (ys.length > 1) {
+      expect(ys[1]! - ys[0]!).toBeGreaterThanOrEqual(GRAPH_NODE_HEIGHT);
+    }
+  });
 });

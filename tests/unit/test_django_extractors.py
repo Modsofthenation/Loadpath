@@ -18,6 +18,37 @@ def test_extracts_model_fields_and_relations():
     assert "billing.Invoice" in names
     assert "billing.Invoice.total" in names
     assert names["billing.Invoice.total"].type is NodeType.FIELD
+    total = names["billing.Invoice.total"].extra
+    assert total.get("max_digits") == 10
+    assert total.get("decimal_places") == 2
+    status = names["billing.Invoice.status"].extra
+    assert status.get("max_length") == 32
+    assert status.get("default") == "draft"
+    account = names["billing.Invoice.account"].extra
+    assert account.get("null") is True
+
+
+def test_extracts_model_docstring_and_null_false():
+    source = (
+        "from django.db import models\n"
+        "class Ledger(models.Model):\n"
+        "    \"\"\"Posted billing ledger.\\n\\nLonger body.\"\"\"\n"
+        "    ref = models.CharField(max_length=16, null=False, blank=True)\n"
+        "    owner = models.ForeignKey('auth.User', null=True, default=None, on_delete=models.SET_NULL)\n"
+        "    status = models.CharField(max_length=8, default='open')\n"
+    )
+    g = extract_django_file("backend/billing/models.py", source, _cfg())
+    ledger = next(n for n in g.nodes if n.name == "Ledger")
+    assert ledger.extra.get("doc") == "Posted billing ledger."
+    ref = next(n for n in g.nodes if n.name == "ref")
+    assert ref.extra.get("null") is False
+    assert ref.extra.get("blank") is True
+    assert ref.extra.get("max_length") == 16
+    owner = next(n for n in g.nodes if n.name == "owner")
+    assert owner.extra.get("null") is True
+    assert "default" not in owner.extra
+    status = next(n for n in g.nodes if n.name == "status")
+    assert status.extra.get("default") == "open"
 
 
 def test_extracts_serializer_fields_and_model_link():
@@ -186,6 +217,31 @@ def test_extracts_ninja_route():
     assert any(n.type is NodeType.VIEW and n.extra.get("ninja") for n in g.nodes)
 
 
+def test_extracts_ninja_and_fastapi_docstrings():
+    ninja = extract_django_file(
+        "backend/billing/api.py",
+        "from ninja import Router\napi = Router()\n"
+        "@api.get('/ledger')\n"
+        "def ledger():\n"
+        "    \"\"\"Posted ledger totals.\"\"\"\n"
+        "    return {}\n",
+        _cfg(),
+    )
+    view = next(n for n in ninja.nodes if n.type is NodeType.VIEW and n.extra.get("ninja"))
+    assert view.extra.get("doc") == "Posted ledger totals."
+    fastapi = extract_django_file(
+        "backend/billing/gateway.py",
+        "from fastapi import FastAPI\napp = FastAPI()\n"
+        "@app.get('/internal/invoices')\n"
+        "def get_invoice():\n"
+        "    \"\"\"Internal invoice payload.\"\"\"\n"
+        "    return {}\n",
+        _cfg(),
+    )
+    view = next(n for n in fastapi.nodes if n.extra.get("fastapi") and n.type is NodeType.VIEW)
+    assert view.extra.get("doc") == "Internal invoice payload."
+
+
 def test_task_definition_file_survives_call_site_placeholder(tmp_path):
     from loadpath.index import index_repo
 
@@ -284,6 +340,29 @@ def test_discover_settings_uses_django_root():
     from loadpath.extractors.django_boot import _discover_settings_module
 
     assert _discover_settings_module(FIXTURE, "backend") == "config.settings"
+
+
+def test_live_field_constraints_copy_null_and_max_length():
+    from types import SimpleNamespace
+
+    from loadpath.extractors.django_boot import _live_field_constraints
+
+    extra = _live_field_constraints(
+        SimpleNamespace(
+            null=True,
+            blank=False,
+            max_length=32,
+            primary_key=False,
+            max_digits=None,
+            auto_now_add=True,
+        )
+    )
+    assert extra["null"] is True
+    assert extra["blank"] is False
+    assert extra["max_length"] == 32
+    assert extra["auto_now_add"] is True
+    assert "primary_key" not in extra
+    assert "max_digits" not in extra
 
 
 def test_cross_app_model_import_on_view():
