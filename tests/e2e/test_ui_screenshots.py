@@ -123,6 +123,8 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path):
         page.get_by_test_id("tab-graph").click()
         page.get_by_test_id("graph-full").wait_for()
         page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+        page.locator(".react-flow__minimap-node").first.wait_for(timeout=10_000)
+        assert page.locator(".react-flow__minimap-node").count() > 3
         page.wait_for_timeout(600)
         page.screenshot(path=str(dest / "graph.png"), full_page=False)
 
