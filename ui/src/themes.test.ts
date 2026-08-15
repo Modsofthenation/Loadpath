@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { THEMES, isThemeId } from "./themes";
+import { THEMES, colorSchemeFor, isThemeId } from "./themes";
 
 describe("themes", () => {
   it("ships a dozen named palettes", () => {
@@ -9,5 +9,7 @@ describe("themes", () => {
     expect(THEMES.some((t) => t.group === "dark")).toBe(true);
     expect(isThemeId("nord")).toBe(true);
     expect(isThemeId("not-a-theme")).toBe(false);
+    expect(colorSchemeFor("obsidian")).toBe("dark");
+    expect(colorSchemeFor("paper")).toBe("light");
   });
 });

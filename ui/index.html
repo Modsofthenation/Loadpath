@@ -9,6 +9,8 @@
         try {
           var t = localStorage.getItem("loadpath.theme");
           if (t) document.documentElement.setAttribute("data-theme", t);
+          var light = { paper: 1, "solarized-light": 1, seafoam: 1, "high-contrast": 1 };
+          document.documentElement.style.colorScheme = light[t] ? "light" : "dark";
         } catch (e) {}
       })();
     </script>
