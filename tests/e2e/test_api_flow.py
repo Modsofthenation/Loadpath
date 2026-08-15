@@ -172,3 +172,47 @@ def test_api_lists_github_and_bitbucket_prs(tmp_path, monkeypatch):
     bb = client.post("/api/prs", json={"provider": "bitbucket", "repo": "acme/demo"})
     assert bb.status_code == 200, bb.text
     assert bb.json()["pull_requests"][0]["provider"] == "bitbucket"
+
+
+def test_blank_and_missing_repo_path_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    client = TestClient(create_app())
+    for method, url, payload in (
+        ("POST", "/api/index", {"repo_path": ""}),
+        ("POST", "/api/index", {"repo_path": "   "}),
+        ("POST", "/api/review", {"repo_path": "", "base": "HEAD"}),
+        ("POST", "/api/init", {"repo_path": ""}),
+    ):
+        r = client.request(method, url, json=payload)
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == "repo_path is required"
+
+    for url in ("/api/architecture", "/api/graph", "/api/config", "/api/detect", "/api/index"):
+        r = client.get(url, params={"repo_path": ""})
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == "repo_path is required"
+
+    missing = client.post("/api/index", json={"repo_path": "/no/such/loadpath-repo"})
+    assert missing.status_code == 404
+    assert "not found" in missing.json()["detail"].lower()
+
+
+def test_settings_empty_model_does_not_wipe(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    client = TestClient(create_app())
+    saved = client.put(
+        "/api/settings",
+        json={"ai_provider": "grok", "ai_model": "grok-keep", "ai_base_url": "https://example.invalid"},
+    )
+    assert saved.json()["ai"]["model"] == "grok-keep"
+    kept = client.put(
+        "/api/settings",
+        json={"ai_provider": "grok", "ai_model": "", "ai_base_url": "", "github_token": ""},
+    )
+    body = kept.json()
+    assert body["ai"]["provider"] == "grok"
+    assert body["ai"]["model"] == "grok-keep"
+    assert body["ai"]["base_url"] == "https://example.invalid"
+

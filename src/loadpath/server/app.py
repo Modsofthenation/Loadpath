@@ -84,6 +84,15 @@ class ResidualRequest(BaseModel):
     review: dict[str, Any] = Field(default_factory=dict)
 
 
+def require_repo_path(path: str | None) -> Path:
+    if not (path or "").strip():
+        raise HTTPException(400, "repo_path is required")
+    root = Path(path).expanduser().resolve()
+    if not root.is_dir():
+        raise HTTPException(404, f"Repo not found: {root}")
+    return root
+
+
 def create_app(
     public_url: str | None = None,
     oauth_pin: str | None = None,
@@ -168,10 +177,10 @@ def create_app(
             current.ai.provider = body.ai_provider
         if _should_update_secret(body.ai_api_key, current.ai.api_key):
             current.ai.api_key = body.ai_api_key or ""
-        if body.ai_model is not None:
-            current.ai.model = body.ai_model
-        if body.ai_base_url is not None:
-            current.ai.base_url = body.ai_base_url
+        if _should_update_secret(body.ai_model, current.ai.model):
+            current.ai.model = body.ai_model or ""
+        if _should_update_secret(body.ai_base_url, current.ai.base_url):
+            current.ai.base_url = body.ai_base_url or ""
         if body.workspaces is not None:
             from loadpath.settings import Workspace
 
@@ -181,9 +190,7 @@ def create_app(
 
     @app.post("/api/index")
     def api_index(body: IndexRequest) -> dict[str, Any]:
-        root = Path(body.repo_path).expanduser().resolve()
-        if not root.is_dir():
-            raise HTTPException(404, f"Repo not found: {root}")
+        root = require_repo_path(body.repo_path)
         store = index_repo(root, incremental=body.incremental, draft_config=True)
         register_workspace(root)
         summary = summarize_index(store, load_config(root))
@@ -192,9 +199,7 @@ def create_app(
 
     @app.get("/api/index")
     def api_index_status(repo_path: str) -> dict[str, Any]:
-        root = Path(repo_path).expanduser().resolve()
-        if not root.is_dir():
-            raise HTTPException(404, f"Repo not found: {root}")
+        root = require_repo_path(repo_path)
         report = architecture_report(root)
         report.pop("nodes", None)
         report.pop("edges", None)
@@ -229,9 +234,7 @@ def create_app(
 
     @app.post("/api/review")
     def api_review(body: ReviewRequest) -> dict[str, Any]:
-        root = Path(body.repo_path).expanduser().resolve()
-        if not root.is_dir():
-            raise HTTPException(404, f"Repo not found: {root}")
+        root = require_repo_path(body.repo_path)
         try:
             review = run_review(
                 root,
@@ -251,7 +254,7 @@ def create_app(
 
     @app.get("/api/reviews")
     def api_reviews(repo_path: str) -> dict[str, Any]:
-        root = Path(repo_path).expanduser().resolve()
+        root = require_repo_path(repo_path)
         db = default_db_path(root)
         if not db.is_file():
             return {"reviews": []}
@@ -262,7 +265,7 @@ def create_app(
 
     @app.get("/api/reviews/{review_id}")
     def api_review_get(review_id: str, repo_path: str) -> dict[str, Any]:
-        root = Path(repo_path).expanduser().resolve()
+        root = require_repo_path(repo_path)
         store = GraphStore(default_db_path(root))
         item = store.get_review(review_id)
         store.close()
@@ -272,7 +275,7 @@ def create_app(
 
     @app.get("/api/graph")
     def api_graph(repo_path: str, scope: str = "full") -> dict[str, Any]:
-        root = Path(repo_path).expanduser().resolve()
+        root = require_repo_path(repo_path)
         db = default_db_path(root)
         if not db.is_file():
             raise HTTPException(409, "Index the repo first")
@@ -287,14 +290,12 @@ def create_app(
 
     @app.get("/api/architecture")
     def api_architecture(repo_path: str) -> dict[str, Any]:
-        root = Path(repo_path).expanduser().resolve()
-        if not root.is_dir():
-            raise HTTPException(404, f"Repo not found: {root}")
+        root = require_repo_path(repo_path)
         return architecture_report(root)
 
     @app.get("/api/config")
     def api_config(repo_path: str) -> dict[str, Any]:
-        root = Path(repo_path).expanduser().resolve()
+        root = require_repo_path(repo_path)
         cfg = load_config(root)
         return {
             "contexts": {k: vars(v) for k, v in cfg.contexts.items()},
@@ -323,18 +324,14 @@ def create_app(
 
     @app.post("/api/init")
     def api_init(body: InitRequest) -> dict[str, Any]:
-        root = Path(body.repo_path).expanduser().resolve()
-        if not root.is_dir():
-            raise HTTPException(404, f"Repo not found: {root}")
+        root = require_repo_path(body.repo_path)
         layout = write_draft_config(root, overwrite=body.overwrite)
         register_workspace(root)
         return layout
 
     @app.get("/api/detect")
     def api_detect(repo_path: str) -> dict[str, Any]:
-        root = Path(repo_path).expanduser().resolve()
-        if not root.is_dir():
-            raise HTTPException(404, f"Repo not found: {root}")
+        root = require_repo_path(repo_path)
         return detect_layout(root)
 
     @app.post("/api/prs/comment")

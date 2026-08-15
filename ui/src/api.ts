@@ -1,5 +1,30 @@
 import type { ArchitectureReport, IndexedRepo, PullRequest, Review } from "./types";
 
+export function formatApiError(text: string, fallback = "Request failed"): string {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return fallback;
+  try {
+    const parsed = JSON.parse(trimmed) as { detail?: unknown };
+    const detail = parsed.detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (Array.isArray(detail)) {
+      const parts = detail
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object" && "msg" in item) {
+            return String((item as { msg: unknown }).msg);
+          }
+          return "";
+        })
+        .filter(Boolean);
+      if (parts.length) return parts.join("; ");
+    }
+  } catch {
+    /* not JSON */
+  }
+  return trimmed;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -7,16 +32,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new Error(formatApiError(text, res.statusText || "Request failed"));
   }
   return res.json() as Promise<T>;
 }
 
+const BLANK_SETTINGS_KEYS = ["github_token", "bitbucket_token", "ai_api_key", "ai_model", "ai_base_url"];
+
 export const api = {
   health: () => req<{ status: string; version: string }>("/api/health"),
   settings: () => req<Record<string, unknown>>("/api/settings"),
-  saveSettings: (body: Record<string, unknown>) =>
-    req<Record<string, unknown>>("/api/settings", { method: "PUT", body: JSON.stringify(body) }),
+  saveSettings: (body: Record<string, unknown>) => {
+    const payload: Record<string, unknown> = { ...body };
+    for (const key of BLANK_SETTINGS_KEYS) {
+      if (payload[key] === "") delete payload[key];
+    }
+    return req<Record<string, unknown>>("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+  },
   repos: () => req<{ repos: IndexedRepo[] }>("/api/repos"),
   index: (repo_path: string, incremental = true) =>
     req<ArchitectureReport>("/api/index", {
