@@ -274,6 +274,7 @@ export function App() {
     setCopied("");
     setReview(null);
     setArchitecture(null);
+    setGraphMode("architecture");
     persistRepo(next);
     markBusy(`Loading ${repoName(next)}…`);
     try {
