@@ -8,7 +8,7 @@ from typing import Any
 from loadpath.architecture.depth import deepening_candidates
 from loadpath.architecture.rules import evaluate
 from loadpath.config import LoadpathConfig, load_config
-from loadpath.graph.store import GraphStore
+from loadpath.graph.store import GraphStore, linked_edges
 from loadpath.index import default_db_path, index_drift
 from loadpath.types import NodeType
 
@@ -18,6 +18,7 @@ ARCHITECTURE_NODE_TYPES = {
     NodeType.ROUTE.value,
     NodeType.VIEW.value,
     NodeType.SERIALIZER.value,
+    NodeType.FORM.value,
     NodeType.MODEL.value,
     NodeType.TASK.value,
     NodeType.MANAGEMENT_COMMAND.value,
@@ -77,9 +78,7 @@ def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]
 
 def architecture_graph(store: GraphStore) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     nodes = [n for n in store.nodes() if n["type"] in ARCHITECTURE_NODE_TYPES]
-    ids = {n["id"] for n in nodes}
-    edges = [e for e in store.edges() if e["src"] in ids and e["dst"] in ids]
-    return nodes, edges
+    return nodes, linked_edges(nodes, store.edges())
 
 
 def architecture_report(repo_root: Path, db_path: Path | None = None) -> dict[str, Any]:

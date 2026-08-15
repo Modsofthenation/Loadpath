@@ -409,3 +409,61 @@ class InvoiceViewSet(ModelViewSet):
 """
     g = extract_django_file("backend/billing/views.py", src, _cfg())
     assert any(n.type is NodeType.THROTTLE and n.name == "UserRateThrottle" for n in g.nodes)
+
+
+def test_extracts_django_modelform_and_links_model():
+    src = """
+from django import forms
+from billing.models import Invoice
+
+class InvoiceForm(forms.ModelForm):
+    class Meta:
+        model = Invoice
+        fields = ["total", "status"]
+"""
+    g = extract_django_file("backend/billing/forms.py", src, _cfg())
+    forms_found = [n for n in g.nodes if n.type is NodeType.FORM]
+    assert any(n.name == "InvoiceForm" for n in forms_found)
+    assert any(e.type.value == "serializes" for e in g.edges)
+    assert any(e.type.value == "has_field" for e in g.edges)
+
+
+def test_extracts_signal_connect_and_plain_handlers():
+    apps = """
+from django.apps import AppConfig
+from wagtail.signals import page_slug_changed
+from .signal_handlers import autocreate_redirects_on_slug_change
+
+class RedirectsAppConfig(AppConfig):
+    def ready(self):
+        page_slug_changed.connect(autocreate_redirects_on_slug_change)
+"""
+    handlers = """
+def should_skip(page):
+    return not page.live
+
+def autocreate_redirects_on_slug_change(instance_before, instance, **kwargs):
+    return None
+"""
+    connected = extract_django_file("wagtail/contrib/redirects/apps.py", apps, _cfg())
+    assert any(n.type is NodeType.RECEIVER and n.name == "autocreate_redirects_on_slug_change" for n in connected.nodes)
+    assert any(e.type.value == "receives" for e in connected.edges)
+    plain = extract_django_file("wagtail/contrib/redirects/signal_handlers.py", handlers, _cfg())
+    names = {n.name for n in plain.nodes if n.type is NodeType.RECEIVER}
+    assert "autocreate_redirects_on_slug_change" in names
+    assert "should_skip" not in names
+
+
+def test_testcase_named_form_is_not_a_form():
+    src = """
+from django.test import TestCase
+from kitsune.questions.forms import NewQuestionForm
+
+class TestNewQuestionForm(TestCase):
+    def test_ok(self):
+        NewQuestionForm()
+"""
+    g = extract_django_file("kitsune/questions/tests/test_forms.py", src, _cfg())
+    assert not any(n.type is NodeType.FORM for n in g.nodes)
+    assert any(n.type is NodeType.TEST and n.name == "test_ok" for n in g.nodes)
+

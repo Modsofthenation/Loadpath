@@ -103,11 +103,13 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert "billing-team" in brief
     assert "MePage" not in brief
     page.locator(".react-flow__node").filter(has_text="InvoicePage").first.wait_for(timeout=15_000)
+    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
     assert page.locator(".react-flow__node").filter(has_text="MePage").count() == 0
 
     page.get_by_test_id("tab-graph").click()
     page.get_by_test_id("graph-full").wait_for()
     page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
     page.locator(".react-flow__minimap-node").first.wait_for(timeout=10_000)
     page.locator(".react-flow__node").first.click()
     inspector = page.get_by_test_id("graph-inspector")
@@ -127,9 +129,17 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert overflow["content"], "selected-node inspector overflows horizontally"
     assert overflow["in_pane"], "selected-node inspector extends outside the graph pane"
 
+    page.get_by_test_id("graph-view-3d").click()
+    assert page.get_by_test_id("graph-view-3d").get_attribute("aria-pressed") == "true"
+    page.get_by_test_id("graph-3d").wait_for(timeout=15_000)
+    page.locator("[data-testid='graph-3d-canvas'], [data-testid='graph-3d-fallback']").first.wait_for(timeout=20_000)
+    page.get_by_test_id("graph-view-2d").click()
+    page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+
     page.get_by_test_id("graph-mode-architecture").click()
     assert page.get_by_test_id("graph-mode-architecture").get_attribute("aria-pressed") == "true"
     page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
 
     page.get_by_test_id("tab-review").click()
     page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=base_url)

@@ -1,8 +1,11 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
+  Handle,
+  MarkerType,
   MiniMap,
+  Position,
   ReactFlow,
   ReactFlowProvider,
   type Edge,
@@ -11,7 +14,20 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { typeLabel, wrapHint } from "./format";
+import {
+  defaultDetail,
+  defaultProjection,
+  familyFor,
+  visibleGraph,
+  type GraphDetail,
+  type GraphFamily,
+  type GraphProjection,
+} from "./graphView";
 import { layoutNodes, type GraphEdge, type GraphNode } from "./types";
+
+const LayeredGraph3D = lazy(() =>
+  import("./LayeredGraph3D").then((mod) => ({ default: mod.LayeredGraph3D })),
+);
 
 const WEIGHT_COLOR: Record<string, string> = {
   cheap: "var(--edge-cheap)",
@@ -22,10 +38,12 @@ const WEIGHT_COLOR: Record<string, string> = {
 function LoadNode({ data, selected }: { data: { name: string; type: string }; selected?: boolean }) {
   return (
     <div className={selected ? "lp-node selected" : "lp-node"}>
+      <Handle type="target" position={Position.Left} isConnectable={false} />
       <div className="t">{typeLabel(data.type)}</div>
       <div className="n" title={data.name}>
         {data.name}
       </div>
+      <Handle type="source" position={Position.Right} isConnectable={false} />
     </div>
   );
 }
@@ -33,13 +51,14 @@ function LoadNode({ data, selected }: { data: { name: string; type: string }; se
 const nodeTypes = { load: LoadNode };
 const NODE_WIDTH = 180;
 const NODE_HEIGHT = 56;
+const ALL_FAMILIES = new Set<GraphFamily>(["django", "react", "stitch", "arch"]);
 
-export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const reduceMotion =
-    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-  const selected = selectedId ? byId.get(selectedId) ?? null : null;
+export function toReactFlowElements(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  selectedId: string | null = null,
+): { rfNodes: Node[]; rfEdges: Edge[] } {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
   const pos = layoutNodes(nodes);
   const rfNodes: Node[] = nodes.map((n) => ({
     id: n.id,
@@ -47,82 +66,250 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
     position: pos.get(n.id) ?? { x: 0, y: 0 },
     data: { name: n.name, type: n.type, file: n.file_path },
     selected: selectedId === n.id,
-    // MiniMap reads width/height off the user node, not the measured DOM box.
+    sourcePosition: Position.Right,
+    targetPosition: Position.Left,
     width: NODE_WIDTH,
     height: NODE_HEIGHT,
     style: { width: NODE_WIDTH, height: NODE_HEIGHT },
   }));
   const rfEdges: Edge[] = edges
     .filter((e) => byId.has(e.src) && byId.has(e.dst))
-    .map((e) => ({
-      id: e.id,
-      source: e.src,
-      target: e.dst,
-      animated: !reduceMotion && e.weight === "critical",
-      style: {
-        stroke: WEIGHT_COLOR[e.weight] || "var(--edge-cheap)",
-        strokeWidth: e.weight === "critical" ? 2.4 : 1.2,
-        strokeDasharray: e.confidence < 0.8 ? "6 4" : undefined,
-      },
-      label: e.type.replaceAll("_", " "),
-      labelStyle: { fill: "var(--muted)", fontSize: 10 },
-    }));
+    .map((e) => {
+      const stroke = WEIGHT_COLOR[e.weight] || "var(--edge-cheap)";
+      return {
+        id: e.id,
+        source: e.src,
+        target: e.dst,
+        type: "smoothstep",
+        animated: e.weight === "critical",
+        style: {
+          stroke,
+          strokeWidth: e.weight === "critical" ? 2.4 : 1.2,
+          strokeDasharray: e.confidence < 0.8 ? "6 4" : undefined,
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: stroke,
+        },
+        label: e.type.replaceAll("_", " "),
+        labelStyle: { fill: "var(--muted)", fontSize: 10 },
+      };
+    });
+  return { rfNodes, rfEdges };
+}
+
+function GraphInspector({ node }: { node: GraphNode }) {
+  return (
+    <aside className="inspector" data-testid="graph-inspector">
+      <div className="t">{typeLabel(node.type)}</div>
+      <div className="n">{wrapHint(node.name)}</div>
+      {node.context ? <div className="muted">{wrapHint(node.context)}</div> : null}
+      {node.file_path ? (
+        <div className="file">
+          {wrapHint(`${node.file_path}${node.start_line ? `:${node.start_line}` : ""}`)}
+        </div>
+      ) : null}
+      <div className="muted">{wrapHint(node.qualified_name)}</div>
+    </aside>
+  );
+}
+
+export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [projection, setProjection] = useState<GraphProjection | null>(null);
+  const [detail, setDetail] = useState<GraphDetail | null>(null);
+  const [families, setFamilies] = useState<Set<GraphFamily>>(new Set(ALL_FAMILIES));
+  const [neighborhoodOnly, setNeighborhoodOnly] = useState(false);
+  const reduceMotion =
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const view = projection ?? defaultProjection(nodes.length);
+  const level = detail ?? defaultDetail(nodes.length);
+  const visible = useMemo(
+    () =>
+      visibleGraph(nodes, edges, {
+        detail: level,
+        families,
+        focusId: selectedId,
+        neighborhoodOnly: neighborhoodOnly && view === "3d",
+      }),
+    [nodes, edges, level, families, selectedId, neighborhoodOnly, view],
+  );
+  const byId = useMemo(() => new Map(visible.nodes.map((n) => [n.id, n])), [visible.nodes]);
+  const selected = selectedId ? byId.get(selectedId) ?? null : null;
+  const { rfNodes, rfEdges } = useMemo(() => {
+    const elements = toReactFlowElements(visible.nodes, visible.edges, selectedId);
+    if (reduceMotion) {
+      elements.rfEdges = elements.rfEdges.map((edge) => ({ ...edge, animated: false }));
+    }
+    return elements;
+  }, [visible.nodes, visible.edges, selectedId, reduceMotion]);
+
+  useEffect(() => {
+    if (selectedId && !byId.has(selectedId)) setSelectedId(null);
+  }, [byId, selectedId]);
 
   const onNodeClick: NodeMouseHandler = (_evt, node) => {
     setSelectedId(node.id);
   };
 
+  const toggleFamily = (family: GraphFamily) => {
+    setFamilies((current) => {
+      const next = new Set(current);
+      if (next.has(family)) {
+        if (next.size === 1) return current;
+        next.delete(family);
+      } else {
+        next.add(family);
+      }
+      return next;
+    });
+  };
+
+  const presentFamilies = useMemo(() => {
+    const found = new Set<GraphFamily>();
+    for (const n of nodes) found.add(familyFor(n.type));
+    return found;
+  }, [nodes]);
+
+  const hidden = nodes.length - visible.nodes.length;
+
   return (
-    <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-      <ReactFlowProvider>
-        <ReactFlow
-          nodes={rfNodes}
-          edges={rfEdges}
-          nodeTypes={nodeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.2, maxZoom: 1.15 }}
-          minZoom={0.25}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable
-          deleteKeyCode={null}
-          onNodeClick={onNodeClick}
-          onPaneClick={() => setSelectedId(null)}
-          proOptions={{ hideAttribution: false }}
-          data-testid="impact-graph"
-        >
-          <Background />
-          <MiniMap
-            pannable
-            zoomable
-            ariaLabel="Impact graph overview"
-            nodeColor="var(--muted)"
-            nodeStrokeColor="transparent"
-            nodeStrokeWidth={0}
-            maskColor="rgba(0, 0, 0, 0.45)"
-            maskStrokeColor="var(--accent)"
-            maskStrokeWidth={1.4}
-            bgColor="var(--graph-bg)"
-            style={{ width: 184, height: 128 }}
-          />
-          <Controls />
-        </ReactFlow>
-      </ReactFlowProvider>
-      {selected ? (
-        <aside className="inspector" data-testid="graph-inspector">
-          <div className="t">{typeLabel(selected.type)}</div>
-          <div className="n">{wrapHint(selected.name)}</div>
-          {selected.context ? <div className="muted">{wrapHint(selected.context)}</div> : null}
-          {selected.file_path ? (
-            <div className="file">
-              {wrapHint(
-                `${selected.file_path}${selected.start_line ? `:${selected.start_line}` : ""}`,
-              )}
-            </div>
-          ) : null}
-          <div className="muted">{wrapHint(selected.qualified_name)}</div>
-        </aside>
-      ) : null}
+    <div className="impact-graph" style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", flexDirection: "column" }}>
+      <div className="graph-toolbar" data-testid="graph-toolbar">
+        <div className="seg" aria-label="Graph projection">
+          <button
+            type="button"
+            data-testid="graph-view-2d"
+            className={view === "2d" ? "active" : ""}
+            aria-pressed={view === "2d"}
+            onClick={() => setProjection("2d")}
+          >
+            2D map
+          </button>
+          <button
+            type="button"
+            data-testid="graph-view-3d"
+            className={view === "3d" ? "active" : ""}
+            aria-pressed={view === "3d"}
+            onClick={() => setProjection("3d")}
+          >
+            3D layers
+          </button>
+        </div>
+        <div className="seg" aria-label="Graph detail">
+          <button
+            type="button"
+            data-testid="graph-detail-overview"
+            className={level === "overview" ? "active" : ""}
+            aria-pressed={level === "overview"}
+            onClick={() => setDetail("overview")}
+          >
+            Overview
+          </button>
+          <button
+            type="button"
+            data-testid="graph-detail-full"
+            className={level === "full" ? "active" : ""}
+            aria-pressed={level === "full"}
+            onClick={() => setDetail("full")}
+          >
+            Full
+          </button>
+        </div>
+        <div className="seg" aria-label="Graph families">
+          {(["django", "stitch", "react"] as const)
+            .filter((family) => presentFamilies.has(family))
+            .map((family) => (
+              <button
+                key={family}
+                type="button"
+                data-testid={`graph-family-${family}`}
+                className={families.has(family) ? "active" : ""}
+                aria-pressed={families.has(family)}
+                onClick={() => toggleFamily(family)}
+              >
+                {family}
+              </button>
+            ))}
+        </div>
+        {view === "3d" ? (
+          <button
+            type="button"
+            className={neighborhoodOnly ? "chip-btn active" : "chip-btn"}
+            data-testid="graph-neighborhood"
+            disabled={!selectedId}
+            onClick={() => setNeighborhoodOnly((v) => !v)}
+          >
+            {neighborhoodOnly ? "Neighborhood" : "Focus neighbors"}
+          </button>
+        ) : null}
+        <span className="muted graph-count">
+          {visible.nodes.length} nodes · {visible.edges.length} edges
+          {hidden ? ` · ${hidden} hidden` : ""}
+        </span>
+      </div>
+      <div className="graph-stage">
+        {view === "3d" ? (
+          <div className="graph-3d" data-testid="graph-3d">
+            <p className="graph-3d-hint">
+              Architecture layers are stacked in depth (Django → stitch → React). Drag to orbit, scroll to
+              zoom, click a node to inspect it.
+            </p>
+            <Suspense fallback={<p className="muted graph-3d-hint">Loading 3D layers…</p>}>
+              <LayeredGraph3D
+                nodes={visible.nodes}
+                edges={visible.edges}
+                selectedId={selectedId}
+                neighborIds={visible.neighborIds}
+                onSelect={(id) => {
+                  setSelectedId(id);
+                  if (!id) setNeighborhoodOnly(false);
+                }}
+              />
+            </Suspense>
+            {selected ? <GraphInspector node={selected} /> : null}
+          </div>
+        ) : (
+          <ReactFlowProvider>
+            <ReactFlow
+              nodes={rfNodes}
+              edges={rfEdges}
+              nodeTypes={nodeTypes}
+              fitView
+              fitViewOptions={{ padding: 0.2, maxZoom: 1.15 }}
+              minZoom={0.25}
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable
+              deleteKeyCode={null}
+              onNodeClick={onNodeClick}
+              onPaneClick={() => setSelectedId(null)}
+              proOptions={{ hideAttribution: false }}
+              data-testid="impact-graph"
+            >
+              <Background />
+              <MiniMap
+                pannable
+                zoomable
+                ariaLabel="Impact graph overview"
+                nodeColor="var(--muted)"
+                nodeStrokeColor="transparent"
+                nodeStrokeWidth={0}
+                maskColor="rgba(0, 0, 0, 0.45)"
+                maskStrokeColor="var(--accent)"
+                maskStrokeWidth={1.4}
+                bgColor="var(--graph-bg)"
+                style={{ width: 184, height: 128 }}
+              />
+              <Controls />
+            </ReactFlow>
+            {selected ? <GraphInspector node={selected} /> : null}
+          </ReactFlowProvider>
+        )}
+      </div>
     </div>
   );
 }

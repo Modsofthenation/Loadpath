@@ -8,7 +8,7 @@ from uuid import uuid4
 from loadpath.architecture.depth import deepening_candidates
 from loadpath.architecture.rules import _related_accesses, evaluate
 from loadpath.config import LoadpathConfig, load_config
-from loadpath.graph.store import GraphStore
+from loadpath.graph.store import GraphStore, linked_edges
 from loadpath.index import default_db_path, index_drift, index_repo
 from loadpath.review.cluster import cluster_diff
 from loadpath.review.confidence import score_confidence
@@ -24,6 +24,7 @@ from loadpath.types import (
 READ_ORDER = [
     NodeType.SERIALIZER,
     NodeType.SERIALIZER_FIELD,
+    NodeType.FORM,
     NodeType.ROUTE,
     NodeType.OPENAPI_PATH,
     NodeType.FORM_SCHEMA,
@@ -54,6 +55,7 @@ def classify_change(impact_nodes: list[dict], findings: list, seeds: list[dict] 
     if (
         NodeType.SERIALIZER.value in seed_types
         or NodeType.SERIALIZER_FIELD.value in seed_types
+        or NodeType.FORM.value in seed_types
         or NodeType.OPENAPI_PATH.value in seed_types
         or NodeType.FORM_SCHEMA.value in seed_types
         or NodeType.ROUTE.value in seed_types
@@ -368,6 +370,7 @@ def run_review(
     diff = diff or git_diff(repo_root, base, head, three_dot=three_dot)
     dirty = git_dirty_paths(repo_root)
     clusters, impact_nodes, impact_edges = cluster_diff(store, diff)
+    impact_edges = linked_edges(impact_nodes, impact_edges)
     seed_ids = {n["id"] for n in store.nodes_in_files(diff.paths)}
     findings = evaluate(store, config, changed_ids=seed_ids)
     # keep findings that touch the impact subgraph or changed files
@@ -492,6 +495,7 @@ def _sink_summaries(nodes: list[dict], store: GraphStore) -> list[dict]:
         NodeType.TASK.value,
         NodeType.PAGE.value,
         NodeType.FORM_SCHEMA.value,
+        NodeType.FORM.value,
         NodeType.PERMISSION.value,
         NodeType.MIGRATION_OP.value,
         NodeType.RECEIVER.value,

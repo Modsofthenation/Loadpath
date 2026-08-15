@@ -30,6 +30,7 @@ DJANGO_VIEW_BASES = {
 }
 
 SERIALIZER_BASES = {"Serializer", "ModelSerializer", "HyperlinkedModelSerializer", "ListSerializer"}
+FORM_BASES = {"Form", "ModelForm", "BaseForm", "BaseModelForm"}
 MODEL_BASES = {"Model"}
 ADMIN_BASES = {"ModelAdmin", "StackedInline", "TabularInline"}
 CELERY_DECORATORS = {"shared_task", "task", "periodic_task"}
@@ -141,7 +142,18 @@ def _app_from_path(rel: str) -> str | None:
         if idx > 0:
             return parts[idx - 1]
     for i, part in enumerate(parts):
-        if part in {"models.py", "views.py", "serializers.py", "urls.py", "signals.py", "tasks.py", "admin.py", "apps.py"}:
+        if part in {
+            "models.py",
+            "views.py",
+            "serializers.py",
+            "urls.py",
+            "signals.py",
+            "signal_handlers.py",
+            "forms.py",
+            "tasks.py",
+            "admin.py",
+            "apps.py",
+        }:
             return parts[i - 1] if i > 0 else None
         if part == "management" and i > 0:
             return parts[i - 1]
@@ -216,6 +228,12 @@ class DjangoExtractor(ast.NodeVisitor):
             self._model(node)
         elif _has_base(node, SERIALIZER_BASES):
             self._serializer(node)
+        elif _has_base(node, FORM_BASES) or (
+            node.name.endswith("Form")
+            and not node.name.startswith("Test")
+            and not _has_base(node, {"TestCase", "SimpleTestCase", "TransactionTestCase", "LiveServerTestCase", "APITestCase"})
+        ):
+            self._serializer(node, ntype=NodeType.FORM)
         elif _has_base(node, DJANGO_VIEW_BASES) or node.name.endswith(("View", "ViewSet")):
             self._view(node)
         elif any(b.split(".")[-1] in {"BaseCommand", "AppCommand", "LabelCommand"} for b in _bases(node)):
@@ -240,6 +258,7 @@ class DjangoExtractor(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._maybe_task(node)
         self._maybe_receiver(node)
+        self._maybe_plain_signal_handler(node)
         self._maybe_command(node)
         self._maybe_test(node)
         self._maybe_service_fn(node)
@@ -282,8 +301,14 @@ class DjangoExtractor(ast.NodeVisitor):
             self.graph.residuals.append(f"Raw SQL ({fname}) in {self.rel_path}:{node.lineno}")
         elif short in {"select_related", "prefetch_related"}:
             pass
-        elif short == "connect" and any(s in fname for s in SIGNAL_NAMES | {"signal"}):
-            self._signal_connect(node, fname)
+        elif short == "connect":
+            handler = node.args[0] if node.args else _kw(node, "receiver")
+            stem = Path(self.rel_path).stem
+            looks_signal = stem in {"apps", "signals", "signal_handlers", "handlers"} or any(
+                token in fname.lower() for token in {n.lower() for n in SIGNAL_NAMES} | {"signal"}
+            )
+            if looks_signal and isinstance(handler, (ast.Name, ast.Attribute)):
+                self._signal_connect(node, fname)
         elif short == "reverse":
             self._reverse(node)
         self.generic_visit(node)
@@ -344,9 +369,12 @@ class DjangoExtractor(ast.NodeVisitor):
                     if extra.get("on_delete") == "CASCADE":
                         self.add_edge(model.id, rel_id, EdgeType.RELATES_TO, extra={"cascade": True})
 
-    def _serializer(self, node: ast.ClassDef) -> None:
+    def _serializer(self, node: ast.ClassDef, ntype: NodeType = NodeType.SERIALIZER) -> None:
         qname = f"{self.app}.{node.name}"
-        ser = self.add_node(NodeType.SERIALIZER, node.name, qname, node.lineno, {"app": self.app})
+        extra: dict = {"app": self.app}
+        if ntype is NodeType.FORM:
+            extra["django_form"] = True
+        ser = self.add_node(ntype, node.name, qname, node.lineno, extra)
         meta_model = None
         meta_fields: list[str] | None = None
         meta_exclude: list[str] | None = None
@@ -805,6 +833,27 @@ class DjangoExtractor(ast.NodeVisitor):
                 model_q = sender if "." in sender else f"{self.app}.{sender.split('.')[-1]}"
                 self.add_edge(recv.id, node_id(NodeType.MODEL, model_q), EdgeType.EMITS_SIGNAL)
 
+    def _maybe_plain_signal_handler(self, node: ast.FunctionDef) -> None:
+        if self.class_stack:
+            return
+        if Path(self.rel_path).stem not in {"signals", "signal_handlers", "handlers"}:
+            return
+        for dec in node.decorator_list:
+            dname = _name(dec.func if isinstance(dec, ast.Call) else dec) or ""
+            if dname.split(".")[-1] == "receiver":
+                return
+        args = [a.arg for a in node.args.args]
+        if not (node.args.kwarg or "instance" in args or "sender" in args):
+            return
+        qname = f"{self.app}.{node.name}"
+        self.add_node(
+            NodeType.RECEIVER,
+            node.name,
+            qname,
+            node.lineno,
+            {"app": self.app, "plain_handler": True},
+        )
+
     def _maybe_command(self, node: ast.FunctionDef) -> None:
         if "management/commands" in self.rel_path and node.name == "handle":
             cmd = Path(self.rel_path).stem
@@ -833,7 +882,7 @@ class DjangoExtractor(ast.NodeVisitor):
         # crude: referenced class names in the test become tested_by
         for child in ast.walk(node):
             if isinstance(child, ast.Name) and child.id[:1].isupper():
-                for ntype in (NodeType.SERIALIZER, NodeType.VIEW, NodeType.MODEL, NodeType.SERVICE):
+                for ntype in (NodeType.SERIALIZER, NodeType.FORM, NodeType.VIEW, NodeType.MODEL, NodeType.SERVICE, NodeType.RECEIVER):
                     self.add_edge(
                         node_id(ntype, f"{self.app}.{child.id}"),
                         test.id,
@@ -915,7 +964,39 @@ class DjangoExtractor(ast.NodeVisitor):
             self.add_node(NodeType.MODEL, label.split(".")[-1], label, node.lineno, {"string_ref": True})
 
     def _signal_connect(self, node: ast.Call, fname: str) -> None:
-        self.graph.residuals.append(f"signal.connect() at {self.rel_path}:{node.lineno} ({fname})")
+        handler_ast = node.args[0] if node.args else _kw(node, "receiver")
+        handler = _name(handler_ast)
+        signal = fname.rsplit(".", 1)[0] if "." in fname else None
+        sender = _name(_kw(node, "sender"))
+        if not handler:
+            self.graph.residuals.append(f"signal.connect() at {self.rel_path}:{node.lineno} ({fname})")
+            return
+        handler_short = handler.split(".")[-1]
+        qname = handler if "." in handler else f"{self.app}.{handler_short}"
+        extra = {
+            "app": self.app,
+            "signal": signal,
+            "sender": sender,
+            "referenced": True,
+            "via": "connect",
+        }
+        recv = self.add_node(NodeType.RECEIVER, handler_short, qname, node.lineno, extra)
+        if signal:
+            sig_short = signal.split(".")[-1]
+            sig_id = node_id(NodeType.SIGNAL, sig_short)
+            self.graph.nodes.append(
+                Node(
+                    id=sig_id,
+                    type=NodeType.SIGNAL,
+                    name=sig_short,
+                    qualified_name=sig_short,
+                    extra={"referenced": True},
+                )
+            )
+            self.add_edge(sig_id, recv.id, EdgeType.RECEIVES)
+        if sender:
+            model_q = sender if "." in sender else f"{self.app}.{sender.split('.')[-1]}"
+            self.add_edge(recv.id, node_id(NodeType.MODEL, model_q), EdgeType.EMITS_SIGNAL)
 
     def _reverse(self, node: ast.Call) -> None:
         name = _const_str(node.args[0]) if node.args else None

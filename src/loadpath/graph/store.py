@@ -59,6 +59,12 @@ CREATE TABLE IF NOT EXISTS reviews (
 """
 
 
+def linked_edges(nodes: Iterable[dict[str, Any]], edges: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only edges whose src and dst both exist in `nodes`."""
+    ids = {n["id"] for n in nodes if n and n.get("id")}
+    return [e for e in edges if e.get("src") in ids and e.get("dst") in ids]
+
+
 class GraphStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
@@ -248,7 +254,8 @@ class GraphStore:
         return [self._node_from_row(r) for r in rows]
 
     def subgraph(self, seed_ids: Iterable[str], hops: int = 6) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        frontier = set(seed_ids)
+        known = {r["id"] for r in self.conn.execute("SELECT id FROM nodes")}
+        frontier = set(seed_ids) & known
         seen_nodes = set(frontier)
         seen_edges: dict[str, dict[str, Any]] = {}
         for _ in range(hops):
@@ -257,14 +264,16 @@ class GraphStore:
             nxt: set[str] = set()
             for nid in frontier:
                 for edge in self.neighbors(nid, "both"):
-                    seen_edges[edge["id"]] = edge
                     other = edge["dst"] if edge["src"] == nid else edge["src"]
+                    if other not in known:
+                        continue
+                    seen_edges[edge["id"]] = edge
                     if other not in seen_nodes:
                         seen_nodes.add(other)
                         nxt.add(other)
             frontier = nxt
-        nodes = [self.get_node(i) for i in seen_nodes]
-        return [n for n in nodes if n], list(seen_edges.values())
+        nodes = [n for n in (self.get_node(i) for i in seen_nodes) if n]
+        return nodes, linked_edges(nodes, list(seen_edges.values()))
 
     def iter_nodes(self) -> Iterator[dict[str, Any]]:
         for row in self.conn.execute("SELECT * FROM nodes"):

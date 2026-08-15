@@ -41,3 +41,22 @@ def test_write_draft_creates_manifest(tmp_path: Path):
     assert "django_root: backend" in text
     assert "billing" in text
     assert "queryset_nplusone" in text
+
+
+def test_detect_skips_nested_test_project_manage_py(tmp_path: Path):
+    """Library repos (Wagtail) keep manage.py under a test project — index the package."""
+    pkg = tmp_path / "pack" / "contrib" / "redirects"
+    pkg.mkdir(parents=True)
+    (pkg / "apps.py").write_text("class RedirectsConfig:\n    pass\n")
+    images = tmp_path / "pack" / "images"
+    images.mkdir()
+    (images / "apps.py").write_text("class ImagesConfig:\n    pass\n")
+    test_proj = tmp_path / "pack" / "test" / "testapp"
+    test_proj.mkdir(parents=True)
+    (tmp_path / "pack" / "test" / "manage.py").write_text("print(1)\n")
+    (test_proj / "apps.py").write_text("class TestAppConfig:\n    pass\n")
+    layout = detect_layout(tmp_path)
+    assert layout["django_root"] == "pack"
+    assert "redirects" in layout["django_apps"]
+    assert "images" in layout["django_apps"]
+    assert "testapp" not in layout["django_apps"]
