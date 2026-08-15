@@ -253,7 +253,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
       </div>
       <div className="graph-stage">
         {view === "3d" ? (
-          <>
+          <div className="graph-3d" data-testid="graph-3d">
             <p className="graph-3d-hint">
               Architecture layers are stacked in depth (Django → stitch → React). Drag to orbit, scroll to
               zoom, click a node to inspect it.
@@ -270,7 +270,8 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
                 }}
               />
             </Suspense>
-          </>
+            {selected ? <GraphInspector node={selected} /> : null}
+          </div>
         ) : (
           <ReactFlowProvider>
             <ReactFlow
@@ -305,9 +306,9 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
               />
               <Controls />
             </ReactFlow>
+            {selected ? <GraphInspector node={selected} /> : null}
           </ReactFlowProvider>
         )}
-        {selected ? <GraphInspector node={selected} /> : null}
       </div>
     </div>
   );

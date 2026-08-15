@@ -265,7 +265,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
   }, [selectedId, neighborIds]);
 
   return (
-    <div className="graph-3d" data-testid="graph-3d" ref={hostRef}>
+    <div className="graph-3d-host" ref={hostRef}>
       {hover ? (
         <div className="graph-3d-tip" style={{ left: hover.x + 12, top: hover.y + 12 }}>
           <div className="t">{typeLabel(hover.node.type)}</div>
