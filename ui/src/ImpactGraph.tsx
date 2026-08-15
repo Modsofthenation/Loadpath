@@ -29,6 +29,8 @@ function LoadNode({ data, selected }: { data: { name: string; type: string }; se
 }
 
 const nodeTypes = { load: LoadNode };
+const NODE_WIDTH = 180;
+const NODE_HEIGHT = 56;
 
 export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -43,6 +45,10 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
     position: pos.get(n.id) ?? { x: 0, y: 0 },
     data: { name: n.name, type: n.type, file: n.file_path },
     selected: selectedId === n.id,
+    // MiniMap reads width/height off the user node, not the measured DOM box.
+    width: NODE_WIDTH,
+    height: NODE_HEIGHT,
+    style: { width: NODE_WIDTH, height: NODE_HEIGHT },
   }));
   const rfEdges: Edge[] = edges
     .filter((e) => byId.has(e.src) && byId.has(e.dst))
@@ -84,7 +90,19 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
           data-testid="impact-graph"
         >
           <Background />
-          <MiniMap pannable zoomable />
+          <MiniMap
+            pannable
+            zoomable
+            ariaLabel="Impact graph overview"
+            nodeColor="var(--muted)"
+            nodeStrokeColor="transparent"
+            nodeStrokeWidth={0}
+            maskColor="rgba(0, 0, 0, 0.45)"
+            maskStrokeColor="var(--accent)"
+            maskStrokeWidth={1.4}
+            bgColor="var(--graph-bg)"
+            style={{ width: 184, height: 128 }}
+          />
           <Controls />
         </ReactFlow>
       </ReactFlowProvider>
