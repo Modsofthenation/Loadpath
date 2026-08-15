@@ -4,7 +4,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -33,6 +33,7 @@ from loadpath.providers.oauth import (
     callback_html,
     disconnect_scm,
     finish_bitbucket_authorize,
+    is_loopback_request,
     oauth_status,
     poll_github_device,
     start_bitbucket_authorize,
@@ -148,6 +149,11 @@ def _call_scm(provider: str, fn):
             token, username = _scm_credentials(settings, provider)
             return fn(provider_for(provider, token, username=username))
         raise HTTPException(502, str(exc)) from exc
+
+
+def require_loopback(request: Request) -> None:
+    if not is_loopback_request(request.headers.get("host") or "", request.headers.get("origin") or ""):
+        raise HTTPException(403, "SCM sign-in and repo listing are only available from the local Loadpath UI")
 
 
 def create_app(
@@ -440,7 +446,8 @@ def create_app(
             raise HTTPException(502, str(exc)) from exc
 
     @app.get("/api/scm/repos")
-    def api_scm_repos(provider: str = Query("github")) -> dict[str, Any]:
+    def api_scm_repos(request: Request, provider: str = Query("github")) -> dict[str, Any]:
+        require_loopback(request)
         settings = AppSettings.load()
 
         def _load(scm):
@@ -471,11 +478,13 @@ def create_app(
         }
 
     @app.get("/api/oauth/status")
-    def api_oauth_status() -> dict[str, Any]:
+    def api_oauth_status(request: Request) -> dict[str, Any]:
+        require_loopback(request)
         return oauth_status()
 
     @app.post("/api/oauth/github/start")
-    def api_github_oauth_start() -> dict[str, Any]:
+    def api_github_oauth_start(request: Request) -> dict[str, Any]:
+        require_loopback(request)
         try:
             return start_github_device()
         except ValueError as exc:
@@ -484,7 +493,8 @@ def create_app(
             raise HTTPException(502, str(exc)) from exc
 
     @app.post("/api/oauth/github/poll")
-    def api_github_oauth_poll(body: GitHubOAuthPoll) -> dict[str, Any]:
+    def api_github_oauth_poll(request: Request, body: GitHubOAuthPoll) -> dict[str, Any]:
+        require_loopback(request)
         try:
             return poll_github_device(body.flow_id)
         except ValueError as exc:
@@ -493,7 +503,8 @@ def create_app(
             raise HTTPException(502, str(exc)) from exc
 
     @app.get("/api/oauth/bitbucket/start")
-    def api_bitbucket_oauth_start() -> dict[str, Any]:
+    def api_bitbucket_oauth_start(request: Request) -> dict[str, Any]:
+        require_loopback(request)
         redirect_uri = f"{base.rstrip('/')}/api/oauth/bitbucket/callback"
         try:
             return start_bitbucket_authorize(redirect_uri)
@@ -538,7 +549,8 @@ def create_app(
         )
 
     @app.post("/api/oauth/disconnect")
-    def api_oauth_disconnect(body: OAuthDisconnect) -> dict[str, Any]:
+    def api_oauth_disconnect(request: Request, body: OAuthDisconnect) -> dict[str, Any]:
+        require_loopback(request)
         try:
             settings = disconnect_scm(body.provider)
         except ValueError as exc:

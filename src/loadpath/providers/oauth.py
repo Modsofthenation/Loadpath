@@ -8,7 +8,7 @@ import threading
 import time
 from html import escape
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
@@ -21,9 +21,61 @@ GITHUB_SCOPES = "repo read:user read:org"
 BITBUCKET_AUTHORIZE_URL = "https://bitbucket.org/site/oauth2/authorize"
 BITBUCKET_TOKEN_URL = "https://bitbucket.org/site/oauth2/access_token"
 BITBUCKET_SCOPES = "account repository pullrequest"
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "testserver", "testclient"})
+GITHUB_DEVICE_HOSTS = frozenset({"github.com", "www.github.com"})
+MAX_PENDING = 8
 
 _lock = threading.RLock()
 _pending: dict[str, dict[str, Any]] = {}
+
+
+def _hostname(host_header: str) -> str:
+    raw = (host_header or "").strip()
+    if raw.startswith("["):
+        return raw[1:].split("]", 1)[0].lower()
+    return raw.split(":", 1)[0].lower()
+
+
+def is_loopback_request(host_header: str, origin: str = "") -> bool:
+    """True for the local UI, TestClient, or curl on loopback. False for other websites."""
+    if (origin or "").strip():
+        host = (urlparse(origin).hostname or "").lower().strip("[]")
+        return host in LOOPBACK_HOSTS
+    return _hostname(host_header) in LOOPBACK_HOSTS
+
+
+def _is_github_device_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        return False
+    if (parsed.hostname or "").lower() not in GITHUB_DEVICE_HOSTS:
+        return False
+    return parsed.path.rstrip("/") == "/login/device"
+
+
+def github_device_urls(data: dict[str, Any], user_code: str) -> tuple[str, str]:
+    verification = data.get("verification_uri") or "https://github.com/login/device"
+    if not _is_github_device_url(verification):
+        raise ValueError("GitHub returned an unexpected verification URL")
+    complete = data.get("verification_uri_complete") or ""
+    if not _is_github_device_url(complete):
+        complete = f"https://github.com/login/device?user_code={user_code}"
+    return verification, complete
+
+
+def _remember_pending(flow_id: str, row: dict[str, Any]) -> None:
+    with _lock:
+        now = time.time()
+        for key, item in list(_pending.items()):
+            if float(item.get("expires_at") or 0) < now:
+                _pending.pop(key, None)
+        while len(_pending) >= MAX_PENDING:
+            oldest = min(_pending, key=lambda key: float(_pending[key].get("expires_at") or 0))
+            _pending.pop(oldest, None)
+        _pending[flow_id] = row
 
 
 def github_client_id(settings: AppSettings | None = None) -> str:
@@ -83,19 +135,20 @@ def start_github_device(client: httpx.Client | None = None) -> dict[str, Any]:
     user_code = data.get("user_code") or ""
     if not device_code or not user_code:
         raise ValueError("GitHub did not return a device code")
+    verification, complete = github_device_urls(data, user_code)
     flow_id = secrets.token_urlsafe(16)
     interval = int(data.get("interval") or 5)
     expires_in = int(data.get("expires_in") or 900)
-    with _lock:
-        _pending[flow_id] = {
+    _remember_pending(
+        flow_id,
+        {
             "provider": "github",
             "device_code": device_code,
             "client_id": client_id,
             "interval": interval,
             "expires_at": time.time() + expires_in,
-        }
-    verification = data.get("verification_uri") or "https://github.com/login/device"
-    complete = data.get("verification_uri_complete") or f"{verification}?user_code={user_code}"
+        },
+    )
     return {
         "flow_id": flow_id,
         "user_code": user_code,
@@ -164,12 +217,14 @@ def start_bitbucket_authorize(redirect_uri: str) -> dict[str, Any]:
             f"Callback URL must be {redirect_uri}."
         )
     flow_id = secrets.token_urlsafe(16)
-    with _lock:
-        _pending[flow_id] = {
+    _remember_pending(
+        flow_id,
+        {
             "provider": "bitbucket",
             "redirect_uri": redirect_uri,
             "expires_at": time.time() + 600,
-        }
+        },
+    )
     query = urlencode(
         {
             "client_id": client_id,
@@ -256,7 +311,6 @@ def disconnect_scm(provider: str) -> AppSettings:
         settings.bitbucket_token = ""
         settings.bitbucket_user = ""
         settings.bitbucket_refresh_token = ""
-        settings.bitbucket_username = ""
     else:
         raise ValueError(f"Unknown SCM provider: {provider}")
     settings.save()

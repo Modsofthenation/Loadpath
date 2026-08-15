@@ -19,6 +19,20 @@ const TABS: { id: Tab; label: string; testId: string; shortcut: string; icon: ty
   { id: "settings", label: "Settings", testId: "tab-settings", shortcut: "5", icon: IconSettings },
 ];
 
+function openOAuthUrl(url: string, host: string, pathPrefix: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) return;
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname !== host && !hostname.endsWith(`.${host}`)) return;
+  if (!parsed.pathname.startsWith(pathPrefix)) return;
+  window.open(parsed.toString(), "_blank", "noopener,noreferrer");
+}
+
 export function App() {
   const [tab, setTab] = useState<Tab>("review");
   const [repo, setRepo] = useState(localStorage.getItem("loadpath.repo") || "");
@@ -361,7 +375,7 @@ export function App() {
     try {
       const flow = await api.githubOAuthStart();
       setGithubFlow(flow);
-      window.open(flow.verification_uri_complete, "_blank", "noopener,noreferrer");
+      openOAuthUrl(flow.verification_uri_complete, "github.com", "/login/device");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -372,7 +386,7 @@ export function App() {
     try {
       const flow = await api.bitbucketOAuthStart();
       setBitbucketWaiting(true);
-      window.open(flow.authorize_url, "_blank", "noopener,noreferrer");
+      openOAuthUrl(flow.authorize_url, "bitbucket.org", "/site/oauth2/authorize");
     } catch (e) {
       setBitbucketWaiting(false);
       setError(e instanceof Error ? e.message : String(e));

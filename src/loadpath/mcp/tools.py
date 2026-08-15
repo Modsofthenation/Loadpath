@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
+
+import httpx
 
 from loadpath.architecture.snapshot import architecture_report, summarize_index
 from loadpath.config import load_config
@@ -12,6 +14,37 @@ from loadpath.providers.scm import attach_local_paths, provider_for
 from loadpath.review.engine import run_review
 from loadpath.review.render import render_markdown
 from loadpath.settings import AppSettings, register_workspace
+
+_T = TypeVar("_T")
+
+
+def _with_scm(provider: str, fn: Callable[[Any], _T]) -> _T | dict[str, str]:
+    settings = AppSettings.load()
+    token = settings.github_token if provider == "github" else settings.bitbucket_token
+    username = settings.bitbucket_username
+    if not token:
+        return {"error": f"No {provider} token configured in Loadpath settings"}
+    try:
+        return fn(provider_for(provider, token, username=username))
+    except httpx.HTTPStatusError as exc:
+        if (
+            provider == "bitbucket"
+            and exc.response is not None
+            and exc.response.status_code == 401
+            and settings.bitbucket_refresh_token
+        ):
+            from loadpath.providers.oauth import refresh_bitbucket_access_token
+
+            try:
+                settings = refresh_bitbucket_access_token(settings)
+            except Exception as refresh_exc:  # noqa: BLE001
+                return {"error": str(refresh_exc)}
+            token = settings.bitbucket_token
+            username = settings.bitbucket_username
+            return fn(provider_for(provider, token, username=username))
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
 
 
 def _repo(path: str) -> Path | dict[str, str]:
@@ -124,32 +157,19 @@ def list_pull_requests(
     state: str = "open",
 ) -> dict[str, Any]:
     """List pull requests from GitHub or Bitbucket using tokens in ~/.loadpath/settings.json."""
-    settings = AppSettings.load()
-    token = settings.github_token if provider == "github" else settings.bitbucket_token
-    username = settings.bitbucket_username
-    if not token:
-        return {"error": f"No {provider} token configured in Loadpath settings"}
-    try:
-        scm = provider_for(provider, token, username=username)
-        prs = scm.list_pull_requests(repo, state=state)
-    except Exception as exc:  # noqa: BLE001
-        return {"error": str(exc)}
-    return {"pull_requests": [p.to_dict() for p in prs]}
+    result = _with_scm(provider, lambda scm: scm.list_pull_requests(repo, state=state))
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    return {"pull_requests": [p.to_dict() for p in result]}
 
 
 def list_remote_repositories(provider: str) -> dict[str, Any]:
     """List GitHub or Bitbucket repositories the saved token can access."""
     settings = AppSettings.load()
-    token = settings.github_token if provider == "github" else settings.bitbucket_token
-    username = settings.bitbucket_username
-    if not token:
-        return {"error": f"No {provider} token configured in Loadpath settings"}
-    try:
-        scm = provider_for(provider, token, username=username)
-        repos = scm.list_repositories()
-        profile = scm.current_user()
-    except Exception as exc:  # noqa: BLE001
-        return {"error": str(exc)}
+    result = _with_scm(provider, lambda scm: (scm.list_repositories(), scm.current_user()))
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    repos, profile = result
     attach_local_paths(repos, [w.path for w in settings.workspaces])
     return {"provider": provider, "user": profile, "repos": [r.to_dict() for r in repos]}
 
@@ -163,13 +183,8 @@ def post_review_comment(
     """Upsert the single Loadpath brief comment on a pull request."""
     if not markdown.strip():
         return {"error": "markdown is empty"}
-    settings = AppSettings.load()
-    token = settings.github_token if provider == "github" else settings.bitbucket_token
-    username = settings.bitbucket_username
-    if not token:
-        return {"error": f"No {provider} token configured in Loadpath settings"}
-    try:
-        scm = provider_for(provider, token, username=username)
-        return scm.upsert_pull_request_comment(repo, number, markdown)
-    except Exception as exc:  # noqa: BLE001
-        return {"error": str(exc)}
+    result = _with_scm(
+        provider,
+        lambda scm: scm.upsert_pull_request_comment(repo, number, markdown),
+    )
+    return result

@@ -234,3 +234,53 @@ def test_github_oauth_start_requires_client_id(tmp_path, monkeypatch):
     res = client.post("/api/oauth/github/start")
     assert res.status_code == 400
     assert "client ID" in res.json()["detail"]
+
+
+def test_scm_routes_reject_cross_origin(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    headers = {"Origin": "https://evil.example"}
+    assert client.get("/api/scm/repos", params={"provider": "github"}, headers=headers).status_code == 403
+    assert client.get("/api/oauth/status", headers=headers).status_code == 403
+    assert client.post("/api/oauth/github/start", headers=headers).status_code == 403
+    assert client.post("/api/oauth/disconnect", json={"provider": "github"}, headers=headers).status_code == 403
+
+
+def test_loopback_request_helper():
+    from loadpath.providers.oauth import is_loopback_request
+
+    assert is_loopback_request("127.0.0.1:7345", "")
+    assert is_loopback_request("testserver", "")
+    assert is_loopback_request("example.com", "http://127.0.0.1:7345")
+    assert not is_loopback_request("example.com", "https://evil.example")
+    assert not is_loopback_request("tunnel.example", "")
+
+
+def test_github_device_rejects_unexpected_verification_url():
+    import pytest
+
+    from loadpath.providers.oauth import github_device_urls
+
+    with pytest.raises(ValueError, match="unexpected verification URL"):
+        github_device_urls({"verification_uri": "https://evil.example/phish"}, "ABCD-1234")
+    with pytest.raises(ValueError, match="unexpected verification URL"):
+        github_device_urls({"verification_uri": "https://github.com.evil.example/login/device"}, "ABCD-1234")
+    url, complete = github_device_urls(
+        {
+            "verification_uri": "https://github.com/login/device",
+            "verification_uri_complete": "https://evil.example/?user_code=ABCD-1234",
+        },
+        "ABCD-1234",
+    )
+    assert url == "https://github.com/login/device"
+    assert complete == "https://github.com/login/device?user_code=ABCD-1234"
+
+
+def test_disconnect_keeps_bitbucket_username(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    AppSettings(bitbucket_token="tok", bitbucket_username="bob", bitbucket_user="bob").save()
+    gone = client.post("/api/oauth/disconnect", json={"provider": "bitbucket"})
+    assert gone.status_code == 200, gone.text
+    settings = AppSettings.load()
+    assert settings.bitbucket_token == ""
+    assert settings.bitbucket_user == ""
+    assert settings.bitbucket_username == "bob"
