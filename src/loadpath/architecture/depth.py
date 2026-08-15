@@ -13,6 +13,7 @@ from pathlib import Path
 from loadpath.architecture.rules import Finding
 from loadpath.config import LoadpathConfig
 from loadpath.graph.store import GraphStore
+from loadpath.stitch.openapi import published_route
 from loadpath.types import EdgeType, NodeType, RuleSeverity
 
 DEPTH_RULES = ("leaked_seam", "tests_bypass_interface")
@@ -245,7 +246,7 @@ def _tests_bypass_interface(store: GraphStore) -> list[Finding]:
         tested_behind = [nid for nid in behind if nid in tested_src]
         if not tested_behind:
             continue
-        seam_name = route.get("extra", {}).get("mounted_at") or route["name"]
+        seam_name = published_route(route)
         internals = []
         for nid in tested_behind:
             node = views.get(nid) or serializers.get(nid) or pages.get(nid) or store.get_node(nid)

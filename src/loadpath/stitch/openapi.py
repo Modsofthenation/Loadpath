@@ -13,13 +13,44 @@ DJANGO_PATH_PARAM = re.compile(r"""<(?:(?:int|str|slug|uuid|path):)?([^>]+)>""")
 METHOD_PREFIX = re.compile(r"""^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+""", re.I)
 
 
+def _strip_regex_anchors(route: str) -> str:
+    route = (route or "").strip()
+    if route.startswith("include:"):
+        return ""
+    if route.startswith("^"):
+        route = route[1:]
+    if route.endswith("$") and not route.endswith("\\$"):
+        route = route[:-1]
+    return route
+
+
 def django_route_to_template(route: str) -> str:
-    route = route.strip()
+    route = _strip_regex_anchors(route)
     if not route.startswith("/"):
         route = "/" + route
     route = DJANGO_PATH_PARAM.sub("{id}", route)
     route = re.sub(r"""/+""", "/", route)
     return route.rstrip("/") or "/"
+
+
+def declared_route(route: dict) -> str:
+    """URL pattern as written in path()/re_path(), including empty mounts."""
+    extra = route.get("extra") or {}
+    if "route" in extra and extra["route"] is not None:
+        return str(extra["route"])
+    name = str(route.get("name") or "")
+    if name.startswith("include:"):
+        return ""
+    return name
+
+
+def published_route(route: dict) -> str:
+    extra = route.get("extra") or {}
+    if extra.get("mounted_at"):
+        return str(extra["mounted_at"])
+    if extra.get("full_path"):
+        return str(extra["full_path"])
+    return declared_route(route)
 
 
 def parse_public_api(spec: str) -> tuple[str | None, str]:
@@ -73,13 +104,19 @@ def load_openapi(repo_root: Path, config: LoadpathConfig) -> list[dict]:
 
 
 def _join(prefix: str, route: str) -> str:
-    prefix = prefix.strip("/")
-    route = route.strip("/")
+    prefix = _strip_regex_anchors(prefix).strip("/")
+    route = _strip_regex_anchors(route).strip("/")
     if not prefix:
         return django_route_to_template(route)
     if not route:
         return django_route_to_template(prefix)
     return django_route_to_template(prefix + "/" + route)
+
+
+def _include_child_app(inc: str) -> str | None:
+    """billing.urls → billing; geonode.base.urls → base (not geonode)."""
+    parts = [p for p in inc.split(".") if p not in {"", "urls", "urlpatterns"}]
+    return parts[-1] if parts else None
 
 
 def apply_url_includes(store: GraphStore) -> None:
@@ -90,7 +127,7 @@ def apply_url_includes(store: GraphStore) -> None:
         inc = extra.get("include")
         if not inc:
             continue
-        prefix = extra.get("route") or route["name"]
+        prefix = declared_route(route)
         includes.append((str(prefix), str(inc)))
     if not includes:
         return
@@ -99,11 +136,11 @@ def apply_url_includes(store: GraphStore) -> None:
         if extra.get("include"):
             continue
         app = extra.get("app")
-        raw = extra.get("route") or route["name"]
+        raw = declared_route(route)
         mounted = None
         for prefix, inc in includes:
-            target_app = inc.split(".")[0]
-            if app and app == target_app:
+            target_app = _include_child_app(inc)
+            if app and target_app and app == target_app:
                 mounted = _join(prefix, str(raw))
                 break
         if mounted:
@@ -167,7 +204,7 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
             extra = route.get("extra") or {}
             if extra.get("include"):
                 continue
-            rraw = extra.get("mounted_at") or extra.get("full_path") or extra.get("route") or route["name"]
+            rraw = published_route(route)
             rtmpl = django_route_to_template(str(rraw))
             if _paths_match(tmpl, rtmpl):
                 if generated:
@@ -217,7 +254,7 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
         extra = route.get("extra") or {}
         if extra.get("include"):
             continue
-        raw = extra.get("mounted_at") or extra.get("full_path") or extra.get("route") or route["name"]
+        raw = published_route(route)
         tmpl = django_route_to_template(str(raw))
         ops = openapi_by_path.get(tmpl, [])
         if not ops:
@@ -287,7 +324,7 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
         for spec in ctx.public_api:
             method, path = parse_public_api(spec)
             for route in routes:
-                rraw = (route.get("extra") or {}).get("route") or route["name"]
+                rraw = published_route(route)
                 if _paths_match(django_route_to_template(str(rraw)), path):
                     if route.get("context") and route["context"] != ctx.name:
                         store.upsert_edge(
