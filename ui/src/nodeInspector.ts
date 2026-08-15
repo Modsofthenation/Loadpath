@@ -141,9 +141,36 @@ const FACT_LABELS: Record<string, string> = {
   nodeid: "Test id",
   task: "Task",
   to: "Related to",
+  doc: "Summary",
+  template: "Template",
+  signal: "Signal",
+  sender: "Sender",
+  decorators: "Decorators",
+  nplusone: "N+1 risk",
+  lookups: "Lookups",
+  null: "NULL",
+  blank: "Blank",
+  default: "Default",
+  max_length: "max_length",
+  max_digits: "max_digits",
+  decimal_places: "decimal_places",
+  primary_key: "Primary key",
+  help_text: "Help text",
+  choices: "Choices",
+  auto_now: "auto_now",
+  auto_now_add: "auto_now_add",
+  basename: "Router basename",
+  args: "Args",
+  beat: "Beat",
+  schedule_name: "Schedule",
+  websocket: "WebSocket",
+  htmx: "HTMX",
+  blocks: "Blocks",
+  db_table: "db_table",
 };
 
 const FACT_ORDER = [
+  "doc",
   "field_type",
   "method",
   "path",
@@ -170,7 +197,32 @@ const FACT_ORDER = [
   "to",
   "unique",
   "db_index",
+  "null",
+  "blank",
+  "default",
+  "max_length",
+  "max_digits",
+  "decimal_places",
+  "primary_key",
+  "auto_now",
+  "auto_now_add",
+  "help_text",
+  "choices",
   "relation",
+  "nplusone",
+  "lookups",
+  "template",
+  "signal",
+  "sender",
+  "decorators",
+  "basename",
+  "args",
+  "beat",
+  "schedule_name",
+  "websocket",
+  "htmx",
+  "blocks",
+  "db_table",
   "looks_idempotent_on_pk",
   "broker",
   "task",
@@ -222,7 +274,7 @@ const HIDDEN_EXTRA_KEYS = new Set([
   "imported",
 ]);
 
-const ALWAYS_SHOW_FALSE = new Set(["looks_idempotent_on_pk"]);
+const ALWAYS_SHOW_FALSE = new Set(["looks_idempotent_on_pk", "null", "blank"]);
 const ROLE_FACT_KEYS = new Set(["inferred", "generated", "mutation", "fbv", "ninja", "filterset"]);
 
 export type InspectorLink = {
@@ -241,6 +293,11 @@ export type InspectorFact = {
   value: string;
 };
 
+export type KindCount = {
+  label: string;
+  count: number;
+};
+
 export type NodeInspection = {
   type: string;
   typeLabel: string;
@@ -256,6 +313,11 @@ export type NodeInspection = {
   outputs: InspectorLink[];
   extraInputs: number;
   extraOutputs: number;
+  degreeIn: number;
+  degreeOut: number;
+  inputKinds: KindCount[];
+  outputKinds: KindCount[];
+  pathSummary: string;
 };
 
 export function typePurpose(type: string): string {
@@ -292,7 +354,7 @@ export function inspectNode(
     ? `${node.file_path}${node.start_line ? `:${node.start_line}` : ""}`
     : undefined;
 
-  return {
+  const info: NodeInspection = {
     type: node.type,
     typeLabel: kindLabel(typeLabel(node.type)),
     layer: LAYER_LABELS[layerFor(node.type)] ?? "other",
@@ -307,7 +369,38 @@ export function inspectNode(
     outputs,
     extraInputs: Math.max(0, incoming.length - LINK_LIMIT),
     extraOutputs: Math.max(0, outgoing.length - LINK_LIMIT),
+    degreeIn: incoming.length,
+    degreeOut: outgoing.length,
+    inputKinds: countByEdge(
+      incoming.map((e) => toLink(e, byId, e.src)),
+    ),
+    outputKinds: countByEdge(
+      outgoing.map((e) => toLink(e, byId, e.dst)),
+    ),
+    pathSummary: "",
   };
+  info.pathSummary = pathSummary(info);
+  return info;
+}
+
+function countByEdge(links: InspectorLink[]): KindCount[] {
+  const counts = new Map<string, number>();
+  for (const link of links) {
+    const label = link.edgeLabel || link.edgeType.replaceAll("_", " ");
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([label, count]) => ({ label, count }));
+}
+
+export function pathSummary(info: Pick<NodeInspection, "inputKinds" | "outputKinds">): string {
+  const ins = info.inputKinds.map((k) => `${k.label} ×${k.count}`).join(", ");
+  const outs = info.outputKinds.map((k) => `${k.label} ×${k.count}`).join(", ");
+  if (ins && outs) return `${ins} → this → ${outs}`;
+  if (outs) return `this → ${outs}`;
+  if (ins) return `${ins} → this`;
+  return "No neighbors in this graph";
 }
 
 function toLink(edge: GraphEdge, byId: Map<string, GraphNode>, otherId: string): InspectorLink {
@@ -357,6 +450,9 @@ function formatFact(key: string, raw: unknown): string | null {
     return trimmed || null;
   }
   if (Array.isArray(raw)) {
+    if (raw.some((item) => item && typeof item === "object")) {
+      return formatObjectList(key, raw as Record<string, unknown>[]);
+    }
     const items = raw
       .map((item) => (typeof item === "string" || typeof item === "number" ? String(item) : ""))
       .filter(Boolean);
@@ -366,4 +462,28 @@ function formatFact(key: string, raw: unknown): string | null {
     return more > 0 ? `${shown.join(", ")} +${more} more` : shown.join(", ");
   }
   return null;
+}
+
+function formatObjectList(key: string, items: Record<string, unknown>[]): string | null {
+  const shown = items.slice(0, 4).map((item) => {
+    if (key === "nplusone") {
+      const qs = String(item.queryset || "queryset");
+      const accessed = Array.isArray(item.accessed) ? item.accessed.join(".") : "";
+      const line = item.line ? ` L${item.line}` : "";
+      return accessed ? `${qs} → ${accessed}${line}` : `${qs}${line}`;
+    }
+    if (key === "lookups") {
+      const fields = Array.isArray(item.fields) ? item.fields.join(", ") : "";
+      const kind = String(item.kind || "filter");
+      return fields ? `${kind} ${fields}` : kind;
+    }
+    const bits = Object.entries(item)
+      .filter(([, v]) => v != null && (typeof v === "string" || typeof v === "number"))
+      .slice(0, 3)
+      .map(([k, v]) => `${k}=${v}`);
+    return bits.join(" ");
+  });
+  if (!shown.some(Boolean)) return null;
+  const more = items.length - shown.length;
+  return more > 0 ? `${shown.join("; ")} +${more} more` : shown.join("; ");
 }

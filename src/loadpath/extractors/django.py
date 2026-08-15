@@ -185,6 +185,77 @@ def _truthy(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Constant) and node.value is True
 
 
+def _bool_kw(call: ast.Call, key: str) -> bool | None:
+    node = _kw(call, key)
+    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+        return node.value
+    return None
+
+
+def _int_kw(call: ast.Call, key: str) -> int | None:
+    node = _kw(call, key)
+    if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+        return node.value
+    return None
+
+
+def _doc_line(node: ast.AST) -> str | None:
+    doc = ast.get_docstring(node)
+    if not doc:
+        return None
+    line = doc.strip().split("\n", 1)[0].strip()
+    return line[:180] or None
+
+
+def _with_doc(extra: dict, node: ast.AST) -> dict:
+    doc = _doc_line(node)
+    if doc:
+        extra["doc"] = doc
+    return extra
+
+
+def _default_repr(node: ast.AST | None) -> str | None:
+    if node is None:
+        return None
+    if isinstance(node, ast.Constant):
+        if node.value is None:
+            return "None"
+        if isinstance(node.value, str):
+            return node.value
+        if isinstance(node.value, (int, float, bool)):
+            return str(node.value)
+        return None
+    name = _name(node)
+    return name.split(".")[-1] if name else None
+
+
+def _field_constraints(call: ast.Call) -> dict:
+    extra: dict = {}
+    for key in ("null", "blank"):
+        val = _bool_kw(call, key)
+        if val is not None:
+            extra[key] = val
+    for key in ("primary_key", "auto_now", "auto_now_add"):
+        if _bool_kw(call, key):
+            extra[key] = True
+    for key in ("max_length", "max_digits", "decimal_places"):
+        val = _int_kw(call, key)
+        if val is not None:
+            extra[key] = val
+    default = _default_repr(_kw(call, "default"))
+    if default is not None:
+        extra["default"] = default
+    help_text = _const_str(_kw(call, "help_text"))
+    if help_text:
+        extra["help_text"] = help_text[:160]
+    choices = _kw(call, "choices")
+    if choices is not None:
+        cname = _name(choices)
+        if cname:
+            extra["choices"] = cname.split(".")[-1]
+    return extra
+
+
 def strip_url_anchors(route: str) -> str:
     route = (route or "").strip()
     if route.startswith("include:"):
@@ -417,7 +488,9 @@ class DjangoExtractor(ast.NodeVisitor):
 
     def _model(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
-        model = self.add_node(NodeType.MODEL, node.name, qname, node.lineno, {"app": self.app})
+        model = self.add_node(
+            NodeType.MODEL, node.name, qname, node.lineno, _with_doc({"app": self.app}, node)
+        )
         app_node = self.add_node(NodeType.APP, self.app, self.app, 1)
         self.add_edge(model.id, app_node.id, EdgeType.BELONGS_TO)
         for stmt in node.body:
@@ -446,6 +519,7 @@ class DjangoExtractor(ast.NodeVisitor):
                     extra["related_name"] = _const_str(_kw(stmt.value, "related_name"))
                     extra["db_index"] = _truthy(_kw(stmt.value, "db_index"))
                     extra["unique"] = _truthy(_kw(stmt.value, "unique"))
+                    extra.update(_field_constraints(stmt.value))
                 field_node = self.add_node(NodeType.FIELD, fname, field_q, stmt.lineno, extra)
                 self.add_edge(model.id, field_node.id, EdgeType.HAS_FIELD)
                 if rel_to:
@@ -469,7 +543,7 @@ class DjangoExtractor(ast.NodeVisitor):
             extra["django_form"] = not filterset
             if filterset:
                 extra["filterset"] = True
-        ser = self.add_node(ntype, node.name, qname, node.lineno, extra)
+        ser = self.add_node(ntype, node.name, qname, node.lineno, _with_doc(extra, node))
         meta_model = None
         meta_fields: list[str] | None = None
         meta_exclude: list[str] | None = None
@@ -527,7 +601,7 @@ class DjangoExtractor(ast.NodeVisitor):
 
     def _view(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
-        extra: dict = {"app": self.app, "bases": _bases(node)}
+        extra: dict = _with_doc({"app": self.app, "bases": _bases(node)}, node)
         serializer_class = None
         permissions: list[str] = []
         queryset_model = None
@@ -645,16 +719,16 @@ class DjangoExtractor(ast.NodeVisitor):
 
     def _admin(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
-        self.add_node(NodeType.ADMIN, node.name, qname, node.lineno, {"app": self.app})
+        self.add_node(NodeType.ADMIN, node.name, qname, node.lineno, _with_doc({"app": self.app}, node))
 
     def _service_class(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
-        self.add_node(NodeType.SERVICE, node.name, qname, node.lineno, {"app": self.app})
+        self.add_node(NodeType.SERVICE, node.name, qname, node.lineno, _with_doc({"app": self.app}, node))
 
     def _maybe_service_fn(self, node: ast.FunctionDef) -> None:
         if Path(self.rel_path).name in {"services.py", "use_cases.py", "usecases.py"}:
             qname = f"{self.app}.{node.name}"
-            self.add_node(NodeType.SERVICE, node.name, qname, node.lineno, {"app": self.app})
+            self.add_node(NodeType.SERVICE, node.name, qname, node.lineno, _with_doc({"app": self.app}, node))
 
     def _app_config(self, node: ast.ClassDef) -> None:
         for stmt in node.body:
@@ -679,12 +753,15 @@ class DjangoExtractor(ast.NodeVisitor):
             return
         qname = f"{self.app}.{node.name}"
         args = [a.arg for a in node.args.args if a.arg not in {"self", "cls"}]
-        extra = {
-            "app": self.app,
-            "args": args,
-            "broker": broker,
-            "decorators": decs,
-        }
+        extra = _with_doc(
+            {
+                "app": self.app,
+                "args": args,
+                "broker": broker,
+                "decorators": decs,
+            },
+            node,
+        )
         extra["looks_idempotent_on_pk"] = _looks_idempotent(args)
         self.add_node(NodeType.TASK, node.name, qname, node.lineno, extra)
 
@@ -875,7 +952,7 @@ class DjangoExtractor(ast.NodeVisitor):
         if node.name in {"get", "post", "put", "patch", "delete", "handle"}:
             return
         qname = f"{self.app}.{node.name}"
-        extra = {"app": self.app, "fbv": True, "decorators": decs}
+        extra = _with_doc({"app": self.app, "fbv": True, "decorators": decs}, node)
         view = self.add_node(NodeType.VIEW, node.name, qname, node.lineno, extra)
         self._note_cross_app_model_imports(view.id)
         self._link_model_queries(view.id, node)
@@ -984,7 +1061,7 @@ class DjangoExtractor(ast.NodeVisitor):
         bases = {b.split(".")[-1] for b in _bases(node)}
         if "Mutation" in bases:
             kind = "mutation"
-        extra = {"app": self.app, "kind": kind, "graphql": True}
+        extra = _with_doc({"app": self.app, "kind": kind, "graphql": True}, node)
         gql = self.add_node(NodeType.GRAPHQL_TYPE, node.name, qname, node.lineno, extra)
         root = node.name in {"Query", "Mutation", "Subscription"} or kind == "mutation"
         for stmt in node.body:
@@ -1069,7 +1146,7 @@ class DjangoExtractor(ast.NodeVisitor):
 
     def _pydantic_model(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
-        extra: dict = {"app": self.app, "pydantic": True}
+        extra: dict = _with_doc({"app": self.app, "pydantic": True}, node)
         model = self.add_node(NodeType.PYDANTIC_MODEL, node.name, qname, node.lineno, extra)
         for stmt in node.body:
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
@@ -1085,7 +1162,7 @@ class DjangoExtractor(ast.NodeVisitor):
 
     def _consumer(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
-        extra = {"app": self.app, "bases": _bases(node), "websocket": True}
+        extra = _with_doc({"app": self.app, "bases": _bases(node), "websocket": True}, node)
         consumer = self.add_node(NodeType.CONSUMER, node.name, qname, node.lineno, extra)
         self._link_model_queries(consumer.id, node)
 
@@ -1194,7 +1271,7 @@ class DjangoExtractor(ast.NodeVisitor):
                 sender_node = _kw(dec, "sender")
                 sender = _name(sender_node)
             qname = f"{self.app}.{node.name}"
-            extra = {"app": self.app, "signal": signal, "sender": sender}
+            extra = _with_doc({"app": self.app, "signal": signal, "sender": sender}, node)
             recv = self.add_node(NodeType.RECEIVER, node.name, qname, node.lineno, extra)
             if signal:
                 sig_id = node_id(NodeType.SIGNAL, signal.split(".")[-1])

@@ -1599,6 +1599,13 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
   line-height: 1.4;
 }
 .inspector-layer { margin-top: 4px; font-size: 11px; }
+.inspector-degree { font-size: 11px; }
+.inspector-path {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
 .inspector-facts {
   margin: 10px 0 0;
   padding-top: 8px;

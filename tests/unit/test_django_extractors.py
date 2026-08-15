@@ -18,6 +18,30 @@ def test_extracts_model_fields_and_relations():
     assert "billing.Invoice" in names
     assert "billing.Invoice.total" in names
     assert names["billing.Invoice.total"].type is NodeType.FIELD
+    total = names["billing.Invoice.total"].extra
+    assert total.get("max_digits") == 10
+    assert total.get("decimal_places") == 2
+    status = names["billing.Invoice.status"].extra
+    assert status.get("max_length") == 32
+    assert status.get("default") == "draft"
+    account = names["billing.Invoice.account"].extra
+    assert account.get("null") is True
+
+
+def test_extracts_model_docstring_and_null_false():
+    source = (
+        "from django.db import models\n"
+        "class Ledger(models.Model):\n"
+        "    \"\"\"Posted billing ledger.\\n\\nLonger body.\"\"\"\n"
+        "    ref = models.CharField(max_length=16, null=False, blank=True)\n"
+    )
+    g = extract_django_file("backend/billing/models.py", source, _cfg())
+    ledger = next(n for n in g.nodes if n.name == "Ledger")
+    assert ledger.extra.get("doc") == "Posted billing ledger."
+    ref = next(n for n in g.nodes if n.name == "ref")
+    assert ref.extra.get("null") is False
+    assert ref.extra.get("blank") is True
+    assert ref.extra.get("max_length") == 16
 
 
 def test_extracts_serializer_fields_and_model_link():

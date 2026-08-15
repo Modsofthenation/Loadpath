@@ -123,6 +123,8 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path, browser_page):
     inspector = page.get_by_test_id("graph-inspector")
     inspector.wait_for(timeout=5_000)
     assert page.get_by_test_id("graph-inspector-purpose").inner_text().strip()
+    assert "in ·" in page.get_by_test_id("graph-inspector-degree").inner_text()
+    assert page.get_by_test_id("graph-inspector-path").inner_text().strip()
     _shot(page, dest, "review-inspector.png")
     page.get_by_test_id("graph-inspector-close").click()
     inspector.wait_for(state="hidden")

@@ -132,6 +132,10 @@ describe("inspectNode", () => {
     expect(info.outputs.map((l) => l.name)).toEqual(["InvoiceSerializer", "billing.Missing"]);
     expect(info.outputs[1].inferred).toBe(true);
     expect(info.outputs[1].typeLabel).toBe("");
+    expect(info.degreeIn).toBe(1);
+    expect(info.degreeOut).toBe(2);
+    expect(info.pathSummary).toMatch(/publishes route/);
+    expect(info.pathSummary).toMatch(/uses serializer/);
   });
 
   it("tags sinks and contracts", () => {
@@ -175,12 +179,39 @@ describe("inspectNode", () => {
       id: `f${i}`,
       src: view.id,
       dst: `django.field:billing.Invoice.f${i}`,
-      type: "has_field",
+      type: "queries_model",
       weight: "cheap",
       confidence: 1,
     }));
     const info = inspectNode(view, [view], fieldEdges);
     expect(info.outputs).toHaveLength(16);
     expect(info.extraOutputs).toBe(4);
+    expect(info.degreeOut).toBe(20);
+    expect(info.outputKinds).toEqual([{ label: "queries model", count: 20 }]);
+  });
+
+  it("formats N+1 and lookup object lists and field null=false", () => {
+    const facts = factsFromExtra({
+      nplusone: [
+        {
+          line: 42,
+          queryset: "Invoice.objects.all()",
+          accessed: ["lines", "sku"],
+          kind: "related",
+        },
+      ],
+      lookups: [{ kind: "filter", fields: ["status", "customer_id"], line: 10 }],
+      null: false,
+      blank: true,
+      default: "draft",
+      max_length: 32,
+      doc: "A published invoice.",
+    });
+    expect(facts.find((f) => f.key === "nplusone")?.value).toMatch(/Invoice\.objects\.all\(\) → lines\.sku L42/);
+    expect(facts.find((f) => f.key === "lookups")?.value).toBe("filter status, customer_id");
+    expect(facts.find((f) => f.key === "null")?.value).toBe("no");
+    expect(facts.find((f) => f.key === "blank")?.value).toBe("yes");
+    expect(facts.find((f) => f.key === "doc")?.label).toBe("Summary");
+    expect(facts.find((f) => f.key === "max_length")?.value).toBe("32");
   });
 });
