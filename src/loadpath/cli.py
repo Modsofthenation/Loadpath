@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Any, Iterator, Optional
 
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from loadpath import __version__
 from loadpath.architecture.snapshot import architecture_report
@@ -16,6 +18,50 @@ from loadpath.review.render import render_html, render_markdown
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Loadpath — Django+React PR load-path reviewer.")
 console = Console()
+
+
+@contextmanager
+def _index_progress() -> Iterator[Any]:
+    """Live CLI bar so a long extract is distinguishable from a hang."""
+    if not console.is_terminal:
+        def _plain(event: dict[str, Any]) -> None:
+            msg = event.get("message") or event.get("phase")
+            if not msg:
+                return
+            phase = event.get("phase")
+            if phase == "extract" and event.get("current") and str(msg).startswith("Extracting "):
+                return
+            if phase in {"scan", "extract", "boot", "stitch", "done", "skipped"}:
+                console.print(f"[dim]{msg}[/dim]")
+
+        yield _plain
+        return
+
+    bar = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    )
+    task_id: Any = None
+    with bar:
+        def _cb(event: dict[str, Any]) -> None:
+            nonlocal task_id
+            desc = str(event.get("message") or event.get("phase") or "Indexing")
+            total = int(event.get("total") or 0)
+            done = int(event.get("done") or 0)
+            if task_id is None:
+                task_id = bar.add_task(desc, total=total if total else None)
+                return
+            kwargs: dict[str, Any] = {"description": desc, "completed": done}
+            if total:
+                kwargs["total"] = total
+            bar.update(task_id, **kwargs)
+
+        yield _cb
 
 
 @app.callback()
@@ -43,24 +89,41 @@ def init(
 def index(
     repo: Path = typer.Argument(Path("."), exists=True, file_okay=False),
     full: bool = typer.Option(False, "--full", help="Re-extract every file"),
+    jobs: Optional[int] = typer.Option(
+        None,
+        "--jobs",
+        "-j",
+        help="Parallel extract workers (default: CPU count, 1 if few files). LOADPATH_INDEX_JOBS also works.",
+    ),
 ) -> None:
     """Index a Django + React monorepo into a SQLite graph."""
     from loadpath.architecture.snapshot import summarize_index
     from loadpath.config import load_config
     from loadpath.settings import register_workspace
 
-    store = index_repo(repo, incremental=not full, draft_config=True)
+    with _index_progress() as on_progress:
+        store = index_repo(
+            repo,
+            incremental=not full,
+            draft_config=True,
+            progress=on_progress,
+            workers=jobs,
+        )
     register_workspace(repo)
     summary = summarize_index(store, load_config(repo))
     counts = summary["counts"]
     extracted = summary.get("files_extracted") or 0
     skipped = summary.get("reindex_skipped")
+    workers = store.get_meta("index_workers")
+    elapsed = store.get_meta("index_elapsed_ms")
+    timing = f" in {elapsed}ms" if elapsed else ""
+    jobs_note = f" · {workers} extract workers" if workers and workers not in {"0", "1"} else ""
     if skipped:
-        console.print(f"Index already current ({counts['nodes']} nodes / {counts['edges']} edges) → {default_db_path(repo)}")
+        console.print(f"Index already current ({counts['nodes']} nodes / {counts['edges']} edges){timing} → {default_db_path(repo)}")
     else:
         console.print(
             f"Indexed {counts['nodes']} nodes / {counts['edges']} edges"
-            f" (extracted {extracted} files) → {default_db_path(repo)}"
+            f" (extracted {extracted} files){timing}{jobs_note} → {default_db_path(repo)}"
         )
     contexts = ", ".join(summary["contexts"]) or "none"
     console.print(f"Contexts: {contexts}")
@@ -87,11 +150,53 @@ def review(
     reindex: bool = typer.Option(True, "--reindex/--no-reindex", help="Refresh the index before walking the diff"),
     full: bool = typer.Option(False, "--full", help="Full reindex instead of incremental"),
     three_dot: bool = typer.Option(True, "--three-dot/--two-dot", help="PR-shaped range (merge-base...head)"),
+    dirty: bool = typer.Option(False, "--dirty", help="Include uncommitted files in the review"),
+    fail_on: str = typer.Option(
+        "never",
+        "--fail-on",
+        help="CI gate: never | blocker | low | medium",
+    ),
+    comment: bool = typer.Option(False, "--comment", help="Upsert the Loadpath brief on --pr"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="github | gitlab | bitbucket"),
+    pr: Optional[int] = typer.Option(None, "--pr", help="Pull/merge request number to comment on or fetch"),
+    scm_repo: Optional[str] = typer.Option(None, "--repo", help="owner/name for --comment / --pr fetch"),
+    fetch_pr: bool = typer.Option(False, "--fetch-pr", help="Fetch --pr refs into this clone before reviewing"),
+    github_output: Optional[Path] = typer.Option(None, "--github-output", help="Append gate fields for GitHub Actions"),
+    jobs: Optional[int] = typer.Option(
+        None,
+        "--jobs",
+        "-j",
+        help="Parallel extract workers when reindexing (default: CPU count). LOADPATH_INDEX_JOBS also works.",
+    ),
 ) -> None:
     """Review a git range as clustered load paths + confidence brief."""
-    payload = run_review(
-        repo, base=base, head=head, reindex=reindex, incremental=not full, three_dot=three_dot
-    )
+    import os
+
+    from loadpath.review.gate import FAIL_ON_CHOICES, gate_result, write_github_output
+    from loadpath.review.render import render_html, render_markdown
+
+    repo_path = repo
+    if fetch_pr and pr and provider and scm_repo:
+        from loadpath.providers.pr_fetch import prepare_pull_request
+
+        prepared = prepare_pull_request(provider, scm_repo, pr, repo_path=str(repo))
+        repo_path = Path(prepared["repo_path"])
+        base = prepared["base"]
+        head = prepared["head"]
+        console.print(f"Fetched {provider} #{pr} → {head} (base {base})")
+
+    with _index_progress() as on_progress:
+        payload = run_review(
+            repo_path,
+            base=base,
+            head=head,
+            reindex=reindex,
+            incremental=not full,
+            three_dot=three_dot,
+            dirty=dirty,
+            progress=on_progress if reindex else None,
+            workers=jobs,
+        )
     if format == "json":
         import json
 
@@ -101,13 +206,77 @@ def review(
     else:
         text = render_markdown(payload)
         console.print(Markdown(text))
-        if out is None:
-            return
+        if out is None and not comment and fail_on == "never" and github_output is None and not os.environ.get("GITHUB_OUTPUT"):
+            gate = gate_result(payload, fail_on)
+            raise typer.Exit(code=gate["exit_code"])
     if out:
         out.write_text(text, encoding="utf-8")
         console.print(f"Wrote {out}")
     elif format != "markdown":
         console.print(text)
+
+    if comment:
+        from loadpath.providers.scm import provider_for
+        from loadpath.settings import AppSettings
+
+        settings = AppSettings.load()
+        name = provider or "github"
+        number = pr
+        slug = scm_repo
+        if not number or not slug:
+            console.print("--comment needs --pr and --repo owner/name")
+            raise typer.Exit(code=1)
+        token = ""
+        username = ""
+        host = ""
+        if name == "github":
+            token = settings.github_token or os.environ.get("GITHUB_TOKEN") or os.environ.get("LOADPATH_GITHUB_TOKEN") or ""
+            host = settings.github_host
+        elif name == "gitlab":
+            token = settings.gitlab_token or os.environ.get("GITLAB_TOKEN") or os.environ.get("LOADPATH_GITLAB_TOKEN") or ""
+            host = settings.gitlab_host
+        else:
+            token = settings.bitbucket_token
+            username = settings.bitbucket_username
+        if not token:
+            console.print(f"No {name} token in settings or environment")
+            raise typer.Exit(code=1)
+        posted = provider_for(name, token, username=username, host=host).upsert_pull_request_comment(
+            slug, number, render_markdown(payload)
+        )
+        action = "Updated" if posted.get("updated") else "Posted"
+        console.print(f"{action} Loadpath comment on {slug}#{number}")
+
+    output_path = github_output or (Path(os.environ["GITHUB_OUTPUT"]) if os.environ.get("GITHUB_OUTPUT") else None)
+    gate = gate_result(payload, fail_on if fail_on in FAIL_ON_CHOICES else "never")
+    if output_path:
+        write_github_output(str(output_path), gate, payload)
+    if fail_on != "never" or gate["exit_code"]:
+        if not gate["passed"]:
+            console.print(gate["annotation"])
+        raise typer.Exit(code=gate["exit_code"])
+
+
+@app.command("whatif")
+def whatif_cmd(
+    repo: Path = typer.Argument(Path("."), exists=True, file_okay=False),
+    node: str = typer.Argument(..., help="Node id from the index (e.g. django.field:billing.Invoice.total)"),
+) -> None:
+    """Walk sinks from one indexed node — no git range required."""
+    from loadpath.review.whatif import simulate_node
+
+    try:
+        payload = simulate_node(repo, node)
+    except (FileNotFoundError, KeyError) as exc:
+        console.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    console.print(f"{payload['title']}")
+    console.print(f"Confidence: {payload['confidence']['level']}")
+    sinks = payload.get("sinks") or []
+    if sinks:
+        console.print("Sinks: " + ", ".join(s.get("name") or "" for s in sinks[:8]))
+    for sketch in (payload.get("suggested_tests") or [])[:3]:
+        console.print(f"Test: {sketch['title']}")
 
 
 @app.command()

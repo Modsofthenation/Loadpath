@@ -48,6 +48,8 @@ export type Review = {
   id: string;
   title: string;
   headline: string;
+  base?: string;
+  head?: string;
   change_kinds: string[];
   confidence: {
     level: "high" | "medium" | "low";
@@ -70,6 +72,15 @@ export type Review = {
   architecture_note: string;
   depth_note?: string;
   deepening?: DeepeningCandidate[];
+  contract_break?: { kind: string; reasons: string[]; fields: string[] };
+  auth?: {
+    note: string;
+    sinks: { id: string; name: string; permissions: string[] }[];
+    missing_permissions: { id: string; name: string }[];
+  };
+  suggested_tests?: { sink: string; type: string; kind: string; title: string; body: string }[];
+  trend?: { note: string; points: { id: string; created_at: string; level: string; sinks?: number }[] };
+  what_if?: boolean;
   evolution?: {
     hotspots: { path: string; commits: number; bus_factor: number; complexity?: number }[];
     change_coupling: { a: string; b: string; together: number; cross_context?: boolean }[];
@@ -96,11 +107,25 @@ export type Review = {
     dirty_count: number;
     dirty_overlaps_review: boolean;
     dirty_overlap: string[];
+    dirty_included?: boolean;
     merge_base?: string | null;
     three_dot?: boolean;
     base_sha?: string | null;
     head_sha?: string | null;
   };
+};
+
+export type IndexProgress = {
+  phase: string;
+  done?: number;
+  total?: number;
+  current?: string;
+  workers?: number;
+  skipped?: number;
+  elapsed_ms?: number;
+  errors?: number;
+  message?: string;
+  repo_path?: string;
 };
 
 export type ArchitectureReport = {
@@ -223,6 +248,8 @@ export const LAYER_ORDER: Record<string, number> = {
   "arch.context": 0,
   "django.app": 0,
   "django.route": 1,
+  "django.websocket_route": 1,
+  "fastapi.route": 1,
   "django.url_name": 2,
   "django.view": 3,
   "django.viewset_action": 3,
@@ -230,8 +257,11 @@ export const LAYER_ORDER: Record<string, number> = {
   "django.throttle": 3,
   "django.serializer": 4,
   "django.form": 4,
+  "graphql.type": 4,
+  "fastapi.model": 4,
   "django.serializer_field": 5,
   "django.service": 5,
+  "graphql.field": 5,
   "django.model": 6,
   "django.field": 7,
   "django.relation": 7,
@@ -242,17 +272,24 @@ export const LAYER_ORDER: Record<string, number> = {
   "django.migration_op": 8,
   "django.admin": 8,
   "django.management_command": 8,
+  "django.consumer": 8,
+  "django.cache_key": 8,
+  "django.feature_flag": 8,
+  "django.side_effect": 8,
   "openapi.path": 9,
+  "graphql.operation": 9,
   "react.api_client": 10,
+  "django.htmx": 10,
   "react.query_key": 11,
   "react.hook": 11,
   "react.feature": 11,
   "react.route": 12,
   "react.page": 12,
+  "django.template": 12,
   "react.component": 13,
+  "react.context": 13,
   "react.form_schema": 14,
   "react.test": 14,
-  "react.context": 13,
 };
 
 export function layerFor(type: string): number {

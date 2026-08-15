@@ -16,6 +16,14 @@ export const SINK_TYPES = new Set([
   "django.admin",
   "django.management_command",
   "openapi.path",
+  "django.consumer",
+  "django.websocket_route",
+  "django.template",
+  "django.cache_key",
+  "django.feature_flag",
+  "django.side_effect",
+  "graphql.operation",
+  "fastapi.route",
 ]);
 
 export const CONTRACT_TYPES = new Set([
@@ -25,6 +33,11 @@ export const CONTRACT_TYPES = new Set([
   "openapi.path",
   "react.form_schema",
   "django.route",
+  "graphql.type",
+  "graphql.field",
+  "graphql.operation",
+  "fastapi.model",
+  "fastapi.route",
 ]);
 
 const TYPE_PURPOSE: Record<string, string> = {
@@ -50,6 +63,18 @@ const TYPE_PURPOSE: Record<string, string> = {
   "django.admin": "Django admin class for a model.",
   "django.migration_op": "Schema migration operation (CreateModel, AlterField, …).",
   "django.management_command": "manage.py command — an operational sink.",
+  "django.consumer": "Django Channels WebSocket/HTTP consumer. A sink once a client connects.",
+  "django.websocket_route": "ASGI WebSocket URL. A sink: this is where a change becomes a live connection.",
+  "django.template": "Django template. HTML (and HTMX) the server renders.",
+  "django.htmx": "HTMX call from a template to a URL — another published seam.",
+  "django.cache_key": "Cache get/set key. Invalidation is part of the load path.",
+  "django.feature_flag": "Feature flag checked on this path. The change may be dark-launched.",
+  "django.side_effect": "transaction.on_commit (or similar) side effect that runs after the request commits.",
+  "graphql.type": "GraphQL object/input type — a published contract.",
+  "graphql.field": "One field on a GraphQL type.",
+  "graphql.operation": "GraphQL query, mutation, or subscription. A published contract and a sink.",
+  "fastapi.route": "FastAPI path operation sitting next to Django in this repo.",
+  "fastapi.model": "Pydantic response/request model — the FastAPI contract.",
   "openapi.path": "Generated OpenAPI operation. The typed HTTP contract between stacks.",
   "react.api_client": "Frontend fetch or generated client call to an API path.",
   "react.query_key": "React Query cache key. Invalidation and reads share this name.",

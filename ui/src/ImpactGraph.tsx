@@ -134,11 +134,13 @@ function GraphInspector({
   nodes,
   edges,
   onClose,
+  onWhatIf,
 }: {
   node: GraphNode;
   nodes: GraphNode[];
   edges: GraphEdge[];
   onClose: () => void;
+  onWhatIf?: (id: string) => void;
 }) {
   const info = inspectNode(node, nodes, edges);
   useEffect(() => {
@@ -201,6 +203,11 @@ function GraphInspector({
         extra={info.extraOutputs}
         empty="This node does not point at anything in this graph."
       />
+      {onWhatIf ? (
+        <button type="button" className="btn" data-testid="btn-whatif" onClick={() => onWhatIf(node.id)}>
+          What if this changes
+        </button>
+      ) : null}
     </aside>
   );
 }
@@ -247,7 +254,17 @@ function InspectorLinks({
   );
 }
 
-export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
+export function ImpactGraph({
+  nodes,
+  edges,
+  onWhatIf,
+  focusPath,
+}: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  onWhatIf?: (id: string) => void;
+  focusPath?: string;
+}) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [projection, setProjection] = useState<GraphProjection | null>(null);
   const [detail, setDetail] = useState<GraphDetail | null>(null);
@@ -286,6 +303,12 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
   useEffect(() => {
     if (selectedId && !byId.has(selectedId)) setSelectedId(null);
   }, [byId, selectedId]);
+
+  useEffect(() => {
+    if (!focusPath) return;
+    const match = nodes.find((n) => n.file_path === focusPath);
+    if (match) setSelectedId(match.id);
+  }, [focusPath, nodes]);
 
   const onNodeClick: NodeMouseHandler = (_evt, node) => {
     setSelectedId(node.id);
@@ -412,7 +435,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
               />
             </Suspense>
             {selected ? (
-              <GraphInspector node={selected} nodes={nodes} edges={edges} onClose={clearSelection} />
+              <GraphInspector node={selected} nodes={nodes} edges={edges} onClose={clearSelection} onWhatIf={onWhatIf} />
             ) : null}
           </div>
         ) : (
@@ -450,7 +473,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
               <Controls />
             </ReactFlow>
             {selected ? (
-              <GraphInspector node={selected} nodes={nodes} edges={edges} onClose={clearSelection} />
+              <GraphInspector node={selected} nodes={nodes} edges={edges} onClose={clearSelection} onWhatIf={onWhatIf} />
             ) : null}
           </ReactFlowProvider>
         )}

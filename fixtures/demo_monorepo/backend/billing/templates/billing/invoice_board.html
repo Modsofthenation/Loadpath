@@ -1,0 +1,10 @@
+{% extends "billing/base.html" %}
+{% block content %}
+<section>
+  <h1>Invoice board</h1>
+  <div hx-get="/api/invoices/totals/" hx-trigger="load" hx-swap="innerHTML">
+    Loading totals…
+  </div>
+  <a href="{% url 'invoice-board' %}">Refresh</a>
+</section>
+{% endblock %}

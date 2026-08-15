@@ -12,8 +12,12 @@ from loadpath.graph.store import GraphStore, linked_edges
 from loadpath.index import default_db_path, index_drift, index_repo
 from loadpath.review.cluster import cluster_diff
 from loadpath.review.confidence import score_confidence
+from loadpath.review.auth import auth_path
+from loadpath.review.contract import classify_contract_break
 from loadpath.review.diff import DiffSet, git_diff
 from loadpath.review.evolution import analyze_evolution
+from loadpath.review.suggested_tests import suggested_tests as sketches_for
+from loadpath.review.trend import confidence_trend
 from loadpath.stitch.openapi import published_route
 from loadpath.workspace import git_dirty_paths, resolve_review_range
 from loadpath.types import (
@@ -46,6 +50,18 @@ READ_ORDER = [
     NodeType.COMPONENT,
     NodeType.TEST,
     NodeType.REACT_TEST,
+    NodeType.GRAPHQL_TYPE,
+    NodeType.GRAPHQL_FIELD,
+    NodeType.GRAPHQL_OPERATION,
+    NodeType.FASTAPI_ROUTE,
+    NodeType.PYDANTIC_MODEL,
+    NodeType.CONSUMER,
+    NodeType.WEBSOCKET_ROUTE,
+    NodeType.TEMPLATE,
+    NodeType.HTMX_CALL,
+    NodeType.CACHE_KEY,
+    NodeType.FEATURE_FLAG,
+    NodeType.SIDE_EFFECT,
 ]
 
 
@@ -60,6 +76,11 @@ def classify_change(impact_nodes: list[dict], findings: list, seeds: list[dict] 
         or NodeType.OPENAPI_PATH.value in seed_types
         or NodeType.FORM_SCHEMA.value in seed_types
         or NodeType.ROUTE.value in seed_types
+        or NodeType.GRAPHQL_TYPE.value in seed_types
+        or NodeType.GRAPHQL_FIELD.value in seed_types
+        or NodeType.GRAPHQL_OPERATION.value in seed_types
+        or NodeType.FASTAPI_ROUTE.value in seed_types
+        or NodeType.PYDANTIC_MODEL.value in seed_types
     ):
         kinds.add(ChangeKind.PUBLIC_CONTRACT.value)
     if (
@@ -348,6 +369,9 @@ def run_review(
     *,
     three_dot: bool = True,
     draft_config: bool = False,
+    dirty: bool = False,
+    progress: object | None = None,
+    workers: int | None = None,
 ) -> dict:
     repo_root = repo_root.resolve()
     config = config or load_config(repo_root)
@@ -359,6 +383,8 @@ def run_review(
             config=config,
             incremental=incremental,
             draft_config=draft_config,
+            progress=progress,
+            workers=workers,
         )
     else:
         if not graph_db.is_file():
@@ -368,8 +394,8 @@ def run_review(
         store = GraphStore(graph_db)
 
     range_info = resolve_review_range(repo_root, base, head, three_dot=three_dot)
-    diff = diff or git_diff(repo_root, base, head, three_dot=three_dot)
-    dirty = git_dirty_paths(repo_root)
+    diff = diff or git_diff(repo_root, base, head, three_dot=three_dot, dirty=dirty)
+    dirty_paths = git_dirty_paths(repo_root)
     clusters, impact_nodes, impact_edges = cluster_diff(store, diff)
     impact_edges = linked_edges(impact_nodes, impact_edges)
     seed_ids = {n["id"] for n in store.nodes_in_files(diff.paths)}
@@ -400,10 +426,17 @@ def run_review(
         detail = store.get_meta("django_boot_detail") or "django.setup() failed"
         confidence["reasons"] = [detail, *reasons][:3]
     kinds = classify_change(impact_nodes, scoped, seeds=store.nodes_in_files(diff.paths))
+    contract = classify_contract_break(impact_nodes, diff)
+    auth = auth_path(store, impact_nodes, impact_edges)
+    if auth.get("missing_permissions") and ChangeKind.AUTH.value not in kinds:
+        kinds.append(ChangeKind.AUTH.value)
+        kinds.sort()
     read, skip = read_order_files(diff, impact_nodes)
     reviewers = suggested_reviewers(config, impact_nodes)
     knowledge = _knowledge_owners(evolution)
     low_risk = is_low_risk(kinds, confidence, scoped)
+    if contract["kind"] == "breaking":
+        low_risk = False
     labels = ["loadpath:" + confidence["level"]]
     if low_risk:
         labels.append("loadpath:low-risk")
@@ -411,6 +444,10 @@ def run_review(
         labels.append("loadpath:cross-context")
     if ChangeKind.PUBLIC_CONTRACT.value in kinds:
         labels.append("loadpath:contract")
+    if contract["kind"] and contract["kind"] != "none":
+        labels.append("loadpath:contract-" + contract["kind"])
+    if ChangeKind.AUTH.value in kinds:
+        labels.append("loadpath:auth")
 
     title = _title(clusters, kinds)
     sinks = _sink_summaries(impact_nodes, store)
@@ -418,8 +455,9 @@ def run_review(
     arch_note = _arch_note(scoped, kinds, impact_nodes)
     depth_note = _depth_note(scoped)
     deepening = deepening_candidates(scoped)
+    sketches = sketches_for(confidence.get("untested_sinks") or [], impact_nodes)
     drift = index_drift(store, repo_root, config)
-    dirty_set = set(dirty)
+    dirty_set = set(dirty_paths)
     overlap = [p for p in diff.paths if p in dirty_set]
 
     payload = {
@@ -446,6 +484,9 @@ def run_review(
         "depth_note": depth_note,
         "deepening": deepening,
         "evolution": evolution,
+        "contract_break": contract,
+        "auth": auth,
+        "suggested_tests": sketches,
         "nodes": impact_nodes,
         "edges": impact_edges,
         "counts": store.counts(),
@@ -463,20 +504,32 @@ def run_review(
             "django_boot_detail": store.get_meta("django_boot_detail") or "",
         },
         "workspace": {
-            "dirty": dirty[:40],
-            "dirty_count": len(dirty),
+            "dirty": dirty_paths[:40],
+            "dirty_count": len(dirty_paths),
             "dirty_overlaps_review": bool(overlap),
             "dirty_overlap": overlap[:20],
+            "dirty_included": dirty,
             "merge_base": range_info.get("merge_base"),
             "three_dot": three_dot,
             "base_sha": range_info.get("base_sha"),
             "head_sha": range_info.get("head_sha"),
         },
         "headline": _headline(
-            confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution, depth_note
+            confidence,
+            title,
+            sinks,
+            tests_note,
+            arch_note,
+            residuals,
+            reviewers,
+            evolution,
+            depth_note,
+            contract=contract,
+            auth=auth,
         ),
     }
     store.save_review(payload["id"], payload["created_at"], str(repo_root), diff.base, diff.head, payload)
+    payload["trend"] = confidence_trend(store, base=diff.base, head=diff.head)
     store.close()
     return payload
 
@@ -500,6 +553,14 @@ def _sink_summaries(nodes: list[dict], store: GraphStore) -> list[dict]:
         NodeType.PERMISSION.value,
         NodeType.MIGRATION_OP.value,
         NodeType.RECEIVER.value,
+        NodeType.CONSUMER.value,
+        NodeType.WEBSOCKET_ROUTE.value,
+        NodeType.TEMPLATE.value,
+        NodeType.GRAPHQL_OPERATION.value,
+        NodeType.FASTAPI_ROUTE.value,
+        NodeType.CACHE_KEY.value,
+        NodeType.FEATURE_FLAG.value,
+        NodeType.SIDE_EFFECT.value,
     }
     out = []
     for n in nodes:
@@ -549,10 +610,22 @@ def _depth_note(findings: list) -> str:
 
 
 def _headline(
-    confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution=None, depth_note=""
+    confidence,
+    title,
+    sinks,
+    tests_note,
+    arch_note,
+    residuals,
+    reviewers,
+    evolution=None,
+    depth_note="",
+    contract=None,
+    auth=None,
 ) -> str:
     sink_bits = []
     routes = [s["name"] for s in sinks if s["type"] == NodeType.ROUTE.value]
+    fastapi_routes = [s["name"] for s in sinks if s["type"] == NodeType.FASTAPI_ROUTE.value]
+    gql = [s["name"] for s in sinks if s["type"] == NodeType.GRAPHQL_OPERATION.value]
     celery_tasks = [s["name"] for s in sinks if s["type"] == NodeType.TASK.value and s.get("broker") == "celery"]
     dramatiq_tasks = [s["name"] for s in sinks if s["type"] == NodeType.TASK.value and s.get("broker") == "dramatiq"]
     other_tasks = [
@@ -561,8 +634,14 @@ def _headline(
         if s["type"] == NodeType.TASK.value and s.get("broker") not in {"celery", "dramatiq"}
     ]
     pages = [s["name"] for s in sinks if s["type"] in {NodeType.PAGE.value, NodeType.FORM_SCHEMA.value}]
+    templates = [s["name"] for s in sinks if s["type"] == NodeType.TEMPLATE.value]
+    sockets = [s["name"] for s in sinks if s["type"] in {NodeType.CONSUMER.value, NodeType.WEBSOCKET_ROUTE.value}]
     if routes:
         sink_bits.append(", ".join(routes[:4]))
+    if fastapi_routes:
+        sink_bits.append("FastAPI " + ", ".join(fastapi_routes[:3]))
+    if gql:
+        sink_bits.append("GraphQL " + ", ".join(gql[:3]))
     if celery_tasks:
         sink_bits.append("Celery " + ", ".join(celery_tasks[:3]))
     if dramatiq_tasks:
@@ -571,13 +650,21 @@ def _headline(
         sink_bits.append("async " + ", ".join(other_tasks[:3]))
     if pages:
         sink_bits.append("React " + ", ".join(pages[:4]))
+    if templates:
+        sink_bits.append("templates " + ", ".join(templates[:3]))
+    if sockets:
+        sink_bits.append("WS " + ", ".join(sockets[:3]))
     residual = residuals[0] if residuals else "none"
     owners = ", ".join(reviewers) if reviewers else "context owners"
     pressure = (evolution or {}).get("notes") or []
     churn = pressure[0] if pressure else "none"
+    contract_bit = (contract or {}).get("kind") or "none"
+    auth_bit = (auth or {}).get("note") or "n/a"
     return (
         f"Loadpath: {confidence['level'].upper()} — {title}\n"
         f"Sinks: {'; '.join(sink_bits) or 'none typed'}\n"
+        f"Contract: {contract_bit}\n"
+        f"Auth: {auth_bit}\n"
         f"Tests: {tests_note}\n"
         f"Architecture: {arch_note}\n"
         f"Depth: {depth_note or 'published seams hold'}\n"

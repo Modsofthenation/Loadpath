@@ -20,12 +20,22 @@ _T = TypeVar("_T")
 
 def _with_scm(provider: str, fn: Callable[[Any], _T]) -> _T | dict[str, str]:
     settings = AppSettings.load()
-    token = settings.github_token if provider == "github" else settings.bitbucket_token
-    username = settings.bitbucket_username
+    token = ""
+    username = ""
+    host = ""
+    if provider == "github":
+        token = settings.github_token
+        host = settings.github_host
+    elif provider == "gitlab":
+        token = settings.gitlab_token
+        host = settings.gitlab_host
+    else:
+        token = settings.bitbucket_token
+        username = settings.bitbucket_username
     if not token:
         return {"error": f"No {provider} token configured in Loadpath settings"}
     try:
-        return fn(provider_for(provider, token, username=username))
+        return fn(provider_for(provider, token, username=username, host=host))
     except httpx.HTTPStatusError as exc:
         if (
             provider == "bitbucket"
@@ -120,6 +130,7 @@ def review_range(
     reindex: bool = True,
     incremental: bool = True,
     three_dot: bool = True,
+    dirty: bool = False,
 ) -> dict[str, Any]:
     """Review a git range as a load path: sinks, confidence, reviewers. Not hunk comments."""
     root = _repo(repo_path)
@@ -133,6 +144,7 @@ def review_range(
             reindex=reindex,
             incremental=incremental,
             three_dot=three_dot,
+            dirty=dirty,
         )
     except FileNotFoundError as exc:
         return {"error": str(exc)}
@@ -156,7 +168,7 @@ def list_pull_requests(
     repo: str,
     state: str = "open",
 ) -> dict[str, Any]:
-    """List pull requests from GitHub or Bitbucket using tokens in ~/.loadpath/settings.json."""
+    """List pull requests from GitHub, GitLab, or Bitbucket using tokens in ~/.loadpath/settings.json."""
     result = _with_scm(provider, lambda scm: scm.list_pull_requests(repo, state=state))
     if isinstance(result, dict) and result.get("error"):
         return result
@@ -164,7 +176,7 @@ def list_pull_requests(
 
 
 def list_remote_repositories(provider: str) -> dict[str, Any]:
-    """List GitHub or Bitbucket repositories the saved token can access."""
+    """List GitHub, GitLab, or Bitbucket repositories the saved token can access."""
     settings = AppSettings.load()
     result = _with_scm(provider, lambda scm: (scm.list_repositories(), scm.current_user()))
     if isinstance(result, dict) and result.get("error"):
@@ -188,3 +200,47 @@ def post_review_comment(
         lambda scm: scm.upsert_pull_request_comment(repo, number, markdown),
     )
     return result
+
+
+def what_if(repo_path: str, node_id: str) -> dict[str, Any]:
+    """Walk sinks from one indexed node without a git range."""
+    root = _repo(repo_path)
+    if isinstance(root, dict):
+        return root
+    from loadpath.review.whatif import simulate_node
+
+    try:
+        payload = simulate_node(root, node_id)
+    except (FileNotFoundError, KeyError) as exc:
+        return {"error": str(exc)}
+    payload.pop("nodes", None)
+    payload.pop("edges", None)
+    return payload
+
+
+def review_pull_request(
+    provider: str,
+    repo: str,
+    number: int,
+    repo_path: str | None = None,
+) -> dict[str, Any]:
+    """Fetch a PR/MR into a local clone and review the three-dot range."""
+    from loadpath.providers.pr_fetch import prepare_pull_request
+
+    try:
+        prepared = prepare_pull_request(provider, repo, number, repo_path=repo_path)
+        review = run_review(
+            Path(prepared["repo_path"]),
+            base=prepared["base"],
+            head=prepared["head"],
+            reindex=True,
+            incremental=True,
+            three_dot=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+    review["markdown"] = render_markdown(review)
+    register_workspace(Path(prepared["repo_path"]))
+    compact = compact_review(review)
+    compact["pull_request"] = prepared
+    return compact

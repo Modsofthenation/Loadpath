@@ -5,6 +5,7 @@ import {
   LAYER_LABELS,
   defaultDetail,
   defaultProjection,
+  familyFor,
   layoutNodes3d,
   neighborIds,
   visibleGraph,
@@ -87,6 +88,12 @@ describe("defaults", () => {
     expect(defaultProjection(LARGE_GRAPH)).toBe("3d");
     expect(defaultDetail(LARGE_GRAPH - 1)).toBe("full");
     expect(defaultDetail(LARGE_GRAPH)).toBe("overview");
+  });
+
+  it("places GraphQL and FastAPI with the stitch family", () => {
+    expect(familyFor("graphql.operation")).toBe("stitch");
+    expect(familyFor("fastapi.route")).toBe("stitch");
+    expect(familyFor("django.template")).toBe("django");
   });
 
   it("names every architecture layer used in 2d layout", () => {

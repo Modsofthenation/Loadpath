@@ -65,16 +65,24 @@ def _register_tools(mcp: MCPServer) -> None:
     )(tools.detect_repo)
     mcp.tool(
         name="list_pull_requests",
-        description="List GitHub or Bitbucket pull requests using tokens stored in Loadpath settings.",
+        description="List GitHub, GitLab, or Bitbucket pull requests using tokens stored in Loadpath settings.",
     )(tools.list_pull_requests)
     mcp.tool(
         name="list_remote_repositories",
-        description="List GitHub or Bitbucket repositories the signed-in account can access.",
+        description="List GitHub, GitLab, or Bitbucket repositories the signed-in account can access.",
     )(tools.list_remote_repositories)
     mcp.tool(
         name="post_review_comment",
         description="Upsert the single Loadpath markdown brief on a pull request (updated in place).",
     )(tools.post_review_comment)
+    mcp.tool(
+        name="what_if",
+        description="Simulate a change from one indexed node and list sinks, auth, and suggested tests. No git range.",
+    )(tools.what_if)
+    mcp.tool(
+        name="review_pull_request",
+        description="Fetch a GitHub/GitLab/Bitbucket PR into a local clone and review the three-dot range.",
+    )(tools.review_pull_request)
 
 
 def create_mcp_server(

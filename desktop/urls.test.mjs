@@ -4,10 +4,13 @@ import { describe, it } from "node:test";
 import { isAllowedExternalUrl, isAppOrigin } from "./urls.mjs";
 
 describe("isAllowedExternalUrl", () => {
-  it("allows GitHub and Bitbucket https PR links", () => {
+  it("allows GitHub, GitLab, and Bitbucket https PR links", () => {
     assert.equal(isAllowedExternalUrl("https://github.com/acme/demo/pull/12"), true);
     assert.equal(isAllowedExternalUrl("https://bitbucket.org/acme/demo/pull-requests/3"), true);
+    assert.equal(isAllowedExternalUrl("https://gitlab.com/acme/demo/-/merge_requests/4"), true);
     assert.equal(isAllowedExternalUrl("https://id.atlassian.com/login"), true);
+    assert.equal(isAllowedExternalUrl("https://github.mycompany.com/acme/demo/pull/1"), true);
+    assert.equal(isAllowedExternalUrl("https://gitlab.internal.example/acme/demo/-/merge_requests/2"), true);
   });
 
   it("rejects credentials, other hosts, and non-https schemes", () => {

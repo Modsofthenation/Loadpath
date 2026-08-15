@@ -1,0 +1,62 @@
+name: "Loadpath Review"
+description: "Review a pull request as a load path and fail the check on blockers or low confidence."
+author: Loadpath
+branding:
+  icon: git-pull-request
+  color: purple
+inputs:
+  fail-on:
+    description: "Gate: never, blocker, low, or medium. blocker fails on architecture blockers; low also fails on low confidence; medium fails unless confidence is high."
+    required: false
+    default: "blocker"
+  comment:
+    description: "Post or update the single Loadpath brief on the pull request."
+    required: false
+    default: "true"
+  python-version:
+    description: "Python version used to install Loadpath."
+    required: false
+    default: "3.12"
+  extra-args:
+    description: "Extra arguments passed to `loadpath review`."
+    required: false
+    default: ""
+outputs:
+  level:
+    description: "Confidence level (high, medium, low)."
+    value: ${{ steps.review.outputs.level }}
+  passed:
+    description: "Whether the gate passed."
+    value: ${{ steps.review.outputs.passed }}
+  title:
+    description: "Review title."
+    value: ${{ steps.review.outputs.title }}
+  contract_break:
+    description: "none, additive, breaking, or drift."
+    value: ${{ steps.review.outputs.contract_break }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install Loadpath
+      shell: bash
+      run: python -m pip install --quiet "${{ github.action_path }}"
+    - name: Index
+      shell: bash
+      run: loadpath index .
+    - name: Review
+      id: review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        ARGS=(review . --base "origin/${GITHUB_BASE_REF:-main}" --head HEAD --fail-on "${{ inputs.fail-on }}")
+        if [ "${{ inputs.comment }}" = "true" ] && [ -n "${{ github.event.pull_request.number }}" ]; then
+          ARGS+=(--comment --provider github --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}")
+        fi
+        # shellcheck disable=SC2206
+        EXTRA=(${{ inputs.extra-args }})
+        loadpath "${ARGS[@]}" "${EXTRA[@]}"

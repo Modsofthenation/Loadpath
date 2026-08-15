@@ -42,6 +42,10 @@ def compact_review(review: dict[str, Any]) -> dict[str, Any]:
         "depth_note": review.get("depth_note"),
         "residuals": (review.get("residuals") or [])[:12],
         "low_risk": review.get("low_risk"),
+        "contract_break": review.get("contract_break"),
+        "auth": review.get("auth"),
+        "suggested_tests": (review.get("suggested_tests") or [])[:6],
+        "trend": review.get("trend"),
         "index": review.get("index"),
         "workspace": review.get("workspace"),
     }

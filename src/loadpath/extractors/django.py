@@ -58,6 +58,10 @@ APP_PACKAGE_DIRS = {
     "endpoints",
     "permissions",
     "throttles",
+    "consumers",
+    "schema",
+    "routing",
+    "gateway",
 }
 ADMIN_BASES = {"ModelAdmin", "StackedInline", "TabularInline"}
 CELERY_DECORATORS = {"shared_task", "task", "periodic_task"}
@@ -70,6 +74,26 @@ DRAMATIQ_ENQUEUE = {"send", "send_with_options"}
 CELERY_TASK_BASES = {"Task"}
 DRAMATIQ_TASK_BASES = {"GenericActor"}
 NINJA_HTTP = {"get", "post", "put", "patch", "delete", "api_operation"}
+FASTAPI_HTTP = {"get", "post", "put", "patch", "delete", "options", "head", "trace", "api_route", "websocket"}
+CONSUMER_BASES = {
+    "WebsocketConsumer",
+    "AsyncWebsocketConsumer",
+    "JsonWebsocketConsumer",
+    "AsyncJsonWebsocketConsumer",
+    "AsyncHttpConsumer",
+}
+GRAPHENE_BASES = {"ObjectType", "Mutation", "InputObjectType", "Interface", "ScalarType", "DjangoObjectType"}
+STRAWBERRY_TYPE_DECS = {"type", "input", "interface", "enum"}
+CACHE_METHODS = {"get", "set", "delete", "add", "get_or_set", "incr", "decr", "touch"}
+FLAG_FUNCS = {
+    "flag_is_active",
+    "switch_is_active",
+    "sample_is_active",
+    "flag_enabled",
+    "is_flag_enabled",
+    "feature_enabled",
+    "is_feature_enabled",
+}
 REL_FIELD_TYPES = {
     "ForeignKey",
     "OneToOneField",
@@ -308,6 +332,12 @@ class DjangoExtractor(ast.NodeVisitor):
             )
         elif self._task_class(node):
             pass
+        elif _has_base(node, CONSUMER_BASES) or node.name.endswith("Consumer"):
+            self._consumer(node)
+        elif self._graphql_class(node):
+            self._graphql_type(node)
+        elif _has_base(node, {"BaseModel"}) and not _has_base(node, MODEL_BASES):
+            self._pydantic_model(node)
         elif _has_base(node, ADMIN_BASES) or node.name.endswith("Admin"):
             self._admin(node)
         elif any(x.endswith("Config") for x in _bases(node)) or node.name.endswith("Config"):
@@ -325,7 +355,10 @@ class DjangoExtractor(ast.NodeVisitor):
         self._maybe_test(node)
         self._maybe_service_fn(node)
         self._maybe_fbv(node)
-        self._maybe_ninja(node)
+        ninja = self._maybe_ninja(node)
+        if not ninja:
+            self._maybe_fastapi(node)
+        self._maybe_graphql_operation(node)
         self.generic_visit(node)
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
@@ -355,10 +388,11 @@ class DjangoExtractor(ast.NodeVisitor):
         elif short in DRAMATIQ_ENQUEUE and self._looks_like_dramatiq_send(fname):
             self._enqueue(node, fname, broker="dramatiq")
         elif short == "on_commit":
-            self.graph.residuals.append(
-                f"transaction.on_commit() at {self.rel_path}:{node.lineno} — async work may be hidden in a lambda"
-            )
-            self._enqueue_from_on_commit(node)
+            self._side_effect_on_commit(node)
+        elif short in CACHE_METHODS and self._looks_like_cache(fname):
+            self._cache_call(node, fname, short)
+        elif short in FLAG_FUNCS or self._looks_like_flag(fname):
+            self._flag_call(node, fname)
         elif short in {"raw", "execute"} or (short == "extra" and _kw(node, "where")):
             self.graph.residuals.append(f"Raw SQL ({fname}) in {self.rel_path}:{node.lineno}")
         elif short in {"select_related", "prefetch_related"}:
@@ -518,6 +552,8 @@ class DjangoExtractor(ast.NodeVisitor):
                     extra["authentication"] = _list_names(stmt.value)
                 elif key == "pagination_class":
                     extra["pagination"] = _name(stmt.value)
+                elif key == "template_name":
+                    extra["template"] = _const_str(stmt.value)
             if isinstance(stmt, ast.FunctionDef) and stmt.name == "get_queryset":
                 extra["get_queryset"] = True
                 dumped = ast.dump(stmt)
@@ -576,6 +612,10 @@ class DjangoExtractor(ast.NodeVisitor):
             self.add_edge(view.id, tid, EdgeType.HAS_PERMISSION)
         if extra.get("pagination"):
             extra["pagination_sink"] = True
+        if extra.get("template"):
+            tmpl = extra["template"]
+            tn = self.add_node(NodeType.TEMPLATE, Path(tmpl).name, tmpl, node.lineno, {"app": self.app})
+            self.add_edge(view.id, tn.id, EdgeType.SERVES_TEMPLATE)
         if queryset_model:
             self.add_edge(
                 view.id,
@@ -838,8 +878,10 @@ class DjangoExtractor(ast.NodeVisitor):
         extra = {"app": self.app, "fbv": True, "decorators": decs}
         view = self.add_node(NodeType.VIEW, node.name, qname, node.lineno, extra)
         self._note_cross_app_model_imports(view.id)
+        self._link_model_queries(view.id, node)
 
-    def _maybe_ninja(self, node: ast.FunctionDef) -> None:
+    def _maybe_ninja(self, node: ast.FunctionDef) -> bool:
+        hit = False
         for dec in node.decorator_list:
             if not isinstance(dec, ast.Call):
                 continue
@@ -849,6 +891,7 @@ class DjangoExtractor(ast.NodeVisitor):
                 continue
             if not any(tok in fname.lower() for tok in ("api", "router", "ninja")):
                 continue
+            hit = True
             route = _const_str(dec.args[0]) if dec.args else None
             qname = f"{self.app}.{node.name}"
             view = self.add_node(
@@ -867,6 +910,276 @@ class DjangoExtractor(ast.NodeVisitor):
                     {"app": self.app, "route": route, "ninja": True, "method": short.upper()},
                 )
                 self.add_edge(rn.id, view.id, EdgeType.PUBLISHES_ROUTE)
+        return hit
+
+    def _owner_id(self) -> tuple[NodeType, str]:
+        owner = self.class_stack[-1] if self.class_stack else Path(self.rel_path).stem
+        owner_type = NodeType.VIEW
+        if "management/commands" in self.rel_path:
+            owner_type = NodeType.MANAGEMENT_COMMAND
+            owner = Path(self.rel_path).stem
+        elif Path(self.rel_path).name in {"tasks.py", "actors.py"}:
+            owner_type = NodeType.TASK
+        elif Path(self.rel_path).name in {"services.py", "use_cases.py"}:
+            owner_type = NodeType.SERVICE
+        return owner_type, f"{self.app}.{owner}"
+
+    def _maybe_fastapi(self, node: ast.FunctionDef) -> None:
+        blob = " ".join(self.imports.values()) + " " + " ".join(self.from_imports.values())
+        if "fastapi" not in blob.lower():
+            return
+        for dec in node.decorator_list:
+            if not isinstance(dec, ast.Call):
+                continue
+            fname = _name(dec.func) or ""
+            short = fname.split(".")[-1]
+            if short not in FASTAPI_HTTP:
+                continue
+            route = _const_str(dec.args[0]) if dec.args else None
+            if not route:
+                continue
+            qname = f"{self.app}.{node.name}"
+            extra = {
+                "app": self.app,
+                "fastapi": True,
+                "method": "WS" if short == "websocket" else short.upper(),
+                "route": route,
+            }
+            view = self.add_node(NodeType.VIEW, node.name, qname, node.lineno, extra)
+            rn = self.add_node(
+                NodeType.FASTAPI_ROUTE,
+                f"{extra['method']} {route}",
+                f"{self.app}:{extra['method']} {route}",
+                node.lineno,
+                extra,
+            )
+            self.add_edge(rn.id, view.id, EdgeType.PUBLISHES_ROUTE)
+            self._link_model_queries(view.id, node)
+            response_model = _name(_kw(dec, "response_model"))
+            if response_model:
+                self.add_edge(
+                    rn.id,
+                    node_id(NodeType.PYDANTIC_MODEL, f"{self.app}.{response_model.split('.')[-1]}"),
+                    EdgeType.USES_SERIALIZER,
+                    confidence=0.85,
+                )
+
+    def _graphql_class(self, node: ast.ClassDef) -> bool:
+        decs = _decorator_names(node)
+        if any("strawberry" in d.lower() and d.split(".")[-1] in STRAWBERRY_TYPE_DECS | {"type"} for d in decs):
+            return True
+        bases = {b.split(".")[-1] for b in _bases(node)}
+        if not (bases & GRAPHENE_BASES):
+            return False
+        blob = " ".join(self.imports.values()) + " " + " ".join(self.from_imports.values())
+        return any(tok in blob.lower() for tok in ("graphene", "strawberry", "graphql"))
+
+    def _graphql_type(self, node: ast.ClassDef) -> None:
+        qname = f"{self.app}.{node.name}"
+        kind = "type"
+        for d in _decorator_names(node):
+            if "strawberry" in d.lower():
+                kind = d.split(".")[-1]
+                break
+        bases = {b.split(".")[-1] for b in _bases(node)}
+        if "Mutation" in bases:
+            kind = "mutation"
+        extra = {"app": self.app, "kind": kind, "graphql": True}
+        gql = self.add_node(NodeType.GRAPHQL_TYPE, node.name, qname, node.lineno, extra)
+        root = node.name in {"Query", "Mutation", "Subscription"} or kind == "mutation"
+        for stmt in node.body:
+            fname = None
+            if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                fname = stmt.target.id
+            elif isinstance(stmt, ast.Assign) and stmt.targets and isinstance(stmt.targets[0], ast.Name):
+                cand = stmt.targets[0].id
+                if not cand.startswith("_") and cand not in {"Meta"}:
+                    fname = cand
+            elif isinstance(stmt, ast.FunctionDef) and stmt.name == "mutate":
+                op = self.add_node(
+                    NodeType.GRAPHQL_OPERATION,
+                    node.name,
+                    f"graphql.{node.name}",
+                    stmt.lineno,
+                    {"app": self.app, "kind": "mutation"},
+                )
+                self.add_edge(gql.id, op.id, EdgeType.PUBLISHES_GRAPHQL)
+                self._link_model_queries(op.id, stmt)
+            if not fname:
+                continue
+            field = self.add_node(
+                NodeType.GRAPHQL_FIELD,
+                fname,
+                f"{qname}.{fname}",
+                stmt.lineno,
+                {"app": self.app},
+            )
+            self.add_edge(gql.id, field.id, EdgeType.HAS_FIELD)
+            if root and not any(
+                n.type is NodeType.GRAPHQL_OPERATION and n.name == fname for n in self.graph.nodes
+            ):
+                op_kind = (
+                    "query"
+                    if node.name == "Query"
+                    else ("subscription" if node.name == "Subscription" else "mutation")
+                )
+                op = self.add_node(
+                    NodeType.GRAPHQL_OPERATION,
+                    fname,
+                    f"graphql.{fname}",
+                    stmt.lineno,
+                    {"app": self.app, "kind": op_kind},
+                )
+                self.add_edge(gql.id, op.id, EdgeType.PUBLISHES_GRAPHQL)
+        if kind == "mutation" or node.name in {"Query", "Mutation", "Subscription"}:
+            op_kind = "query" if node.name == "Query" else ("subscription" if node.name == "Subscription" else "mutation")
+            if not any(n.type is NodeType.GRAPHQL_OPERATION and n.name == node.name for n in self.graph.nodes):
+                op = self.add_node(
+                    NodeType.GRAPHQL_OPERATION,
+                    node.name,
+                    f"graphql.{node.name}",
+                    node.lineno,
+                    {"app": self.app, "kind": op_kind},
+                )
+                self.add_edge(gql.id, op.id, EdgeType.PUBLISHES_GRAPHQL)
+
+    def _maybe_graphql_operation(self, node: ast.FunctionDef) -> None:
+        for dec in node.decorator_list:
+            dname = _name(dec.func if isinstance(dec, ast.Call) else dec) or ""
+            if "strawberry" not in dname.lower():
+                continue
+            short = dname.split(".")[-1]
+            if short not in {"mutation", "field", "subscription"}:
+                continue
+            kind = "query" if short == "field" else short
+            op = self.add_node(
+                NodeType.GRAPHQL_OPERATION,
+                node.name,
+                f"graphql.{node.name}",
+                node.lineno,
+                {"app": self.app, "kind": kind, "strawberry": True},
+            )
+            self._link_model_queries(op.id, node)
+            if self.class_stack:
+                self.add_edge(
+                    node_id(NodeType.GRAPHQL_TYPE, f"{self.app}.{self.class_stack[-1]}"),
+                    op.id,
+                    EdgeType.PUBLISHES_GRAPHQL,
+                )
+
+    def _pydantic_model(self, node: ast.ClassDef) -> None:
+        qname = f"{self.app}.{node.name}"
+        extra: dict = {"app": self.app, "pydantic": True}
+        model = self.add_node(NodeType.PYDANTIC_MODEL, node.name, qname, node.lineno, extra)
+        for stmt in node.body:
+            if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                fname = stmt.target.id
+                field = self.add_node(
+                    NodeType.SERIALIZER_FIELD,
+                    fname,
+                    f"{qname}.{fname}",
+                    stmt.lineno,
+                    {"app": self.app, "pydantic": True},
+                )
+                self.add_edge(model.id, field.id, EdgeType.HAS_FIELD)
+
+    def _consumer(self, node: ast.ClassDef) -> None:
+        qname = f"{self.app}.{node.name}"
+        extra = {"app": self.app, "bases": _bases(node), "websocket": True}
+        consumer = self.add_node(NodeType.CONSUMER, node.name, qname, node.lineno, extra)
+        self._link_model_queries(consumer.id, node)
+
+    def _link_model_queries(self, owner_id: str, node: ast.AST) -> None:
+        seen: set[str] = set()
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Attribute) or child.attr != "objects":
+                continue
+            model = _name(child.value)
+            if not model:
+                continue
+            short = model.split(".")[-1]
+            if not short[:1].isupper():
+                continue
+            app = self.app
+            head = model.split(".")[0]
+            target = self.from_imports.get(head) or self.imports.get(head) or ""
+            if "models" in target.split("."):
+                parts = target.split(".")
+                if "models" in parts:
+                    idx = parts.index("models")
+                    if idx > 0 and parts[idx - 1] not in {"django", "db"}:
+                        app = parts[idx - 1]
+            key = f"{app}.{short}"
+            if key in seen:
+                continue
+            seen.add(key)
+            self.add_edge(
+                owner_id,
+                node_id(NodeType.MODEL, key),
+                EdgeType.QUERIES_MODEL,
+                confidence=0.8,
+            )
+
+    def _looks_like_cache(self, fname: str) -> bool:
+        low = fname.lower()
+        return "cache" in low or low.startswith("caches[")
+
+    def _looks_like_flag(self, fname: str) -> bool:
+        low = fname.lower()
+        if fname.split(".")[-1] not in FLAG_FUNCS | {"is_active", "is_enabled"}:
+            return False
+        return any(tok in low for tok in ("flag", "waffle", "feature", "unleash", "flags"))
+
+    def _cache_call(self, node: ast.Call, fname: str, method: str) -> None:
+        key = _const_str(node.args[0]) if node.args else None
+        if not key:
+            return
+        qname = f"cache:{key}"
+        cache = self.add_node(
+            NodeType.CACHE_KEY,
+            key,
+            qname,
+            node.lineno,
+            {"app": self.app, "method": method},
+        )
+        owner_type, owner_q = self._owner_id()
+        etype = EdgeType.INVALIDATES_CACHE if method in {"set", "delete", "add"} else EdgeType.CALLS
+        self.add_edge(node_id(owner_type, owner_q), cache.id, etype, extra={"call": fname, "line": node.lineno})
+
+    def _flag_call(self, node: ast.Call, fname: str) -> None:
+        name = None
+        for arg in node.args:
+            name = _const_str(arg)
+            if name:
+                break
+        if not name:
+            name = _const_str(_kw(node, "name") or _kw(node, "flag") or _kw(node, "key"))
+        if not name:
+            return
+        flag = self.add_node(
+            NodeType.FEATURE_FLAG,
+            name,
+            f"flag:{name}",
+            node.lineno,
+            {"app": self.app, "call": fname},
+        )
+        owner_type, owner_q = self._owner_id()
+        self.add_edge(node_id(owner_type, owner_q), flag.id, EdgeType.CHECKS_FLAG, extra={"line": node.lineno})
+
+    def _side_effect_on_commit(self, node: ast.Call) -> None:
+        self.graph.residuals.append(
+            f"transaction.on_commit() at {self.rel_path}:{node.lineno} — async work may be hidden in a lambda"
+        )
+        owner_type, owner_q = self._owner_id()
+        effect = self.add_node(
+            NodeType.SIDE_EFFECT,
+            "on_commit",
+            f"{owner_q}:on_commit:{node.lineno}",
+            node.lineno,
+            {"app": self.app, "kind": "on_commit"},
+        )
+        self.add_edge(node_id(owner_type, owner_q), effect.id, EdgeType.ON_COMMIT, extra={"line": node.lineno})
+        self._enqueue_from_on_commit(node)
 
     def _maybe_receiver(self, node: ast.FunctionDef) -> None:
         for dec in node.decorator_list:
@@ -987,19 +1300,24 @@ class DjangoExtractor(ast.NodeVisitor):
         if route is None:
             return
         view_name = None
+        asgi = False
         if len(node.args) > 1:
             view_expr = node.args[1]
-            if isinstance(view_expr, ast.Call) and _name(view_expr.func) and "as_view" in (_name(view_expr.func) or ""):
-                view_name = (_name(view_expr.func) or "").replace(".as_view", "")
-                # mapping dict for viewsets
+            func_name = _name(view_expr.func) if isinstance(view_expr, ast.Call) else _name(view_expr)
+            func_name = func_name or ""
+            if isinstance(view_expr, ast.Call) and "as_view" in func_name:
+                view_name = func_name.replace(".as_view", "")
                 if view_expr.args and isinstance(view_expr.args[0], ast.Dict):
                     for k, v in zip(view_expr.args[0].keys, view_expr.args[0].values, strict=True):
                         method = _const_str(k)
                         action = _name(v)
                         if method and action:
                             pass
+            elif isinstance(view_expr, ast.Call) and "as_asgi" in func_name:
+                view_name = func_name.replace(".as_asgi", "")
+                asgi = True
             else:
-                view_name = _name(view_expr)
+                view_name = func_name or _name(view_expr)
         name = _const_str(_kw(node, "name"))
         include_mod = None
         if len(node.args) > 1:
@@ -1009,21 +1327,25 @@ class DjangoExtractor(ast.NodeVisitor):
                 if fn.split(".")[-1] == "include":
                     include_mod = self._include_target(view_expr)
                     view_name = None
+        websocket = asgi or (route or "").lstrip("/").startswith("ws")
         extra = {
             "app": self.app,
             "route": route,
             "url_name": name,
             "view": view_name,
             "include": include_mod,
+            "websocket": websocket,
         }
         display, qname = self._route_identity(route, include_mod, name, node.lineno)
-        route_node = self.add_node(NodeType.ROUTE, display, qname, node.lineno, extra)
+        ntype = NodeType.WEBSOCKET_ROUTE if websocket else NodeType.ROUTE
+        route_node = self.add_node(ntype, display, qname, node.lineno, extra)
         if name:
             un = self.add_node(NodeType.URL_NAME, name, name, node.lineno, extra)
             self.add_edge(route_node.id, un.id, EdgeType.BELONGS_TO)
         if view_name:
-            vq = f"{self.app}.{view_name.split('.')[-1]}"
-            self.add_edge(route_node.id, node_id(NodeType.VIEW, vq), EdgeType.PUBLISHES_ROUTE)
+            short = view_name.split(".")[-1]
+            target_type = NodeType.CONSUMER if websocket else NodeType.VIEW
+            self.add_edge(route_node.id, node_id(target_type, f"{self.app}.{short}"), EdgeType.PUBLISHES_ROUTE)
 
     def _router_register(self, node: ast.Call) -> None:
         if len(node.args) < 2:

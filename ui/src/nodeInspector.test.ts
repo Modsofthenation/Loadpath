@@ -13,6 +13,9 @@ describe("typePurpose", () => {
   it("explains known types and falls back by family", () => {
     expect(typePurpose("django.field")).toMatch(/column/i);
     expect(typePurpose("react.form_schema")).toMatch(/typed/i);
+    expect(typePurpose("graphql.operation")).toMatch(/GraphQL/i);
+    expect(typePurpose("fastapi.route")).toMatch(/FastAPI/i);
+    expect(typePurpose("django.template")).toMatch(/template/i);
     expect(typePurpose("django.mystery")).toMatch(/Django/);
   });
 });

@@ -63,7 +63,7 @@ Toggle **This review** (impact subgraph) vs **Indexed architecture** (the repo m
 
 ### Pull requests
 
-GitHub and Bitbucket via **Sign in** (OAuth) or a token in Settings. After connecting, **My repos** lists every repository the account can access. Pick one and jump to a branch-range review. Review still runs against a **local clone** — if that clone is already a Loadpath workspace, selecting the remote repo fills the local path from `git remote`. The screenshot uses a fixture PR so the tab is not empty.
+GitHub, GitLab, and Bitbucket via **Sign in** (OAuth) or a token in Settings. GitHub Enterprise and self-hosted GitLab take a host in Settings. After connecting, **My repos** lists every repository the account can access. Pick one and **Review this PR** — Loadpath fetches the PR refs into a local clone if this machine does not already have one. Review still runs against that clone. The screenshot uses a fixture PR so the tab is not empty.
 
 ![Pull requests list](docs/screenshots/pull-requests.png)
 
@@ -75,9 +75,11 @@ Browse the filesystem, pick a project root. Loadpath remembers recent workspaces
 
 ### Settings
 
-Appearance (all 24 themes), GitHub / Bitbucket **OAuth sign-in** (or a classic PAT / app password), and AI providers (Anthropic, OpenAI, Grok/xAI, DeepSeek, Cursor-compatible, Ollama). Residual analysis only — Loadpath does not comment every hunk.
+Appearance (all 24 themes), GitHub / GitLab / Bitbucket **OAuth sign-in** (or a classic PAT / app password), GitHub Enterprise host, and AI providers (Anthropic, OpenAI, Grok/xAI, DeepSeek, Cursor-compatible, Ollama). Residual analysis only — Loadpath does not comment every hunk.
 
-GitHub uses device flow (`repo read:user read:org`). Create an OAuth App, enable Device Flow, then set `LOADPATH_GITHUB_CLIENT_ID` or paste the client ID in Settings.
+GitHub uses device flow (`repo read:user read:org`). Create an OAuth App, enable Device Flow, then set `LOADPATH_GITHUB_CLIENT_ID` or paste the client ID in Settings. For GitHub Enterprise, set the host (API is `{host}/api/v3`).
+
+GitLab uses authorization code. Create an OAuth application whose callback is `http://127.0.0.1:7345/api/oauth/gitlab/callback`, then set `LOADPATH_GITLAB_CLIENT_ID` / `LOADPATH_GITLAB_CLIENT_SECRET` (or paste them in Settings). Self-managed GitLab takes a host.
 
 Bitbucket uses authorization code. Create an OAuth consumer whose callback is `http://127.0.0.1:7345/api/oauth/bitbucket/callback`, then set `LOADPATH_BITBUCKET_CLIENT_ID` / `LOADPATH_BITBUCKET_CLIENT_SECRET` or paste the key and secret in Settings. Access tokens are refreshed automatically. SCM sign-in and repo listing are local-only (loopback) so a tunneled MCP server does not expose private repos.
 
@@ -167,6 +169,11 @@ loadpath architecture /path/to/repo
 # Review a git range against the index (three-dot / merge-base by default)
 loadpath review /path/to/repo --base HEAD~1 --head HEAD
 loadpath review /path/to/repo --base origin/main --head HEAD --no-reindex
+loadpath review /path/to/repo --dirty          # include the working tree
+loadpath review /path/to/repo --fail-on blocker  # CI merge gate (never|blocker|low|medium)
+
+# Walk sinks from one indexed node — no git range
+loadpath whatif /path/to/repo django.field:billing.Invoice.total
 
 # Cross-platform app (API + visual graph + PR list + MCP /mcp with OAuth)
 loadpath serve --port 7345
@@ -198,7 +205,22 @@ loadpath index /tmp/acme-billing
 loadpath serve --open
 ```
 
-Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path. Default range is `HEAD~1`…`HEAD`.
+Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path. Default range is `HEAD~1`…`HEAD`. Toggle **Include uncommitted** to walk the working tree. Click a node → **What if this changes** to walk sinks without a git range. The read-order list is a guided tour (prev/next highlights the file on the graph).
+
+## GitHub Action merge gate
+
+Use this repo as a composite action. It indexes the checkout, reviews `origin/$GITHUB_BASE_REF...HEAD`, optionally upserts the single Loadpath brief, and fails the job on architecture blockers (or on low/medium confidence if you ask).
+
+```yaml
+- uses: Modsofthenation/PR-Reviewer@main
+  with:
+    fail-on: blocker   # never | blocker | low | medium
+    comment: true
+```
+
+Outputs: `level`, `passed`, `title`, `contract_break` (`none` | `additive` | `breaking` | `drift`).
+
+CLI equivalent: `loadpath review . --fail-on blocker --comment --provider github --pr $N --repo $SLUG`. `--github-output` (or `GITHUB_OUTPUT`) writes the same fields for Actions.
 
 ## MCP (Cursor, Claude, ChatGPT, Gemini)
 
@@ -225,7 +247,7 @@ MCP URL: `https://your-tunnel.example/mcp` (or `http://127.0.0.1:7345/mcp` on th
 
 **Cursor / Claude / ChatGPT / Gemini (HTTP + OAuth)** — add that MCP URL in the host’s connectors. The first connect opens a consent page on the Loadpath machine.
 
-Tools: `list_workspaces`, `init_repo`, `index_repo`, `architecture`, `review`, `detect_repo`, `list_pull_requests`, `list_remote_repositories`, `post_review_comment`. `review` returns the load-path brief (confidence, sinks, reviewers) — not hunk comments.
+Tools: `list_workspaces`, `init_repo`, `index_repo`, `architecture`, `review`, `detect_repo`, `list_pull_requests`, `list_remote_repositories`, `post_review_comment`, `what_if`, `review_pull_request`. `review` returns the load-path brief (confidence, sinks, reviewers, contract-break, auth, suggested tests, trend) — not hunk comments. `review_pull_request` fetches GitHub / GitLab / Bitbucket refs into a local clone first.
 
 Put `loadpath.yml` at the repo root (see [`loadpath.yml.example`](loadpath.yml.example) and [`fixtures/demo_monorepo/loadpath.yml`](fixtures/demo_monorepo/loadpath.yml)). The tool is opinionated about *your* architecture, not a generic module graph.
 
@@ -240,6 +262,11 @@ AST is the default extractor. It is a **framework overlay**, not an import graph
 | Views | DRF ViewSets / APIViews, `serializer_class`, `get_serializer_class` (residual), `permission_classes`, `get_queryset`, `filterset_class`, `authentication_classes`, `pagination_class` |
 | Function views | `@api_view`, `@login_required`, `@csrf_exempt`, … |
 | Django Ninja | `@router.get/post/…` routes and views |
+| FastAPI (same repo) | `@app.get/post/…` and Pydantic `BaseModel` — only when the file imports FastAPI, so Ninja is not stolen |
+| GraphQL | Strawberry `@strawberry.type` / `@strawberry.field` and Graphene `ObjectType` / `Mutation`; client `gql` documents stitch by operation/selection name |
+| Channels | `WebsocketConsumer` subclasses and `path(..., Consumer.as_asgi())` websocket routes |
+| Templates + HTMX | `.html` files, `{% url %}` / include / extends, `hx-get/post/…` stitched to Django routes |
+| Cache / flags / on_commit | `cache.get/set/delete`, waffle-style `flag_is_active`, `transaction.on_commit` as sinks |
 | URLs | `path` / `re_path`, DRF `router.register`, `include()` mount composition (`/api` + `invoices/<id>/` → `/api/invoices/{id}`) |
 | Signals | `@receiver`, `signal.connect()` residual, `AppConfig.ready()` residual |
 | Management commands | `BaseCommand` + `handle()`, including `.delay(` / `.send(` enqueue edges |
@@ -253,7 +280,7 @@ AST is the default extractor. It is a **framework overlay**, not an import graph
 - Enqueue: `.delay(`, `.apply_async(`
 - Signatures / canvas: `.s(`, `.si(`, `chain` / `group` / `chord` (canvas is a residual; inner signatures are `enqueues` edges)
 - `current_app.send_task("billing.tasks.send_invoice_email")` — residual + inferred enqueue
-- `transaction.on_commit(lambda: task.apply_async(...))` — residual, nested enqueue walked
+- `transaction.on_commit(lambda: task.apply_async(...))` — `SIDE_EFFECT` sink + residual; nested enqueue walked
 - `CELERY_BEAT_SCHEDULE` / `beat_schedule` in settings
 
 ### Dramatiq
@@ -276,7 +303,7 @@ AST is enough for review. If you need live `_meta` (db_table, resolved relations
 
 **React:** react-router tables, composition, TanStack Query `queryKey` + fetch/axios URL templates, Zod schemas, feature-folder imports, RTL `render(<Page/>)` as `tested_by`.
 
-**Stitch (the moat):** OpenAPI from Spectacular/schema files first; generated clients (`generated/`, orval, openapi-typescript) as high-confidence `consumed_by_client`; fallback URL-template matching and serializer/Zod field overlap marked **inferred**.
+**Stitch (the moat):** OpenAPI from Spectacular/schema files first; generated clients (`generated/`, orval, openapi-typescript) as high-confidence `consumed_by_client`; FastAPI routes and GraphQL operations stitch the same way; HTMX URLs match Django routes; fallback URL-template matching and serializer/Zod field overlap marked **inferred**.
 
 Frontend roots prefer `frontend/src`, `frontend`, `web/src`, `client/src`, `ui/src`, `src-ui/src` — not a Python package `src/` and not `docs` / docs-site trees. `app/` is a Django root candidate.
 
@@ -315,7 +342,9 @@ Line coverage on changed files is the wrong metric. Loadpath scores the **impact
 | Architecture | No new cross-context edges; published seams hold | `crosses_context` or a leaked queryset seam |
 | Graph | Resolved edges | Many inferred/dynamic edges |
 
-`high` / `medium` / `low` plus three reasons. Isolated leaf UI with green tests and no rule hits is labeled `loadpath:low-risk`.
+`high` / `medium` / `low` plus three reasons. Isolated leaf UI with green tests and no rule hits is labeled `loadpath:low-risk`. The same PR/range stores a **confidence trend** so a second review on that range can say whether confidence rose, dropped, or the sink count moved.
+
+Auth is a first-class load path: permission_classes, get_queryset object scope, and websocket routes without a gate. Untested seams get **suggested tests** (pytest / RTL / GraphQL / Channels / HTMX). Contract diffs are labeled `additive`, `breaking`, or `drift`.
 
 ## Tests
 
@@ -327,7 +356,7 @@ node --test desktop/*.test.mjs
 
 | Suite | What it covers |
 | --- | --- |
-| `tests/unit/` | Django/React extractors, architecture rules, depth/seam survey, stitch, SCM/AI providers |
+| `tests/unit/` | Django/React extractors, architecture rules, depth/seam survey, stitch, overlays (GraphQL/Channels/HTMX/FastAPI), SCM/AI providers |
 | `tests/integration/test_review_vertical_slice.py` | Serializer field change reaches InvoicePage/Zod, not MePage; reviewers `billing-team` |
 | `tests/e2e/test_cli_review.py` | `loadpath index` / `architecture` / `review` markdown, JSON, HTML |
 | `tests/e2e/test_api_flow.py` | health, index, architecture, review-from-index, graph, settings, GitHub + Bitbucket PR list |
@@ -345,7 +374,7 @@ LOADPATH_SCREENSHOT_DIR=docs/screenshots python -m pytest tests/e2e/test_ui_scre
 
 ## Demo fixture
 
-[`fixtures/demo_monorepo`](fixtures/demo_monorepo) is a billing/identity split: DRF ViewSet, FBV, Ninja ledger route, Celery tasks + beat + canvas, Dramatiq actor + GenericActor, management command, signal, FK string ref, React InvoicePage/Zod.
+[`fixtures/demo_monorepo`](fixtures/demo_monorepo) is a billing/identity split: DRF ViewSet, FBV, Ninja ledger route, FastAPI sidecar gateway, Strawberry + Graphene schema, Channels consumer, Django template + HTMX board, cache keys / feature flags / `on_commit`, Celery tasks + beat + canvas, Dramatiq actor + GenericActor, management command, signal, FK string ref, React InvoicePage/Zod + a `gql` document.
 
 ## What this is not
 

@@ -20,6 +20,12 @@ CLUSTER_SEED_PRIORITY = [
     NodeType.FORM_SCHEMA,
     NodeType.HOOK,
     NodeType.COMPONENT,
+    NodeType.GRAPHQL_TYPE,
+    NodeType.GRAPHQL_OPERATION,
+    NodeType.FASTAPI_ROUTE,
+    NodeType.CONSUMER,
+    NodeType.TEMPLATE,
+    NodeType.PYDANTIC_MODEL,
 ]
 
 # Shared hubs that connect unrelated contexts if traversed.
@@ -53,6 +59,12 @@ FORWARD_TYPES = {
     "destructive_migration",
     "changes_permission",
     "crosses_context",
+    "serves_template",
+    "htmx_calls",
+    "invalidates_cache",
+    "checks_flag",
+    "on_commit",
+    "publishes_graphql",
 }
 
 BACKWARD_TYPES = {
@@ -71,6 +83,12 @@ BACKWARD_TYPES = {
     "uses_query_key",
     "belongs_to",
     "destructive_migration",
+    "serves_template",
+    "htmx_calls",
+    "on_commit",
+    "publishes_graphql",
+    "invalidates_cache",
+    "checks_flag",
 }
 
 

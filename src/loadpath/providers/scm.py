@@ -8,10 +8,12 @@ from typing import Any, Protocol
 
 import httpx
 
-REPO_SLUG = re.compile(r"^[\w.-]+/[\w.-]+$")
+# GitLab nested groups: group/subgroup/project. GitHub/Bitbucket stay owner/name.
+# Reject "." / ".." so a slug cannot walk off the host path.
+REPO_SLUG = re.compile(r"^[\w.-]+(?:/[\w.-]+)+$")
 LOADPATH_COMMENT_MARKER = "<!-- loadpath-review -->"
 REMOTE_HOST = re.compile(
-    r"(github\.com|bitbucket\.org)[:/](?P<slug>[\w.-]+/[\w.-]+?)(?:\.git)?/?$",
+    r"(?P<host>github\.com|bitbucket\.org|gitlab\.com|(?:[\w.-]+\.)?(?:github|gitlab)[\w.-]*)[:/](?P<slug>[\w.-]+(?:/[\w.-]+)+?)(?:\.git)?/?$",
     re.IGNORECASE,
 )
 REPO_LIST_LIMIT = 500
@@ -25,24 +27,46 @@ def _marked_comment(markdown: str) -> str:
 
 
 
+def _safe_slug_parts(parts: list[str]) -> list[str] | None:
+    cleaned = [p for p in parts if p]
+    if not cleaned or any(p in {".", ".."} for p in cleaned):
+        return None
+    return cleaned
+
+
 def require_repo_slug(repo: str) -> str:
     slug = repo.strip().strip("/")
-    if not REPO_SLUG.match(slug):
+    parts = _safe_slug_parts(slug.split("/"))
+    if parts is None or not REPO_SLUG.match(slug):
         raise ValueError("repo must be owner/name")
     return slug
 
 
 def parse_remote_url(url: str) -> tuple[str, str] | None:
-    """Return (provider, owner/name) for a GitHub or Bitbucket remote URL."""
+    """Return (provider, owner/name) for GitHub, GitLab, or Bitbucket remotes."""
     raw = (url or "").strip()
     match = REMOTE_HOST.search(raw)
     if not match:
         return None
     slug = match.group("slug").strip("/")
+    if slug.endswith(".git"):
+        slug = slug[:-4]
+    host = match.group("host").lower()
+    parts = _safe_slug_parts(slug.split("/"))
+    if not parts:
+        return None
+    if "gitlab" in host and len(parts) >= 2:
+        slug = "/".join(parts)
+    elif len(parts) >= 2:
+        slug = "/".join(parts[:2])
     if not REPO_SLUG.match(slug):
         return None
-    host = match.group(1).lower()
-    provider = "github" if host == "github.com" else "bitbucket"
+    if "bitbucket" in host:
+        provider = "bitbucket"
+    elif "gitlab" in host:
+        provider = "gitlab"
+    else:
+        provider = "github"
     return provider, slug
 
 
@@ -132,10 +156,15 @@ class SCMProvider(Protocol):
 class GitHubProvider:
     name = "github"
 
-    def __init__(self, token: str, client: httpx.Client | None = None) -> None:
+    def __init__(self, token: str, client: httpx.Client | None = None, *, host: str = "") -> None:
         self.token = token
         self.client = client or httpx.Client(timeout=30.0)
-        self.base = "https://api.github.com"
+        self.host = _normalize_host(host) or "github.com"
+        if self.host in {"github.com", "www.github.com", "api.github.com"}:
+            self.host = "github.com"
+            self.base = "https://api.github.com"
+        else:
+            self.base = f"https://{self.host}/api/v3"
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -489,9 +518,182 @@ class BitbucketProvider:
         return {"id": str(data.get("id")), "url": url, "updated": False}
 
 
-def provider_for(name: str, token: str, username: str = "", client: httpx.Client | None = None) -> SCMProvider:
+def _normalize_host(host: str) -> str:
+    raw = (host or "").strip()
+    if raw.startswith("https://") or raw.startswith("http://"):
+        raw = raw.split("://", 1)[1]
+    return raw.strip("/").lower()
+
+
+class GitLabProvider:
+    name = "gitlab"
+
+    def __init__(self, token: str, client: httpx.Client | None = None, *, host: str = "") -> None:
+        self.token = token
+        self.client = client or httpx.Client(timeout=30.0)
+        self.host = _normalize_host(host) or "gitlab.com"
+        self.base = f"https://{self.host}/api/v4"
+
+    def _headers(self) -> dict[str, str]:
+        return {"PRIVATE-TOKEN": self.token, "Accept": "application/json"}
+
+    def _project(self, repo: str) -> str:
+        return require_repo_slug(repo).replace("/", "%2F")
+
+    def current_user(self) -> dict[str, str]:
+        r = self.client.get(f"{self.base}/user", headers=self._headers())
+        r.raise_for_status()
+        item = r.json()
+        login = item.get("username") or ""
+        return {
+            "login": login,
+            "name": item.get("name") or login,
+            "url": item.get("web_url") or "",
+        }
+
+    def list_repositories(self, limit: int = REPO_LIST_LIMIT) -> list[RemoteRepo]:
+        cap = max(1, min(limit, REPO_LIST_LIMIT))
+        out: list[RemoteRepo] = []
+        page = 1
+        while len(out) < cap:
+            per_page = min(100, cap - len(out))
+            r = self.client.get(
+                f"{self.base}/projects",
+                params={
+                    "membership": "true",
+                    "simple": "true",
+                    "order_by": "last_activity_at",
+                    "per_page": per_page,
+                    "page": page,
+                },
+                headers=self._headers(),
+            )
+            r.raise_for_status()
+            batch = r.json() or []
+            if not batch:
+                break
+            for item in batch:
+                slug = item.get("path_with_namespace") or ""
+                owner, _, name = slug.partition("/")
+                out.append(
+                    RemoteRepo(
+                        provider="gitlab",
+                        slug=slug,
+                        name=name or slug,
+                        owner=owner,
+                        url=item.get("web_url") or "",
+                        private=item.get("visibility") != "public",
+                        default_branch=item.get("default_branch") or "",
+                        updated_at=item.get("last_activity_at") or "",
+                        description=item.get("description") or "",
+                    )
+                )
+            if len(batch) < per_page:
+                break
+            page += 1
+        return out[:cap]
+
+    def list_pull_requests(self, repo: str, state: str = "open") -> list[PullRequest]:
+        repo = require_repo_slug(repo)
+        gl_state = "opened" if state == "open" else state
+        r = self.client.get(
+            f"{self.base}/projects/{self._project(repo)}/merge_requests",
+            params={"state": gl_state, "per_page": 50, "order_by": "updated_at"},
+            headers=self._headers(),
+        )
+        r.raise_for_status()
+        out = []
+        for item in r.json() or []:
+            out.append(self._mr(repo, item))
+        return out
+
+    def get_pull_request(self, repo: str, number: int) -> PullRequest:
+        repo = require_repo_slug(repo)
+        r = self.client.get(
+            f"{self.base}/projects/{self._project(repo)}/merge_requests/{number}",
+            headers=self._headers(),
+        )
+        r.raise_for_status()
+        return self._mr(repo, r.json())
+
+    def get_diff(self, repo: str, number: int) -> str:
+        repo = require_repo_slug(repo)
+        r = self.client.get(
+            f"{self.base}/projects/{self._project(repo)}/merge_requests/{number}/diffs",
+            headers={**self._headers(), "Accept": "text/plain"},
+        )
+        if r.status_code == 406:
+            r = self.client.get(
+                f"{self.base}/projects/{self._project(repo)}/merge_requests/{number}.diff",
+                headers=self._headers(),
+            )
+        r.raise_for_status()
+        return r.text
+
+    def upsert_pull_request_comment(self, repo: str, number: int, markdown: str) -> dict[str, Any]:
+        repo = require_repo_slug(repo)
+        body = _marked_comment(markdown)
+        listed = self.client.get(
+            f"{self.base}/projects/{self._project(repo)}/merge_requests/{number}/notes",
+            params={"per_page": 100},
+            headers=self._headers(),
+        )
+        listed.raise_for_status()
+        existing_id = None
+        for item in listed.json() or []:
+            if LOADPATH_COMMENT_MARKER in (item.get("body") or ""):
+                existing_id = item.get("id")
+                break
+        if existing_id:
+            r = self.client.put(
+                f"{self.base}/projects/{self._project(repo)}/merge_requests/{number}/notes/{existing_id}",
+                headers=self._headers(),
+                json={"body": body},
+            )
+            r.raise_for_status()
+            data = r.json()
+            return {"id": str(data.get("id")), "url": "", "updated": True}
+        r = self.client.post(
+            f"{self.base}/projects/{self._project(repo)}/merge_requests/{number}/notes",
+            headers=self._headers(),
+            json={"body": body},
+        )
+        r.raise_for_status()
+        data = r.json()
+        return {"id": str(data.get("id")), "url": "", "updated": False}
+
+    def _mr(self, repo: str, item: dict[str, Any]) -> PullRequest:
+        refs = item.get("diff_refs") or {}
+        return PullRequest(
+            provider="gitlab",
+            id=str(item.get("id") or item.get("iid")),
+            number=int(item.get("iid") or 0),
+            title=item.get("title") or "",
+            url=item.get("web_url") or "",
+            author=((item.get("author") or {}).get("username")) or "",
+            source_branch=item.get("source_branch") or "",
+            target_branch=item.get("target_branch") or "",
+            repo=repo,
+            state="open" if item.get("state") == "opened" else (item.get("state") or ""),
+            updated_at=item.get("updated_at") or "",
+            draft=bool(item.get("draft") or item.get("work_in_progress")),
+            head_sha=item.get("sha") or refs.get("head_sha") or "",
+            base_sha=refs.get("base_sha") or refs.get("start_sha") or "",
+        )
+
+
+def provider_for(
+    name: str,
+    token: str,
+    username: str = "",
+    client: httpx.Client | None = None,
+    *,
+    host: str = "",
+) -> SCMProvider:
     if name == "github":
-        return GitHubProvider(token, client=client)
+        return GitHubProvider(token, client=client, host=host)
     if name == "bitbucket":
         return BitbucketProvider(token, username=username, client=client)
+    if name == "gitlab":
+        return GitLabProvider(token, client=client, host=host)
     raise ValueError(f"Unknown SCM provider: {name}")

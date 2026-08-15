@@ -66,6 +66,12 @@ DEFAULT_VALUE_RE = re.compile(r"""(?:defaultValue|name)\s*=\s*(?:\{[^}]*\.(\w+)|
 BOUNDARY_RE = re.compile(r"""\b(ErrorBoundary|Suspense)\b""")
 RTK_RE = re.compile(r"""createApi\s*\(\s*\{""")
 FEATURE_FOLDER_RE = re.compile(r"""features/([^/]+)""")
+GQL_DOC_RE = re.compile(
+    r"""(?:gql|graphql)\s*(?:<[^>]*>)?\s*`([^`]+)`""",
+    re.S,
+)
+GQL_OP_RE = re.compile(r"""\b(query|mutation|subscription)\s+([A-Za-z_]\w*)""")
+GQL_SELECTION_RE = re.compile(r"""\{\s*([A-Za-z_]\w*)""")
 
 
 def _feature_from_path(rel: str) -> str | None:
@@ -302,6 +308,32 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
         line = source[: m.start()].count("\n") + 1
         rn = add(NodeType.REACT_ROUTE, rpath, f"react.route:{rpath}", line, {"element": page_name})
         edge(rn.id, node_id(NodeType.PAGE, f"{feature or 'app'}.{page_name}"), EdgeType.PUBLISHES_ROUTE)
+
+    for m in GQL_DOC_RE.finditer(source):
+        body = m.group(1)
+        line = source[: m.start()].count("\n") + 1
+        ops = GQL_OP_RE.findall(body)
+        if not ops:
+            ops = [("query", f"{stem}Query")]
+        selections = GQL_SELECTION_RE.findall(body)
+        for kind, op_name in ops:
+            extra = {
+                "kind": kind.lower(),
+                "feature": feature,
+                "client": True,
+                "selections": [s for s in selections if s not in {"query", "mutation", "subscription"}][:8],
+            }
+            op = add(
+                NodeType.GRAPHQL_OPERATION,
+                op_name,
+                f"graphql.{op_name}",
+                line,
+                extra,
+            )
+            for owner in hooks or components:
+                edge(owner.id, op.id, EdgeType.CALLS)
+            if feature:
+                edge(node_id(NodeType.FEATURE_MODULE, f"features.{feature}"), op.id, EdgeType.CALLS)
 
     for m in ZOD_RE.finditer(source):
         name, body = m.group(1), m.group(2)

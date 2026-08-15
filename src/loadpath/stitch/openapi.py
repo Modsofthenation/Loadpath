@@ -175,7 +175,7 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
             )
         )
 
-    routes = [n for n in store.nodes([NodeType.ROUTE])]
+    routes = [n for n in store.nodes([NodeType.ROUTE, NodeType.FASTAPI_ROUTE, NodeType.WEBSOCKET_ROUTE])]
     clients = [n for n in store.nodes([NodeType.API_CLIENT])]
     serializers = [n for n in store.nodes([NodeType.SERIALIZER])]
     ser_fields = [n for n in store.nodes([NodeType.SERIALIZER_FIELD])]
@@ -331,7 +331,81 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
                             )
                         )
 
+    residuals.extend(_stitch_graphql(store))
+    residuals.extend(_stitch_htmx(store))
     store.conn.commit()
+    return residuals
+
+
+def _stitch_graphql(store: GraphStore) -> list[str]:
+    residuals: list[str] = []
+    ops = store.nodes([NodeType.GRAPHQL_OPERATION])
+    server = [n for n in ops if not (n.get("extra") or {}).get("client")]
+    clients = [n for n in ops if (n.get("extra") or {}).get("client")]
+    by_name = {n["name"].lower(): n for n in server}
+
+    def match_server(name: str) -> dict | None:
+        return by_name.get((name or "").lower())
+
+    for client in clients:
+        extra = client.get("extra") or {}
+        match = match_server(client["name"])
+        if not match:
+            for sel in extra.get("selections") or []:
+                match = match_server(str(sel))
+                if match:
+                    break
+        if not match:
+            residuals.append(
+                f"GraphQL client operation {client['name']} has no matching server field "
+                f"({client.get('file_path')})"
+            )
+            continue
+        store.upsert_edge(
+            Edge(
+                src=match["id"],
+                dst=client["id"],
+                type=EdgeType.CONSUMED_BY_CLIENT,
+                confidence=0.92,
+                extra={"via": "graphql", "operation": client["name"], "server": match["name"]},
+            )
+        )
+    return residuals
+
+
+def _stitch_htmx(store: GraphStore) -> list[str]:
+    residuals: list[str] = []
+    calls = store.nodes([NodeType.HTMX_CALL])
+    if not calls:
+        return residuals
+    routes = [
+        n
+        for n in store.nodes([NodeType.ROUTE, NodeType.FASTAPI_ROUTE])
+        if not (n.get("extra") or {}).get("include")
+    ]
+    for call in calls:
+        url = str((call.get("extra") or {}).get("url") or "")
+        if not url or url.startswith("{%"):
+            continue
+        tmpl = django_route_to_template(url)
+        matched = False
+        for route in routes:
+            rtmpl = django_route_to_template(str(published_route(route)))
+            if not _paths_match(tmpl, rtmpl) and not (tmpl.endswith(rtmpl) or rtmpl.endswith(tmpl)):
+                continue
+            store.upsert_edge(
+                Edge(
+                    src=route["id"],
+                    dst=call["id"],
+                    type=EdgeType.CONSUMED_BY_CLIENT,
+                    confidence=0.8,
+                    extra={"via": "htmx", "htmx": True, "django": rtmpl, "htmx_url": tmpl},
+                )
+            )
+            matched = True
+            break
+        if not matched:
+            residuals.append(f"HTMX {tmpl} has no matching Django route ({call.get('file_path')})")
     return residuals
 
 

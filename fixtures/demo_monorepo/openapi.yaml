@@ -37,3 +37,21 @@ paths:
       responses:
         "200":
           description: ok
+  /api/invoices/totals/:
+    get:
+      operationId: invoiceTotals
+      responses:
+        "200":
+          description: ok
+  /internal/invoices/{id}:
+    get:
+      operationId: getInvoiceInternal
+      responses:
+        "200":
+          description: ok
+  /graphql:
+    post:
+      operationId: graphql
+      responses:
+        "200":
+          description: ok

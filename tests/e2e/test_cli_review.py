@@ -72,6 +72,7 @@ def test_cli_help():
     assert "architecture" in result.output
     assert "init" in result.output
     assert "mcp" in result.output
+    assert "whatif" in result.output
 
 
 def test_cli_serve_help():
@@ -103,3 +104,46 @@ def test_cli_mcp_help():
     result = runner.invoke(app, ["mcp", "--help"])
     assert result.exit_code == 0
     assert "stdio" in result.output.lower()
+
+
+def test_cli_whatif_dirty_and_gate(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    repo = prepare_review_repo(tmp_path)
+    indexed = runner.invoke(app, ["index", str(repo)])
+    assert indexed.exit_code == 0, indexed.output
+    walked = runner.invoke(app, ["whatif", str(repo), "django.field:billing.Invoice.total"])
+    assert walked.exit_code == 0, walked.output
+    assert "What if" in walked.output
+    gh_out = tmp_path / "github_output"
+    gated = runner.invoke(
+        app,
+        [
+            "review",
+            str(repo),
+            "--base",
+            "HEAD~1",
+            "--head",
+            "HEAD",
+            "--no-reindex",
+            "--fail-on",
+            "never",
+            "--github-output",
+            str(gh_out),
+            "--format",
+            "json",
+            "--out",
+            str(tmp_path / "review.json"),
+        ],
+    )
+    assert gated.exit_code == 0, gated.output
+    assert "level=" in gh_out.read_text()
+    (repo / "backend/billing/serializers.py").write_text(
+        (repo / "backend/billing/serializers.py").read_text() + "\n# uncommitted\n"
+    )
+    dirty = runner.invoke(
+        app,
+        ["review", str(repo), "--dirty", "--no-reindex", "--format", "json", "--out", str(tmp_path / "dirty.json")],
+    )
+    assert dirty.exit_code == 0, dirty.output
+    assert "dirty_included" in (tmp_path / "dirty.json").read_text()

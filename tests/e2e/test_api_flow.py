@@ -174,6 +174,63 @@ def test_api_lists_github_and_bitbucket_prs(tmp_path, monkeypatch):
     assert bb.json()["pull_requests"][0]["provider"] == "bitbucket"
 
 
+def test_api_whatif_and_gitlab_mrs(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    repo = prepare_review_repo(tmp_path)
+    client = TestClient(create_app())
+    indexed = client.post("/api/index", json={"repo_path": str(repo), "incremental": False})
+    assert indexed.status_code == 200, indexed.text
+    walked = client.post(
+        "/api/whatif",
+        json={"repo_path": str(repo), "node_id": "django.field:billing.Invoice.total"},
+    )
+    assert walked.status_code == 200, walked.text
+    body = walked.json()
+    assert body["what_if"] is True
+    assert body["nodes"]
+    assert body["sinks"]
+    dirty = client.post(
+        "/api/review",
+        json={"repo_path": str(repo), "base": "HEAD~1", "head": "HEAD", "reindex": False, "dirty": True},
+    )
+    assert dirty.status_code == 200, dirty.text
+    assert dirty.json()["workspace"]["dirty_included"] is True
+    assert dirty.json()["contract_break"]["kind"] in {"breaking", "additive", "drift", "none"}
+
+
+@respx.mock
+def test_api_lists_gitlab_merge_requests(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    client = TestClient(create_app())
+    client.put("/api/settings", json={"gitlab_token": "glpat_test", "gitlab_host": "gitlab.com"})
+    respx.get("https://gitlab.com/api/v4/projects/acme%2Fdemo/merge_requests").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "id": 9,
+                    "iid": 4,
+                    "title": "Invoice total",
+                    "web_url": "https://gitlab.com/acme/demo/-/merge_requests/4",
+                    "author": {"username": "ada"},
+                    "source_branch": "feat/total",
+                    "target_branch": "main",
+                    "state": "opened",
+                    "updated_at": "2026-08-14T00:00:00Z",
+                    "draft": False,
+                    "sha": "abc",
+                }
+            ],
+        )
+    )
+    gl = client.post("/api/prs", json={"provider": "gitlab", "repo": "acme/demo"})
+    assert gl.status_code == 200, gl.text
+    assert gl.json()["pull_requests"][0]["number"] == 4
+    assert gl.json()["pull_requests"][0]["provider"] == "gitlab"
+
+
 def test_blank_and_missing_repo_path_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir()

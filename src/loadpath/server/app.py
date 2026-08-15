@@ -29,15 +29,18 @@ from loadpath.config import load_config
 from loadpath.detect import detect_layout, write_draft_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_repo
+from loadpath.progress import progress_callback, read_progress
 from loadpath.providers.oauth import (
     callback_html,
     disconnect_scm,
     finish_bitbucket_authorize,
+    finish_gitlab_authorize,
     is_loopback_request,
     oauth_status,
     poll_github_device,
     start_bitbucket_authorize,
     start_github_device,
+    start_gitlab_authorize,
 )
 from loadpath.providers.scm import attach_local_paths, provider_for
 from loadpath.review.engine import run_review
@@ -49,6 +52,7 @@ from loadpath.workspace import DEFAULT_COMMIT_LIMIT, list_directory, list_git_re
 class IndexRequest(BaseModel):
     repo_path: str
     incremental: bool = True
+    jobs: int | None = None
 
 
 class ReviewRequest(BaseModel):
@@ -58,6 +62,8 @@ class ReviewRequest(BaseModel):
     reindex: bool = True
     incremental: bool = True
     three_dot: bool = True
+    dirty: bool = False
+    jobs: int | None = None
 
 
 class InitRequest(BaseModel):
@@ -77,6 +83,11 @@ class PRCommentRequest(BaseModel):
 class SettingsUpdate(BaseModel):
     github_token: str | None = None
     github_oauth_client_id: str | None = None
+    github_host: str | None = None
+    gitlab_token: str | None = None
+    gitlab_host: str | None = None
+    gitlab_oauth_client_id: str | None = None
+    gitlab_oauth_client_secret: str | None = None
     bitbucket_token: str | None = None
     bitbucket_username: str | None = None
     bitbucket_workspace: str | None = None
@@ -109,6 +120,20 @@ class OAuthDisconnect(BaseModel):
     provider: str
 
 
+class WhatIfRequest(BaseModel):
+    repo_path: str
+    node_id: str
+
+
+class PRReviewRequest(BaseModel):
+    provider: str
+    repo: str
+    number: int
+    repo_path: str | None = None
+    reindex: bool = True
+    incremental: bool = True
+
+
 def require_repo_path(path: str | None) -> Path:
     if not (path or "").strip():
         raise HTTPException(400, "repo_path is required")
@@ -118,11 +143,13 @@ def require_repo_path(path: str | None) -> Path:
     return root
 
 
-def _scm_credentials(settings: AppSettings, provider: str) -> tuple[str, str]:
+def _scm_credentials(settings: AppSettings, provider: str) -> tuple[str, str, str]:
     if provider == "github":
-        return settings.github_token, ""
+        return settings.github_token, "", settings.github_host
+    if provider == "gitlab":
+        return settings.gitlab_token, "", settings.gitlab_host
     if provider == "bitbucket":
-        return settings.bitbucket_token, settings.bitbucket_username
+        return settings.bitbucket_token, settings.bitbucket_username, ""
     raise HTTPException(400, f"Unknown SCM provider: {provider}")
 
 
@@ -130,11 +157,11 @@ def _call_scm(provider: str, fn):
     from loadpath.providers.oauth import refresh_bitbucket_access_token
 
     settings = AppSettings.load()
-    token, username = _scm_credentials(settings, provider)
+    token, username, host = _scm_credentials(settings, provider)
     if not token:
         raise HTTPException(400, f"No {provider} token configured")
     try:
-        return fn(provider_for(provider, token, username=username))
+        return fn(provider_for(provider, token, username=username, host=host))
     except httpx.HTTPStatusError as exc:
         if (
             provider == "bitbucket"
@@ -146,8 +173,8 @@ def _call_scm(provider: str, fn):
                 settings = refresh_bitbucket_access_token(settings)
             except Exception as refresh_exc:  # noqa: BLE001
                 raise HTTPException(502, str(refresh_exc)) from refresh_exc
-            token, username = _scm_credentials(settings, provider)
-            return fn(provider_for(provider, token, username=username))
+            token, username, host = _scm_credentials(settings, provider)
+            return fn(provider_for(provider, token, username=username, host=host))
         raise HTTPException(502, str(exc)) from exc
 
 
@@ -232,6 +259,16 @@ def create_app(
             current.github_token = body.github_token or ""
         if body.github_oauth_client_id is not None:
             current.github_oauth_client_id = body.github_oauth_client_id.strip()
+        if body.github_host is not None:
+            current.github_host = body.github_host.strip()
+        if _should_update_secret(body.gitlab_token, current.gitlab_token):
+            current.gitlab_token = body.gitlab_token or ""
+        if body.gitlab_host is not None:
+            current.gitlab_host = body.gitlab_host.strip()
+        if body.gitlab_oauth_client_id is not None:
+            current.gitlab_oauth_client_id = body.gitlab_oauth_client_id.strip()
+        if _should_update_secret(body.gitlab_oauth_client_secret, current.gitlab_oauth_client_secret):
+            current.gitlab_oauth_client_secret = body.gitlab_oauth_client_secret or ""
         if _should_update_secret(body.bitbucket_token, current.bitbucket_token):
             current.bitbucket_token = body.bitbucket_token or ""
         if body.bitbucket_username is not None:
@@ -260,11 +297,22 @@ def create_app(
     @app.post("/api/index")
     def api_index(body: IndexRequest) -> dict[str, Any]:
         root = require_repo_path(body.repo_path)
-        store = index_repo(root, incremental=body.incremental, draft_config=True)
+        store = index_repo(
+            root,
+            incremental=body.incremental,
+            draft_config=True,
+            progress=progress_callback(root),
+            workers=body.jobs,
+        )
         register_workspace(root)
         summary = summarize_index(store, load_config(root))
         store.close()
         return summary
+
+    @app.get("/api/index/progress")
+    def api_index_progress(repo_path: str) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        return read_progress(root)
 
     @app.get("/api/index")
     def api_index_status(repo_path: str) -> dict[str, Any]:
@@ -321,6 +369,9 @@ def create_app(
                 reindex=body.reindex,
                 incremental=body.incremental,
                 three_dot=body.three_dot,
+                dirty=body.dirty,
+                progress=progress_callback(root) if body.reindex else None,
+                workers=body.jobs,
             )
         except FileNotFoundError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -389,7 +440,8 @@ def create_app(
         username = body.username or settings.bitbucket_username
         if token:
             try:
-                scm = provider_for(body.provider, token, username=username)
+                _, _, host = _scm_credentials(settings, body.provider)
+                scm = provider_for(body.provider, token, username=username, host=host)
                 prs = scm.list_pull_requests(body.repo, state=body.state)
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
@@ -427,7 +479,8 @@ def create_app(
             raise HTTPException(400, "markdown is empty")
         if token:
             try:
-                scm = provider_for(body.provider, token, username=username)
+                _, _, host = _scm_credentials(settings, body.provider)
+                scm = provider_for(body.provider, token, username=username, host=host)
                 return scm.upsert_pull_request_comment(body.repo, body.number, body.markdown)
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
@@ -467,6 +520,9 @@ def create_app(
             current = AppSettings.load()
             if provider == "github" and current.github_user != login:
                 current.github_user = login
+                current.save()
+            elif provider == "gitlab" and current.gitlab_user != login:
+                current.gitlab_user = login
                 current.save()
             elif provider == "bitbucket" and current.bitbucket_user != login:
                 current.bitbucket_user = login
@@ -548,6 +604,48 @@ def create_app(
             )
         )
 
+    @app.get("/api/oauth/gitlab/start")
+    def api_gitlab_oauth_start(request: Request) -> dict[str, Any]:
+        require_loopback(request)
+        redirect_uri = f"{base.rstrip('/')}/api/oauth/gitlab/callback"
+        try:
+            return start_gitlab_authorize(redirect_uri)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/oauth/gitlab/callback")
+    def api_gitlab_oauth_callback(code: str = "", state: str = "", error: str = "") -> HTMLResponse:
+        if error:
+            return HTMLResponse(
+                callback_html(ok=False, title="GitLab sign-in cancelled", body=error.replace("_", " ")),
+                status_code=400,
+            )
+        if not code or not state:
+            return HTMLResponse(
+                callback_html(ok=False, title="GitLab sign-in failed", body="Missing code or state."),
+                status_code=400,
+            )
+        try:
+            settings = finish_gitlab_authorize(code, state)
+        except ValueError as exc:
+            return HTMLResponse(
+                callback_html(ok=False, title="GitLab sign-in failed", body=str(exc)),
+                status_code=400,
+            )
+        except httpx.HTTPError as exc:
+            return HTMLResponse(
+                callback_html(ok=False, title="GitLab sign-in failed", body=str(exc)),
+                status_code=502,
+            )
+        user = settings.gitlab_user or "your account"
+        return HTMLResponse(
+            callback_html(
+                ok=True,
+                title="Connected to GitLab",
+                body=f"Signed in as {user}. Return to Loadpath — your repositories are available on the Pull requests tab.",
+            )
+        )
+
     @app.post("/api/oauth/disconnect")
     def api_oauth_disconnect(request: Request, body: OAuthDisconnect) -> dict[str, Any]:
         require_loopback(request)
@@ -573,6 +671,49 @@ def create_app(
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(502, str(exc)) from exc
         return {"note": text}
+
+    @app.post("/api/whatif")
+    def api_whatif(body: WhatIfRequest) -> dict[str, Any]:
+        root = require_repo_path(body.repo_path)
+        from loadpath.review.whatif import simulate_node
+
+        try:
+            return simulate_node(root, body.node_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/prs/review")
+    def api_pr_review(request: Request, body: PRReviewRequest) -> dict[str, Any]:
+        require_loopback(request)
+        from loadpath.providers.pr_fetch import prepare_pull_request
+
+        try:
+            prepared = prepare_pull_request(
+                body.provider, body.repo, body.number, repo_path=body.repo_path
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, str(exc)) from exc
+        root = Path(prepared["repo_path"])
+        try:
+            review = run_review(
+                root,
+                base=prepared["base"],
+                head=prepared["head"],
+                reindex=body.reindex,
+                incremental=body.incremental,
+                three_dot=True,
+                progress=progress_callback(root) if body.reindex else None,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(400, str(exc)) from exc
+        review["markdown"] = render_markdown(review)
+        review["pull_request"] = prepared
+        register_workspace(root)
+        return review
 
     copy_mcp_routes(app, mcp_http)
 
