@@ -16,6 +16,8 @@ DEFAULT_RULES = [
     "queryset_missing_index",
     "cascade_crosses_context",
     "migration_blast_radius",
+    "leaked_seam",
+    "tests_bypass_interface",
 ]
 
 

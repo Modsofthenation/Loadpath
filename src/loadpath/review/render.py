@@ -36,6 +36,15 @@ def render_markdown(review: dict) -> str:
     for f in active:
         flag = "BLOCKER" if f["severity"] == "blocker" else "warn"
         lines.append(f"- [{flag}] `{f['rule']}`: {f['message']}")
+    deepening = review.get("deepening") or []
+    if deepening:
+        lines += ["", "### Depth"]
+        top = next((c for c in deepening if c.get("top")), deepening[0])
+        lines.append(f"Top: **{top['title']}** ({top['strength'].replace('_', ' ')})")
+        for card in deepening[:6]:
+            lines.append(f"- `{card['strength']}` {card['title']}")
+            if card.get("deletion_test"):
+                lines.append(f"  Deletion test: {card['deletion_test']}")
     lines += ["", "### Confidence"]
     for r in conf["reasons"]:
         lines.append(f"- {r}")

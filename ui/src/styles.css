@@ -723,6 +723,9 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
 }
 .chip.blocker { color: var(--low); border-color: var(--low); }
 .chip.warning { color: var(--medium); border-color: var(--medium); }
+.chip.strong { color: var(--low); border-color: var(--low); }
+.chip.worth_exploring { color: var(--medium); border-color: var(--medium); }
+.chip.speculative { color: var(--muted); border-color: var(--line); }
 .chip.open { color: var(--high); border-color: color-mix(in srgb, var(--high) 50%, var(--line)); }
 .file { font-family: var(--mono); font-size: 12px; color: var(--accent); }
 .read-item, .finding, .residual {

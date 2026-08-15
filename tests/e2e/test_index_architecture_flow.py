@@ -19,6 +19,7 @@ def test_index_summary_includes_contexts_and_timestamp(tmp_path):
     assert "InvoiceViewSet" in names
     assert "InvoicePage" in names
     assert any(n["type"] == "arch.context" for n in report["nodes"])
+    assert report.get("deepening") is not None
 
 
 def test_review_without_index_raises(tmp_path):

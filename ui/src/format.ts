@@ -2,6 +2,10 @@ export function kindLabel(kind: string): string {
   return kind.replaceAll("_", " ");
 }
 
+export function strengthLabel(strength: string): string {
+  return strength.replaceAll("_", " ");
+}
+
 export function typeLabel(type: string): string {
   return type.split(".").pop() || type;
 }

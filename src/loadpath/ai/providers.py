@@ -8,6 +8,11 @@ RESIDUAL_SYSTEM = """You are Loadpath's residual-uncertainty analyst.
 You do NOT comment on every hunk. You only inspect dynamic/inferred coupling
 the deterministic graph could not close: getattr, raw SQL, get_serializer_class,
 AppConfig.ready() signal registration, string model refs, inferred URL stitches.
+Use these terms exactly: module, interface, depth, seam, adapter, leverage, locality.
+A module is deep when a lot of behaviour sits behind a small interface.
+The deletion test: if deleting a module just moves complexity, it was a pass-through.
+The interface is the test surface — tests should not poke past it.
+Do not say component, API, or boundary when you mean module, interface, or seam.
 Return a short markdown note: what might still be coupled, how sure you are, and
 what a reviewer should verify. No style nits. No generic praise.
 """
@@ -119,6 +124,11 @@ def residual_prompt(review: dict) -> str:
         f"Residuals:\n" + "\n".join(f"- {r}" for r in residuals) + "\n\n"
         f"Architecture findings:\n"
         + "\n".join(f"- {f.get('rule')}: {f.get('message')}" for f in findings)
+        + "\n\nDeepening opportunities:\n"
+        + "\n".join(
+            f"- {c.get('strength')}: {c.get('title')} — {c.get('message')}"
+            for c in (review.get("deepening") or [])[:6]
+        )
         + "\n\nImpact nodes:\n"
         + "\n".join(path[:80])
     )

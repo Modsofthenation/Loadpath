@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { formatWhen, kindLabel, typeLabel } from "./format";
+import { formatWhen, kindLabel, strengthLabel, typeLabel } from "./format";
 import { IconArchitecture, IconGraph, IconPrs, IconReview, IconSettings } from "./icons";
 import { ImpactGraph } from "./ImpactGraph";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
-import type { ArchitectureReport, IndexedRepo, PullRequest, Review } from "./types";
+import type { ArchitectureReport, DeepeningCandidate, IndexedRepo, PullRequest, Review } from "./types";
 
 type Tab = "review" | "architecture" | "graph" | "prs" | "settings";
 type GraphMode = "review" | "architecture";
@@ -831,6 +831,7 @@ function ReviewBrief({
           ))
         )}
       </details>
+      <DeepeningList cards={review.deepening} />
       <details className="section" open>
         <summary>
           Residual <span className="count">{review.residuals.length}</span>
@@ -942,6 +943,7 @@ function ArchitectureBrief({
           ))
         )}
       </details>
+      <DeepeningList cards={architecture.deepening} />
       <details className="section" open>
         <summary>Types</summary>
         <table className="type-table">
@@ -967,5 +969,32 @@ function ArchitectureBrief({
         </button>
       </div>
     </>
+  );
+}
+
+function DeepeningList({ cards }: { cards?: DeepeningCandidate[] }) {
+  const list = cards || [];
+  if (!list.length) return null;
+  return (
+    <details className="section" open data-testid="deepening-list">
+      <summary>
+        Depth <span className="count">{list.length}</span>
+      </summary>
+      <p className="muted">Deepening opportunities: more behaviour behind a smaller interface, at a real seam.</p>
+      {list.map((card) => (
+        <div key={card.rule + card.title} className="finding" data-testid="deepening-card">
+          <span className={`chip ${card.strength}`}>{strengthLabel(card.strength)}</span>
+          {card.top ? <span className="chip">top</span> : null}
+          <strong>{card.title}</strong>
+          <div className="why">{card.message}</div>
+          {card.deletion_test ? <div className="muted">Deletion test: {card.deletion_test}</div> : null}
+          {card.before && card.after ? (
+            <div className="muted">
+              {card.before} → {card.after}
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </details>
   );
 }

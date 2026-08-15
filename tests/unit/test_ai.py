@@ -30,8 +30,10 @@ def test_residual_prompt_includes_graph():
             "change_kinds": ["public_contract"],
             "residuals": ["inferred client /api/invoices/{id}"],
             "findings": [],
+            "deepening": [{"strength": "strong", "title": "Deepen InvoiceViewSet", "message": "seam leak"}],
             "nodes": [{"type": "django.serializer", "qualified_name": "billing.InvoiceSerializer", "file_path": "s.py"}],
         }
     )
     assert "Invoice.total" in prompt
     assert "inferred client" in prompt
+    assert "seam leak" in prompt

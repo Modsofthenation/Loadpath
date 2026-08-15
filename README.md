@@ -206,8 +206,12 @@ AST is enough for review. If you need live `_meta` (db_table, resolved relations
 | `queryset_missing_index` | `.filter()` / `.order_by()` on a field that has no `db_index` / `unique` |
 | `cascade_crosses_context` | `on_delete=CASCADE` must not blast into another bounded context |
 | `migration_blast_radius` | `RemoveField` / `DeleteModel` still referenced by the typed graph |
+| `leaked_seam` | A view queries a model past a query module that already exists in the same context |
+| `tests_bypass_interface` | Tests hit serializer/view internals while the published route or page seam is untested |
 
 Waivers live under `waivers:` in the same file. Reviewers are the `owners` of the bounded contexts in the impact subgraph.
+
+Review also scores **depth** on the impact path — the same vocabulary as a deep-module design pass: **module**, **interface**, **seam**, **leverage**, **locality**. A module is deep when a lot of behaviour sits behind a small interface. The **deletion test** asks whether removing a module concentrates complexity or just moves it. The **interface is the test surface**. Architecture is the survey (deepening opportunities ranked Strong / Worth exploring / Speculative); review then scopes those candidates to the git range.
 
 Impact walk skips permission/app/context hubs, does not climb `renders` into the App shell, and does not follow cross-context `relates_to` (an Invoice FK to UserProfile does not pull identity into a billing review).
 
@@ -219,9 +223,9 @@ Line coverage on changed files is the wrong metric. Loadpath scores the **impact
 
 | Signal | High | Low |
 | --- | --- | --- |
-| Tests | Sinks in the radius are hit by tests that still reach the changed symbol | Serializer changed, tests only on the view happy path |
+| Tests | Sinks in the radius are hit by tests that still reach the changed symbol | Serializer changed, tests only on the view happy path (past the published seam) |
 | Contract | OpenAPI/client types track the serializer | React path/Zod field still old |
-| Architecture | No new cross-context edges | `crosses_context` with no waiver |
+| Architecture | No new cross-context edges; published seams hold | `crosses_context` or a leaked queryset seam |
 | Graph | Resolved edges | Many inferred/dynamic edges |
 
 `high` / `medium` / `low` plus three reasons. Isolated leaf UI with green tests and no rule hits is labeled `loadpath:low-risk`.
@@ -236,7 +240,7 @@ node --test desktop/*.test.mjs
 
 | Suite | What it covers |
 | --- | --- |
-| `tests/unit/` | Django/React extractors, architecture rules, stitch, SCM/AI providers |
+| `tests/unit/` | Django/React extractors, architecture rules, depth/seam survey, stitch, SCM/AI providers |
 | `tests/integration/test_review_vertical_slice.py` | Serializer field change reaches InvoicePage/Zod, not MePage; reviewers `billing-team` |
 | `tests/e2e/test_cli_review.py` | `loadpath index` / `architecture` / `review` markdown, JSON, HTML |
 | `tests/e2e/test_api_flow.py` | health, index, architecture, review-from-index, graph, settings, GitHub + Bitbucket PR list |

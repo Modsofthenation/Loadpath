@@ -19,6 +19,14 @@ RULE_DOCS = {
     "queryset_missing_index": "filter/order_by on a field should match db_index/unique on that field.",
     "cascade_crosses_context": "on_delete=CASCADE must not blast into another bounded context.",
     "migration_blast_radius": "Destructive migrations must not drop fields/models still referenced on the load path.",
+    "leaked_seam": (
+        "A view queries a model past a query module that already exists in the same context. "
+        "Put the queryset behind that module's interface."
+    ),
+    "tests_bypass_interface": (
+        "Tests exercise internals while the published route or page seam is untested. "
+        "The interface is the test surface."
+    ),
 }
 
 
@@ -75,6 +83,9 @@ def evaluate(store: GraphStore, config: LoadpathConfig, changed_ids: set[str] | 
         findings.extend(_cascade_crosses_context(store, config))
     if "migration_blast_radius" in enabled:
         findings.extend(_migration_blast_radius(store))
+    from loadpath.architecture.depth import evaluate_depth
+
+    findings.extend(evaluate_depth(store, config))
 
     for f in findings:
         f.waived = _waived(config, f.rule, f.node_id)

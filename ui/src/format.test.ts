@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatWhen, kindLabel, repoName, typeLabel, wrapHint } from "./format";
+import { formatWhen, kindLabel, repoName, strengthLabel, typeLabel, wrapHint } from "./format";
 
 describe("display helpers", () => {
   it("humanizes kinds and types", () => {
     expect(kindLabel("public_contract")).toBe("public contract");
+    expect(strengthLabel("worth_exploring")).toBe("worth exploring");
     expect(typeLabel("django.serializer_field")).toBe("serializer_field");
     expect(repoName("/tmp/acme-billing")).toBe("acme-billing");
   });

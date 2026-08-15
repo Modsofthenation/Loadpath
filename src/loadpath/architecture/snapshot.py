@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from loadpath.architecture.depth import deepening_candidates
 from loadpath.architecture.rules import evaluate
 from loadpath.config import LoadpathConfig, load_config
 from loadpath.graph.store import GraphStore
@@ -32,7 +33,8 @@ ARCHITECTURE_NODE_TYPES = {
 
 
 def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]:
-    findings = [f.to_dict() for f in evaluate(store, config)]
+    raw_findings = evaluate(store, config)
+    findings = [f.to_dict() for f in raw_findings]
     residuals = [line for line in (store.get_meta("residuals") or "").splitlines() if line]
     contexts = {
         name: {
@@ -66,6 +68,7 @@ def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]
         "contexts": contexts,
         "rules": list(config.rules),
         "findings": findings,
+        "deepening": deepening_candidates(raw_findings),
         "residuals": residuals[:40],
         "boot_residuals": boot_residuals,
         "has_config": (config.repo_root / "loadpath.yml").is_file(),
@@ -107,6 +110,7 @@ def architecture_report(repo_root: Path, db_path: Path | None = None) -> dict[st
             "counts": {"nodes": 0, "edges": 0},
             "type_counts": {},
             "findings": [],
+            "deepening": [],
             "residuals": [],
             "nodes": [],
             "edges": [],

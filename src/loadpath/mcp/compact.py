@@ -19,6 +19,7 @@ def compact_architecture(report: dict[str, Any]) -> dict[str, Any]:
         "contexts": report.get("contexts") or {},
         "rules": report.get("rules") or [],
         "findings": findings[:24],
+        "deepening": (report.get("deepening") or [])[:8],
         "residuals": (report.get("residuals") or [])[:20],
         "has_config": report.get("has_config"),
     }
@@ -37,6 +38,8 @@ def compact_review(review: dict[str, Any]) -> dict[str, Any]:
         "suggested_reviewers": review.get("suggested_reviewers") or [],
         "read_order": review.get("read_order") or [],
         "findings": findings,
+        "deepening": (review.get("deepening") or [])[:8],
+        "depth_note": review.get("depth_note"),
         "residuals": (review.get("residuals") or [])[:12],
         "low_risk": review.get("low_risk"),
         "index": review.get("index"),

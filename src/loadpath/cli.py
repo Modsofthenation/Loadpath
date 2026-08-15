@@ -134,6 +134,10 @@ def architecture(
     console.print(f"Rules: {len(report.get('rules') or [])} enabled · {len(active)} findings")
     for finding in active[:12]:
         console.print(f"  [{finding['severity']}] {finding['rule']}: {finding['message']}")
+    deepening = [c for c in (report.get("deepening") or [])]
+    if deepening:
+        top = next((c for c in deepening if c.get("top")), deepening[0])
+        console.print(f"Depth: {len(deepening)} deepening opportunities · top {top['strength']} — {top['title']}")
 
 
 @app.command()
