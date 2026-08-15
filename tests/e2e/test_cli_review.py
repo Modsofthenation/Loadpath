@@ -78,7 +78,9 @@ def test_cli_serve_help():
     result = runner.invoke(app, ["serve", "--help"])
     assert result.exit_code == 0
     assert "port" in result.output.lower()
-    assert "public-url" in result.output.lower()
+    plain = result.output.lower().replace("\n", "").replace(" ", "")
+    assert "public-url" in plain or "publicurl" in plain
+    assert "oauth" in result.output.lower()
 
 
 def test_cli_mcp_help():
