@@ -1299,7 +1299,7 @@ export function App() {
                 )}
               </aside>
               <div className="graph-wrap" data-testid="architecture-graph">
-                {graphLoading && !(architecture?.nodes || []).length ? (
+                {((graphLoading || architecture?.graph_pending) && !(architecture?.nodes || []).length) ? (
                   <div className="empty graph-loading" data-testid="graph-loading">
                     <h2>Drawing the architecture map…</h2>
                     <p>
@@ -1381,7 +1381,7 @@ export function App() {
               </div>
               {graphNodes.length ? (
                 <ImpactGraph nodes={graphNodes} edges={graphEdges} onWhatIf={runWhatIf} {...graphBind} />
-              ) : graphLoading ? (
+              ) : graphLoading || architecture?.graph_pending ? (
                 <p className="empty" data-testid="graph-loading">
                   Drawing the architecture map…
                 </p>

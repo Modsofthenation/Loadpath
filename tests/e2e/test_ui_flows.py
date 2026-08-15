@@ -463,17 +463,22 @@ def test_ui_architecture_brief_paints_before_graph(live_app, browser_page):
     page = browser_page
     page.goto(base_url, wait_until="networkidle")
     _wait_fonts(page)
-
-    def on_route(route):
-        if "/api/architecture/graph" in route.request.url:
-            time.sleep(1.2)
-        route.continue_()
-
-    page.route("**/api/**", on_route)
+    page.evaluate(
+        """() => {
+          const orig = window.fetch;
+          window.fetch = async (input, init) => {
+            const url = String(typeof input === "string" ? input : input.url);
+            if (url.includes("/api/architecture/graph")) {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+            return orig.call(window, input, init);
+          };
+        }"""
+    )
     page.get_by_test_id("repo-path").fill(str(repo))
     _index_repo(page, repo)
     page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=20_000)
-    page.get_by_test_id("graph-loading").wait_for()
+    page.get_by_test_id("graph-loading").wait_for(timeout=8_000)
     assert "drawing" in page.get_by_test_id("graph-loading").inner_text().lower()
     page.get_by_test_id("graph-loading").wait_for(state="hidden", timeout=20_000)
     wait_visible_graph(page)
