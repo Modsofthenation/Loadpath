@@ -83,6 +83,18 @@ def _register_tools(mcp: MCPServer) -> None:
         name="review_pull_request",
         description="Fetch a GitHub/GitLab/Bitbucket PR into a local clone and review the three-dot range.",
     )(tools.review_pull_request)
+    mcp.tool(
+        name="load_path_marks",
+        description="Files on the current load path with roles for editor gutters: seed, untested sink, contract, tested.",
+    )(tools.load_path_marks)
+    mcp.tool(
+        name="list_reviews",
+        description="List stored Loadpath reviews for a workspace (confidence, sinks, contract) without the full graph.",
+    )(tools.list_reviews)
+    mcp.tool(
+        name="save_config",
+        description="Write loadpath.yml contexts, owners, rules, and waivers for a repo.",
+    )(tools.save_config)
 
 
 def create_mcp_server(

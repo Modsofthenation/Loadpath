@@ -4,6 +4,21 @@ export type GraphFamily = "django" | "react" | "stitch" | "arch";
 export type GraphDetail = "overview" | "full";
 export type GraphProjection = "2d" | "3d";
 
+export const PATH_SINK_TYPES = new Set([
+  "django.route",
+  "react.route",
+  "react.page",
+  "django.task",
+  "django.migration_op",
+  "django.permission",
+  "openapi.path",
+  "django.consumer",
+  "django.websocket_route",
+  "django.template",
+  "graphql.operation",
+  "fastapi.route",
+]);
+
 export const LARGE_GRAPH = 90;
 
 /** Leaf noise that turns a load-path into an unreadable field cloud. */
@@ -153,6 +168,69 @@ export function visibleGraph(
     };
   }
   return { nodes: kept, edges: linked, neighborIds: neighbors };
+}
+
+export function searchNodes(nodes: GraphNode[], query: string): GraphNode[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return nodes
+    .filter((n) => {
+      const hay = `${n.name} ${n.qualified_name} ${n.type} ${n.file_path || ""} ${n.context || ""}`.toLowerCase();
+      return hay.includes(q);
+    })
+    .slice(0, 24);
+}
+
+export function isolatePathIds(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  sourceId: string,
+  targetId?: string | null,
+): { nodeIds: Set<string>; edgeIds: Set<string> } {
+  const ids = new Set(nodes.map((n) => n.id));
+  if (!ids.has(sourceId)) return { nodeIds: new Set(), edgeIds: new Set() };
+  const succ = new Map<string, { dst: string; id: string }[]>();
+  const pred = new Map<string, { src: string; id: string }[]>();
+  for (const e of edges) {
+    if (!ids.has(e.src) || !ids.has(e.dst)) continue;
+    const s = succ.get(e.src) ?? [];
+    s.push({ dst: e.dst, id: e.id });
+    succ.set(e.src, s);
+    const p = pred.get(e.dst) ?? [];
+    p.push({ src: e.src, id: e.id });
+    pred.set(e.dst, p);
+  }
+  const sinks = new Set(nodes.filter((n) => PATH_SINK_TYPES.has(n.type)).map((n) => n.id));
+  const targets = targetId && ids.has(targetId) ? new Set([targetId]) : sinks.size ? sinks : ids;
+
+  const reachable = new Set<string>();
+  const stack = [sourceId];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (reachable.has(cur)) continue;
+    reachable.add(cur);
+    for (const nxt of succ.get(cur) ?? []) {
+      if (!reachable.has(nxt.dst)) stack.push(nxt.dst);
+    }
+  }
+  const keep = new Set<string>([sourceId]);
+  const back = [...targets].filter((t) => reachable.has(t));
+  const seen = new Set(back);
+  while (back.length) {
+    const cur = back.pop()!;
+    keep.add(cur);
+    for (const prev of pred.get(cur) ?? []) {
+      if (reachable.has(prev.src) && !seen.has(prev.src)) {
+        seen.add(prev.src);
+        back.push(prev.src);
+      }
+    }
+  }
+  const edgeIds = new Set<string>();
+  for (const e of edges) {
+    if (keep.has(e.src) && keep.has(e.dst)) edgeIds.add(e.id);
+  }
+  return { nodeIds: keep, edgeIds };
 }
 
 export function layoutNodes3d(nodes: GraphNode[]): Map<string, { x: number; y: number; z: number }> {

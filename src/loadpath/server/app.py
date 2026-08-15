@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import httpx
@@ -25,7 +25,7 @@ from loadpath.mcp.server import (
 )
 from loadpath.ai.providers import client_for, residual_prompt
 from loadpath.architecture.snapshot import architecture_graph, architecture_report, summarize_index
-from loadpath.config import load_config
+from loadpath.config import load_config, config_document, write_config, add_waiver
 from loadpath.detect import detect_layout, write_draft_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_repo
@@ -44,9 +44,18 @@ from loadpath.providers.oauth import (
 )
 from loadpath.providers.scm import attach_local_paths, provider_for
 from loadpath.review.engine import run_review
+from loadpath.review.experience import (
+    architecture_health,
+    attach_experience,
+    diff_reviews,
+    isolate_paths,
+    match_reviews_to_prs,
+    summarize_stored_review,
+)
+from loadpath.review.editor import open_in_editor
 from loadpath.review.render import render_html, render_markdown
 from loadpath.settings import AppSettings, public_settings, register_workspace, settings_path, _should_update_secret
-from loadpath.workspace import DEFAULT_COMMIT_LIMIT, list_directory, list_git_refs
+from loadpath.workspace import DEFAULT_COMMIT_LIMIT, list_directory, list_git_refs, workspace_status
 
 
 class IndexRequest(BaseModel):
@@ -106,6 +115,7 @@ class PRListRequest(BaseModel):
     state: str = "open"
     token: str | None = None
     username: str | None = None
+    repo_path: str | None = None
 
 
 class ResidualRequest(BaseModel):
@@ -132,6 +142,46 @@ class PRReviewRequest(BaseModel):
     repo_path: str | None = None
     reindex: bool = True
     incremental: bool = True
+
+
+class ConfigUpdate(BaseModel):
+    repo_path: str
+    contexts: dict[str, Any] | None = None
+    rules: list[str] | None = None
+    waivers: list[dict[str, Any]] | None = None
+    django_root: str | None = None
+    react_root: str | None = None
+    openapi_paths: list[str] | None = None
+    boot_django: bool | None = None
+    layers: dict[str, Any] | None = None
+
+
+class WaiverRequest(BaseModel):
+    repo_path: str
+    rule: str
+    node: str | None = None
+    reason: str = ""
+
+
+class OpenEditorRequest(BaseModel):
+    repo_path: str
+    path: str
+    line: int | None = None
+    editor: str | None = None
+
+
+class ExportRequest(BaseModel):
+    repo_path: str | None = None
+    review_id: str | None = None
+    review: dict[str, Any] | None = None
+
+
+class IsolateRequest(BaseModel):
+    repo_path: str | None = None
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+    source_id: str
+    target_id: str | None = None
 
 
 def require_repo_path(path: str | None) -> Path:
@@ -181,6 +231,31 @@ def _call_scm(provider: str, fn):
 def require_loopback(request: Request) -> None:
     if not is_loopback_request(request.headers.get("host") or "", request.headers.get("origin") or ""):
         raise HTTPException(403, "SCM sign-in and repo listing are only available from the local Loadpath UI")
+
+
+def _attach_loadpath(listed: list[dict[str, Any]], repo_path: str | None) -> list[dict[str, Any]]:
+    if not repo_path:
+        return listed
+    root = require_repo_path(repo_path)
+    db = default_db_path(root)
+    if not db.is_file():
+        return listed
+    store = GraphStore(db)
+    summaries = [summarize_stored_review(item) for item in store.list_reviews(include_payload=True, limit=40)]
+    store.close()
+    return match_reviews_to_prs(summaries, listed)
+
+
+def _hydrate_review(item: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(item.get("payload") or {})
+    payload.setdefault("id", item.get("id"))
+    payload.setdefault("created_at", item.get("created_at"))
+    payload.setdefault("base", item.get("base_ref") or payload.get("base"))
+    payload.setdefault("head", item.get("head_ref") or payload.get("head"))
+    root = item.get("repo_root")
+    attach_experience(payload, repo_root=Path(root) if root else None)
+    payload["markdown"] = render_markdown(payload)
+    return payload
 
 
 def create_app(
@@ -382,25 +457,54 @@ def create_app(
         return review
 
     @app.get("/api/reviews")
-    def api_reviews(repo_path: str) -> dict[str, Any]:
+    def api_reviews(repo_path: str, limit: int = 40) -> dict[str, Any]:
         root = require_repo_path(repo_path)
         db = default_db_path(root)
         if not db.is_file():
             return {"reviews": []}
         store = GraphStore(db)
-        items = store.list_reviews()
+        items = store.list_reviews(include_payload=True, limit=limit)
         store.close()
-        return {"reviews": items}
+        return {"reviews": [summarize_stored_review(item) for item in items]}
 
     @app.get("/api/reviews/{review_id}")
     def api_review_get(review_id: str, repo_path: str) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        db = default_db_path(root)
+        if not db.is_file():
+            raise HTTPException(404, "Review not found")
+        store = GraphStore(db)
+        item = store.get_review(review_id)
+        store.close()
+        if not item:
+            raise HTTPException(404, "Review not found")
+        return _hydrate_review(item)
+
+    @app.get("/api/reviews/{review_id}/diff")
+    def api_review_diff(review_id: str, repo_path: str, other: str) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        store = GraphStore(default_db_path(root))
+        current = store.get_review(review_id)
+        previous = store.get_review(other)
+        store.close()
+        if not current or not previous:
+            raise HTTPException(404, "Review not found")
+        return diff_reviews(_hydrate_review(current), _hydrate_review(previous))
+
+    @app.get("/api/reviews/{review_id}/html")
+    def api_review_html(review_id: str, repo_path: str) -> Response:
         root = require_repo_path(repo_path)
         store = GraphStore(default_db_path(root))
         item = store.get_review(review_id)
         store.close()
         if not item:
             raise HTTPException(404, "Review not found")
-        return item
+        html = render_html(_hydrate_review(item))
+        return Response(
+            content=html,
+            media_type="text/html",
+            headers={"Content-Disposition": f'attachment; filename="loadpath-{review_id[:8]}.html"'},
+        )
 
     @app.get("/api/graph")
     def api_graph(repo_path: str, scope: str = "full") -> dict[str, Any]:
@@ -425,13 +529,95 @@ def create_app(
     @app.get("/api/config")
     def api_config(repo_path: str) -> dict[str, Any]:
         root = require_repo_path(repo_path)
-        cfg = load_config(root)
+        return config_document(load_config(root))
+
+    @app.put("/api/config")
+    def api_config_put(body: ConfigUpdate) -> dict[str, Any]:
+        root = require_repo_path(body.repo_path)
+        document = body.model_dump(exclude_unset=True)
+        document.pop("repo_path", None)
+        return write_config(root, document)
+
+    @app.post("/api/config/waiver")
+    def api_config_waiver(body: WaiverRequest) -> dict[str, Any]:
+        root = require_repo_path(body.repo_path)
+        if not body.rule.strip():
+            raise HTTPException(400, "rule is required")
+        return add_waiver(root, body.rule.strip(), body.node, body.reason)
+
+    @app.get("/api/marks")
+    def api_marks(repo_path: str, review_id: str | None = None) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        db = default_db_path(root)
+        if not db.is_file():
+            return {"repo_path": str(root), "review_id": None, "files": []}
+        store = GraphStore(db)
+        item = store.get_review(review_id) if review_id else None
+        if item is None:
+            listed = store.list_reviews(include_payload=True, limit=1)
+            item = listed[0] if listed else None
+        store.close()
+        if not item:
+            return {"repo_path": str(root), "review_id": None, "files": []}
+        payload = _hydrate_review(item)
         return {
-            "contexts": {k: vars(v) for k, v in cfg.contexts.items()},
-            "rules": cfg.rules,
-            "django_root": cfg.django_root,
-            "react_root": cfg.react_root,
+            "repo_path": str(root),
+            "review_id": payload.get("id"),
+            "title": payload.get("title"),
+            "level": (payload.get("confidence") or {}).get("level"),
+            "files": payload.get("marks") or [],
         }
+
+    @app.get("/api/architecture/health")
+    def api_architecture_health(repo_path: str) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        db = default_db_path(root)
+        if not db.is_file():
+            return {"points": [], "contexts": {}}
+        store = GraphStore(db)
+        items = store.list_reviews(include_payload=True, limit=40)
+        store.close()
+        return architecture_health(items)
+
+    @app.get("/api/workspace/status")
+    def api_workspace_status(repo_path: str) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        return workspace_status(root)
+
+    @app.post("/api/open")
+    def api_open(body: OpenEditorRequest) -> dict[str, Any]:
+        root = require_repo_path(body.repo_path)
+        try:
+            return open_in_editor(root, body.path, body.line, body.editor)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/api/export/html")
+    def api_export_html(body: ExportRequest) -> Response:
+        review = body.review
+        if not review and body.repo_path and body.review_id:
+            root = require_repo_path(body.repo_path)
+            store = GraphStore(default_db_path(root))
+            item = store.get_review(body.review_id)
+            store.close()
+            if not item:
+                raise HTTPException(404, "Review not found")
+            review = _hydrate_review(item)
+        if not review:
+            raise HTTPException(400, "review or review_id is required")
+        html = render_html(review)
+        name = (review.get("id") or "review")[:8]
+        return Response(
+            content=html,
+            media_type="text/html",
+            headers={"Content-Disposition": f'attachment; filename="loadpath-{name}.html"'},
+        )
+
+    @app.post("/api/graph/isolate")
+    def api_graph_isolate(body: IsolateRequest) -> dict[str, Any]:
+        return isolate_paths(body.nodes, body.edges, body.source_id, body.target_id)
 
     @app.post("/api/prs")
     def api_prs(body: PRListRequest) -> dict[str, Any]:
@@ -447,7 +633,7 @@ def create_app(
                 raise HTTPException(400, str(exc)) from exc
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(502, str(exc)) from exc
-            return {"pull_requests": [p.to_dict() for p in prs]}
+            return {"pull_requests": _attach_loadpath([p.to_dict() for p in prs], body.repo_path)}
         try:
             prs = _call_scm(body.provider, lambda scm: scm.list_pull_requests(body.repo, state=body.state))
         except HTTPException:
@@ -456,7 +642,7 @@ def create_app(
             raise HTTPException(400, str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(502, str(exc)) from exc
-        return {"pull_requests": [p.to_dict() for p in prs]}
+        return {"pull_requests": _attach_loadpath([p.to_dict() for p in prs], body.repo_path)}
 
     @app.post("/api/init")
     def api_init(body: InitRequest) -> dict[str, Any]:

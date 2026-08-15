@@ -1,4 +1,20 @@
-import type { ArchitectureReport, FsListing, GitRefs, GraphNode, IndexedRepo, IndexProgress, PullRequest, RemoteRepo, Review } from "./types";
+import type {
+  ArchitectureHealth,
+  ArchitectureReport,
+  FsListing,
+  GitRefs,
+  GraphEdge,
+  GraphNode,
+  IndexedRepo,
+  IndexProgress,
+  LoadpathConfigDoc,
+  PullRequest,
+  RemoteRepo,
+  Review,
+  ReviewDiff,
+  ReviewSummary,
+  WorkspaceStatus,
+} from "./types";
 
 export function formatApiError(text: string, fallback = "Request failed"): string {
   const trimmed = (text || "").trim();
@@ -114,10 +130,10 @@ export const api = {
     req<{ nodes: unknown[]; edges: unknown[]; counts: { nodes: number; edges: number } }>(
       `/api/graph?repo_path=${encodeURIComponent(repo_path)}&scope=${scope}`,
     ),
-  prs: (provider: string, repo: string, state = "open") =>
+  prs: (provider: string, repo: string, state = "open", repo_path?: string) =>
     req<{ pull_requests: PullRequest[] }>("/api/prs", {
       method: "POST",
-      body: JSON.stringify({ provider, repo, state }),
+      body: JSON.stringify({ provider, repo, state, repo_path: repo_path || null }),
     }),
   scmRepos: (provider: string) =>
     req<{ provider: string; user: { login: string; name: string; url: string }; repos: RemoteRepo[] }>(
@@ -156,5 +172,63 @@ export const api = {
     req<{ note: string }>("/api/ai/residual", {
       method: "POST",
       body: JSON.stringify({ review }),
+    }),
+  reviews: (repo_path: string) =>
+    req<{ reviews: ReviewSummary[] }>(`/api/reviews?repo_path=${encodeURIComponent(repo_path)}`),
+  getReview: (repo_path: string, review_id: string) =>
+    req<Review>(`/api/reviews/${encodeURIComponent(review_id)}?repo_path=${encodeURIComponent(repo_path)}`),
+  reviewDiff: (repo_path: string, review_id: string, other: string) =>
+    req<ReviewDiff>(
+      `/api/reviews/${encodeURIComponent(review_id)}/diff?repo_path=${encodeURIComponent(repo_path)}&other=${encodeURIComponent(other)}`,
+    ),
+  config: (repo_path: string) =>
+    req<LoadpathConfigDoc>(`/api/config?repo_path=${encodeURIComponent(repo_path)}`),
+  saveConfig: (repo_path: string, body: Partial<LoadpathConfigDoc>) =>
+    req<LoadpathConfigDoc>("/api/config", {
+      method: "PUT",
+      body: JSON.stringify({ repo_path, ...body }),
+    }),
+  addWaiver: (repo_path: string, rule: string, node?: string, reason?: string) =>
+    req<LoadpathConfigDoc>("/api/config/waiver", {
+      method: "POST",
+      body: JSON.stringify({ repo_path, rule, node: node || null, reason: reason || "" }),
+    }),
+  marks: (repo_path: string, review_id?: string) =>
+    req<{ review_id: string | null; files: { path: string; badge: string; tooltip: string; roles: string[] }[] }>(
+      `/api/marks?repo_path=${encodeURIComponent(repo_path)}${review_id ? `&review_id=${encodeURIComponent(review_id)}` : ""}`,
+    ),
+  architectureHealth: (repo_path: string) =>
+    req<ArchitectureHealth>(`/api/architecture/health?repo_path=${encodeURIComponent(repo_path)}`),
+  workspaceStatus: (repo_path: string) =>
+    req<WorkspaceStatus>(`/api/workspace/status?repo_path=${encodeURIComponent(repo_path)}`),
+  openEditor: (repo_path: string, path: string, line?: number, editor?: string) =>
+    req<{
+      ok: boolean;
+      path: string;
+      abs_path: string;
+      line?: number | null;
+      opened_with?: string | null;
+      urls?: Record<string, string>;
+      error?: string;
+    }>("/api/open", {
+      method: "POST",
+      body: JSON.stringify({ repo_path, path, line: line || null, editor: editor || null }),
+    }),
+  exportHtml: (review: Review) =>
+    fetch("/api/export/html", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(formatApiError(text, res.statusText || "Request failed"));
+      }
+      return res.blob();
+    }),
+  isolate: (nodes: GraphNode[], edges: GraphEdge[], source_id: string, target_id?: string) =>
+    req<{ node_ids: string[]; edge_ids: string[]; targets: string[] }>("/api/graph/isolate", {
+      method: "POST",
+      body: JSON.stringify({ nodes, edges, source_id, target_id: target_id || null }),
     }),
 };

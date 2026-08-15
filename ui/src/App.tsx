@@ -1,12 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
+import { CommandPalette, type PaletteAction } from "./CommandPalette";
+import { ConfigEditor } from "./ConfigEditor";
 import { formatWhen, kindLabel, repoName, strengthLabel, typeLabel } from "./format";
 import { IconArchitecture, IconFolder, IconGraph, IconPrs, IconReview, IconSettings } from "./icons";
 import { ImpactGraph } from "./ImpactGraph";
+import { openInEditor, persistEditorPreference, editorPreference } from "./openEditor";
 import { RefCombobox } from "./RefCombobox";
 import { RepoExplorer } from "./RepoExplorer";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
-import type { ArchitectureReport, DeepeningCandidate, GitRefs, IndexedRepo, IndexProgress, PullRequest, RemoteRepo, Review } from "./types";
+import type {
+  ArchitectureHealth,
+  ArchitectureReport,
+  DeepeningCandidate,
+  GitRefs,
+  IndexedRepo,
+  IndexProgress,
+  LoadpathConfigDoc,
+  PullRequest,
+  RemoteRepo,
+  Review,
+  ReviewDiff,
+  ReviewSummary,
+} from "./types";
 
 type Tab = "review" | "architecture" | "graph" | "prs" | "settings";
 type GraphMode = "review" | "architecture";
@@ -65,6 +81,23 @@ export function App() {
   const [theme, setTheme] = useState<ThemeId>(readTheme);
   const [settingsReady, setSettingsReady] = useState(false);
   const [explorerOpen, setExplorerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pinnedId, setPinnedId] = useState<string | null>(null);
+  const [testOverlay, setTestOverlay] = useState(localStorage.getItem("loadpath.testOverlay") === "1");
+  const [isolateSource, setIsolateSource] = useState<string | null>(null);
+  const [watchEnabled, setWatchEnabled] = useState(localStorage.getItem("loadpath.watch") === "1");
+  const [reviewHistory, setReviewHistory] = useState<ReviewSummary[]>([]);
+  const [reviewDiff, setReviewDiff] = useState<ReviewDiff | null>(null);
+  const [configDoc, setConfigDoc] = useState<LoadpathConfigDoc | null>(null);
+  const [health, setHealth] = useState<ArchitectureHealth | null>(null);
+  const [restoring, setRestoring] = useState(() => {
+    try {
+      return Boolean(localStorage.getItem("loadpath.lastReviewId") && (localStorage.getItem("loadpath.repo") || "").trim());
+    } catch {
+      return false;
+    }
+  });
   const [gitRefs, setGitRefs] = useState<GitRefs | null>(null);
   const [githubFlow, setGithubFlow] = useState<{
     flow_id: string;
@@ -136,6 +169,18 @@ export function App() {
         if (!cancelled && repoRef.current === requested) setArchitecture(report);
       })
       .catch(() => undefined);
+    api
+      .config(requested)
+      .then((doc) => {
+        if (!cancelled && repoRef.current === requested) setConfigDoc(doc);
+      })
+      .catch(() => undefined);
+    api
+      .architectureHealth(requested)
+      .then((next) => {
+        if (!cancelled && repoRef.current === requested) setHealth(next);
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -183,6 +228,42 @@ export function App() {
     if (number !== undefined) {
       setPrNumber(number);
       localStorage.setItem("loadpath.prNumber", number);
+    }
+  };
+
+  const rememberReview = (next: Review) => {
+    setReview(next);
+    setTourIndex(0);
+    setSelectedId(pinnedId && next.nodes.some((n) => n.id === pinnedId) ? pinnedId : null);
+    setIsolateSource(null);
+    setReviewDiff(null);
+    if (next.id && !next.what_if) {
+      localStorage.setItem("loadpath.lastReviewId", next.id);
+    }
+  };
+
+  const loadHistory = async (path: string) => {
+    try {
+      const listed = await api.reviews(path);
+      setReviewHistory(listed.reviews);
+    } catch {
+      setReviewHistory([]);
+    }
+  };
+
+  const loadConfigDoc = async (path: string) => {
+    try {
+      setConfigDoc(await api.config(path));
+    } catch {
+      setConfigDoc(null);
+    }
+  };
+
+  const loadHealth = async (path: string) => {
+    try {
+      setHealth(await api.architectureHealth(path));
+    } catch {
+      setHealth(null);
     }
   };
 
@@ -377,12 +458,11 @@ export function App() {
     const stopWatch = watchIndex(repo);
     try {
       const r = await api.review(repo, base, head, true, dirty);
-      setReview(r);
-      setTourIndex(0);
+      rememberReview(r);
       setGraphMode("review");
       setTab("review");
       await api.repos().then((x) => setRepos(x.repos)).catch(() => undefined);
-      await loadArchitecture(repo);
+      await Promise.all([loadArchitecture(repo), loadHistory(repo), loadHealth(repo)]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -465,7 +545,7 @@ export function App() {
     setError("");
     markBusy("Fetching pull requests…");
     try {
-      const r = await api.prs(provider, scmRepo);
+      const r = await api.prs(provider, scmRepo, "open", repo.trim() || undefined);
       setPrs(r.pull_requests);
       const match = remoteRepos.find((item) => item.slug.toLowerCase() === scmRepo.trim().toLowerCase());
       if (match?.local_path) persistRepo(match.local_path);
@@ -518,13 +598,12 @@ export function App() {
     try {
       const result = await api.whatIf(repo, nodeId);
       setCopied(`${result.title} — ${result.confidence.level} · ${(result.sinks || []).length} sinks`);
-      setReview({
+      rememberReview({
         ...result,
         markdown: result.markdown || "",
         index: result.index || review?.index,
         workspace: result.workspace || review?.workspace,
       });
-      setTourIndex(0);
       setGraphMode("review");
       setTab("review");
     } catch (e) {
@@ -545,12 +624,14 @@ export function App() {
     const stopWatch = watchPath ? watchIndex(watchPath) : () => undefined;
     try {
       const r = await api.reviewPr(item.provider, item.repo, item.number, match?.local_path || repo || undefined);
-      setReview(r);
-      setTourIndex(0);
+      rememberReview(r);
       if (r.pull_request && typeof r.pull_request.repo_path === "string") persistRepo(r.pull_request.repo_path);
       persistRefs(String(r.base || item.target_branch), String(r.head || item.source_branch));
       setGraphMode("review");
       setTab("review");
+      if (typeof (r.pull_request as { repo_path?: string } | undefined)?.repo_path === "string") {
+        void loadHistory((r.pull_request as { repo_path: string }).repo_path);
+      }
     } catch (e) {
       persistRefs(item.base_sha || item.target_branch, item.head_sha || item.source_branch);
       setTab("review");
@@ -620,9 +701,85 @@ export function App() {
   runReviewRef.current = runReview;
   const tabRef = useRef(tab);
   tabRef.current = tab;
+  const paletteOpenRef = useRef(false);
+  paletteOpenRef.current = paletteOpen;
+  const reviewRef = useRef(review);
+  reviewRef.current = review;
+  const tourIndexRef = useRef(tourIndex);
+  tourIndexRef.current = tourIndex;
+
+  useEffect(() => {
+    const lastId = localStorage.getItem("loadpath.lastReviewId");
+    const path = (localStorage.getItem("loadpath.repo") || "").trim();
+    if (!lastId || !path) {
+      setRestoring(false);
+      return;
+    }
+    let cancelled = false;
+    api
+      .getReview(path, lastId)
+      .then((r) => {
+        if (cancelled) return;
+        rememberReview(r);
+        persistRefs(r.base || localStorage.getItem("loadpath.base") || "HEAD~1", r.head || localStorage.getItem("loadpath.head") || "HEAD");
+        void loadHistory(path);
+        void loadHealth(path);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setRestoring(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Restore once on launch from the last stored review id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fingerprintRef = useRef("");
+  useEffect(() => {
+    if (!watchEnabled || !repo.trim()) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const status = await api.workspaceStatus(repo);
+        if (cancelled) return;
+        if (
+          fingerprintRef.current &&
+          status.fingerprint !== fingerprintRef.current &&
+          !busyRef.current
+        ) {
+          setDirty(true);
+          localStorage.setItem("loadpath.dirty", "1");
+          void runReviewRef.current();
+        }
+        fingerprintRef.current = status.fingerprint;
+      } catch {
+        /* ignore poll errors */
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [watchEnabled, repo]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      if (paletteOpenRef.current) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setPaletteOpen(false);
+        }
+        return;
+      }
       if (explorerOpenRef.current) {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -638,6 +795,17 @@ export function App() {
       if (event.key === "Escape") {
         setError("");
         setCopied("");
+        setSelectedId(pinnedId);
+        setIsolateSource(null);
+        return;
+      }
+      if (event.key === "j" || event.key === "k") {
+        const order = reviewRef.current?.read_order || [];
+        if (!order.length) return;
+        event.preventDefault();
+        const current = tourIndexRef.current;
+        const next = event.key === "j" ? Math.min(order.length - 1, current + 1) : Math.max(0, current - 1);
+        setTourIndex(next);
         return;
       }
       const hit = TABS.find((item) => item.shortcut === event.key);
@@ -651,7 +819,107 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [pinnedId]);
+
+  const openFile = async (path: string, line?: number | null) => {
+    if (!repo.trim()) return;
+    const result = await openInEditor(repo, path, line);
+    if (result.ok) setCopied(result.message);
+    else setError(result.message);
+  };
+
+  const exportHtml = async () => {
+    if (!review) return;
+    try {
+      const blob = await api.exportHtml(review);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `loadpath-${(review.id || "review").slice(0, 8)}.html`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setCopied("Saved HTML brief");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const reopenReview = async (id: string) => {
+    if (!repo.trim()) return;
+    markBusy("Loading stored review…");
+    try {
+      const next = await api.getReview(repo, id);
+      rememberReview(next);
+      persistRefs(next.base || base, next.head || head);
+      setGraphMode("review");
+      setTab("review");
+      const previous = reviewHistory.find((item) => item.id !== id);
+      if (previous) {
+        try {
+          setReviewDiff(await api.reviewDiff(repo, id, previous.id));
+        } catch {
+          setReviewDiff(null);
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      markBusy("");
+    }
+  };
+
+  const graphBind = {
+    selectedId,
+    onSelect: setSelectedId,
+    nodeRoles: review?.node_roles,
+    testOverlay,
+    isolateSource,
+    onIsolate: setIsolateSource,
+    repoPath: repo,
+    onOpenFile: openFile,
+    pinnedId,
+    onPin: setPinnedId,
+  };
+
+  const paletteActions: PaletteAction[] = [
+    { id: "review", group: "Run", label: "Review this range", hint: "⌘/Ctrl+Enter", run: () => void runReview() },
+    { id: "index", group: "Run", label: "Index repository", run: () => void runIndex(true) },
+    { id: "watch", group: "Run", label: watchEnabled ? "Stop watching working tree" : "Watch working tree", run: () => {
+      const next = !watchEnabled;
+      setWatchEnabled(next);
+      localStorage.setItem("loadpath.watch", next ? "1" : "0");
+    } },
+    { id: "tests", group: "Graph", label: testOverlay ? "Hide test overlay" : "Show test overlay", run: () => {
+      const next = !testOverlay;
+      setTestOverlay(next);
+      localStorage.setItem("loadpath.testOverlay", next ? "1" : "0");
+    } },
+    { id: "export", group: "Review", label: "Export HTML brief", run: () => void exportHtml() },
+    ...TABS.map((item) => ({
+      id: `tab-${item.id}`,
+      group: "Tabs",
+      label: `Go to ${item.label}`,
+      hint: item.shortcut,
+      run: () => setTab(item.id),
+    })),
+    ...(review?.nodes || []).slice(0, 30).map((n) => ({
+      id: `node-${n.id}`,
+      group: "Nodes",
+      label: n.name,
+      hint: typeLabel(n.type),
+      run: () => {
+        setSelectedId(n.id);
+        setTab("graph");
+      },
+    })),
+    ...reviewHistory.slice(0, 12).map((item) => ({
+      id: `hist-${item.id}`,
+      group: "History",
+      label: item.title || item.id,
+      hint: `${item.level || ""} ${item.created_at || ""}`.trim(),
+      run: () => void reopenReview(item.id),
+    })),
+  ];
 
   const graphNodes = useMemo(() => {
     if (graphMode === "architecture") return architecture?.nodes ?? [];
@@ -722,7 +990,7 @@ export function App() {
             {busy || indexLine}
           </div>
           <div className="kbd-hint">
-            <kbd>1</kbd>–<kbd>5</kbd> tabs · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> review
+            <kbd>1</kbd>–<kbd>5</kbd> tabs · <kbd>⌘</kbd><kbd>K</kbd> palette · <kbd>j</kbd>/<kbd>k</kbd> read order
           </div>
         </div>
       </nav>
@@ -830,6 +1098,32 @@ export function App() {
               {dirty ? "Include uncommitted" : "Committed range"}
             </button>
           </label>
+          <label className="field dirty">
+            <span>Watch</span>
+            <button
+              type="button"
+              className={watchEnabled ? "chip-btn active" : "chip-btn"}
+              data-testid="btn-watch"
+              aria-pressed={watchEnabled}
+              onClick={() => {
+                const next = !watchEnabled;
+                setWatchEnabled(next);
+                localStorage.setItem("loadpath.watch", next ? "1" : "0");
+              }}
+            >
+              {watchEnabled ? "Watching" : "Paused"}
+            </button>
+          </label>
+          {review ? (
+            <div className={`merge-box compact ${review.confidence.level}`} data-testid="merge-box">
+              <div className={`level ${review.confidence.level}`}>
+                {review.confidence.level.toUpperCase()}
+              </div>
+              <div className="muted">
+                {review.confidence.covered_sinks}/{review.confidence.sinks} sinks
+              </div>
+            </div>
+          ) : null}
           <div className="topbar-actions">
             <button type="button" data-testid="btn-init" disabled={!!busy} onClick={draftConfig}>
               Draft config
@@ -903,7 +1197,25 @@ export function App() {
                     onAskAi={askAi}
                     onCopy={copyMarkdown}
                     onPost={postComment}
+                    onSelect={setSelectedId}
+                    onOpenFile={openFile}
+                    onExport={exportHtml}
+                    history={reviewHistory}
+                    diff={reviewDiff}
+                    onReopen={reopenReview}
+                    onWaiver={(rule, node) => {
+                      if (!repo.trim()) return;
+                      void api.addWaiver(repo, rule, node || undefined, "from review").then((doc) => {
+                        setConfigDoc(doc);
+                        setCopied(`Waived ${rule} in loadpath.yml`);
+                      });
+                    }}
                   />
+                ) : restoring ? (
+                  <div className="empty" data-testid="review-restoring">
+                    <h2>Restoring last review</h2>
+                    <p>Loading the walk this machine stored last time Loadpath was open.</p>
+                  </div>
                 ) : (
                   <div className="empty" data-testid="review-empty">
                     <h2>Trace the force of this diff</h2>
@@ -926,6 +1238,7 @@ export function App() {
                     edges={review.edges}
                     onWhatIf={runWhatIf}
                     focusPath={review.read_order[tourIndex]?.path}
+                    {...graphBind}
                   />
                 ) : null}
               </div>
@@ -936,7 +1249,27 @@ export function App() {
             <div className="content" data-testid="architecture-panel">
               <aside className="brief" data-testid="architecture-brief">
                 {architecture?.indexed ? (
-                  <ArchitectureBrief architecture={architecture} busy={!!busy} onReindex={() => runIndex(false)} onReview={runReview} />
+                  <ArchitectureBrief
+                    architecture={architecture}
+                    busy={!!busy}
+                    onReindex={() => runIndex(false)}
+                    onReview={runReview}
+                    onSelect={setSelectedId}
+                    config={configDoc}
+                    health={health}
+                    onSaveConfig={(doc) => {
+                      void api.saveConfig(repo, doc).then((saved) => {
+                        setConfigDoc(saved);
+                        setCopied("Wrote loadpath.yml");
+                      });
+                    }}
+                    onWaiver={(rule, node, reason) => {
+                      void api.addWaiver(repo, rule, node, reason).then((saved) => {
+                        setConfigDoc(saved);
+                        setCopied(`Waived ${rule}`);
+                      });
+                    }}
+                  />
                 ) : (
                   <p className="muted" data-testid="architecture-empty">
                     Index this repo to build the architecture graph. Review then walks that same graph for a git range —
@@ -946,7 +1279,7 @@ export function App() {
               </aside>
               <div className="graph-wrap" data-testid="architecture-graph">
                 {architecture?.indexed ? (
-                  <ImpactGraph nodes={architecture.nodes} edges={architecture.edges} onWhatIf={runWhatIf} />
+                  <ImpactGraph nodes={architecture.nodes} edges={architecture.edges} onWhatIf={runWhatIf} {...graphBind} />
                 ) : null}
               </div>
             </div>
@@ -988,10 +1321,29 @@ export function App() {
                   <span>
                     <i className="dash" /> inferred
                   </span>
+                  <span>
+                    <i className="seed" /> changed
+                  </span>
+                  <span>
+                    <i className="down" /> downstream
+                  </span>
                 </div>
+                <button
+                  type="button"
+                  className={testOverlay ? "chip-btn active" : "chip-btn"}
+                  data-testid="graph-test-overlay"
+                  aria-pressed={testOverlay}
+                  onClick={() => {
+                    const next = !testOverlay;
+                    setTestOverlay(next);
+                    localStorage.setItem("loadpath.testOverlay", next ? "1" : "0");
+                  }}
+                >
+                  Tests
+                </button>
               </div>
               {graphNodes.length ? (
-                <ImpactGraph nodes={graphNodes} edges={graphEdges} onWhatIf={runWhatIf} />
+                <ImpactGraph nodes={graphNodes} edges={graphEdges} onWhatIf={runWhatIf} {...graphBind} />
               ) : (
                 <p className="empty" data-testid="graph-empty">
                   Index the repo or run a review first. Click a node to inspect it.
@@ -1077,6 +1429,16 @@ export function App() {
                       <span>
                         {p.source_branch} → {p.target_branch}
                       </span>
+                      {p.loadpath ? (
+                        <span className={`chip ${p.loadpath.level || ""}`} data-testid={`pr-loadpath-${p.number}`}>
+                          {p.loadpath.level?.toUpperCase() || "REVIEWED"}
+                          {p.loadpath.contract_break && p.loadpath.contract_break !== "none"
+                            ? ` · ${p.loadpath.contract_break}`
+                            : ""}
+                        </span>
+                      ) : (
+                        <span className="muted">no Loadpath walk yet</span>
+                      )}
                     </div>
                     <div className="pr-actions">
                       <a href={p.url} target="_blank" rel="noreferrer">
@@ -1125,6 +1487,22 @@ export function App() {
                     </button>
                   ))}
                 </div>
+              </section>
+              <section className="settings-card">
+                <h2>Editor</h2>
+                <p className="muted">Open files from the inspector and read-order in Cursor, VS Code, or the system handler.</p>
+                <label htmlFor="editor-pref">Preferred editor</label>
+                <select
+                  id="editor-pref"
+                  data-testid="editor-pref"
+                  defaultValue={editorPreference()}
+                  onChange={(e) => persistEditorPreference(e.target.value as "auto" | "cursor" | "vscode" | "system")}
+                >
+                  <option value="auto">Auto (Cursor, then VS Code)</option>
+                  <option value="cursor">Cursor</option>
+                  <option value="vscode">VS Code</option>
+                  <option value="system">System default</option>
+                </select>
               </section>
               <section className="settings-card">
                 <h2>Source control</h2>
@@ -1348,6 +1726,7 @@ export function App() {
           )}
         </div>
       </div>
+      <CommandPalette open={paletteOpen} actions={paletteActions} onClose={() => setPaletteOpen(false)} />
       {explorerOpen ? (
         <RepoExplorer
           initialPath={repo}
@@ -1376,6 +1755,13 @@ function ReviewBrief({
   onAskAi,
   onCopy,
   onPost,
+  onSelect,
+  onOpenFile,
+  onExport,
+  history,
+  diff,
+  onReopen,
+  onWaiver,
 }: {
   review: Review;
   findings: Review["findings"];
@@ -1386,6 +1772,13 @@ function ReviewBrief({
   onAskAi: () => void;
   onCopy: () => void;
   onPost: () => void;
+  onSelect: (id: string | null) => void;
+  onOpenFile: (path: string, line?: number | null) => void;
+  onExport: () => void;
+  history: ReviewSummary[];
+  diff: ReviewDiff | null;
+  onReopen: (id: string) => void;
+  onWaiver: (rule: string, node?: string | null) => void;
 }) {
   const uniqueReasons = [...new Set(review.confidence.reasons || [])];
   return (
@@ -1430,6 +1823,43 @@ function ReviewBrief({
         </div>
       </div>
       <pre className="headline">{review.headline}</pre>
+      {(review.checklist || []).length ? (
+        <details className="section" open data-testid="merge-checklist">
+          <summary>
+            Merge checklist{" "}
+            <span className="count">{(review.checklist || []).filter((i) => i.status === "todo").length}</span>
+          </summary>
+          {(review.checklist || []).map((item) => (
+            <div key={item.id} className={`check-item ${item.status}`}>
+              <button
+                type="button"
+                className="linkish"
+                onClick={() => item.node_id && onSelect(item.node_id)}
+              >
+                <span className={`chip ${item.status}`}>{item.status}</span>
+                {item.title}
+              </button>
+              {item.detail ? <div className="why">{item.detail}</div> : null}
+              {item.body ? (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(item.body || "");
+                  }}
+                >
+                  Copy test
+                </button>
+              ) : null}
+              {item.kind === "finding" && item.status === "todo" && item.rule ? (
+                <button type="button" className="btn" onClick={() => onWaiver(item.rule!, item.node_id)}>
+                  Waive in loadpath.yml
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </details>
+      ) : null}
       {review.index ? (
         <details className="section" open>
           <summary>
@@ -1455,10 +1885,13 @@ function ReviewBrief({
         </summary>
         {review.read_order.map((f, i) => (
           <div key={f.path} className={i === tourIndex ? "read-item tour-current" : "read-item"}>
-            <span className="file">
+            <button type="button" className="linkish file" onClick={() => onTour(i)}>
               {i + 1}. {f.path}
-            </span>
+            </button>
             <div className="why">{f.why}</div>
+            <button type="button" className="btn" onClick={() => onOpenFile(f.path)}>
+              Open
+            </button>
           </div>
         ))}
         {review.read_order.length > 0 ? (
@@ -1506,8 +1939,10 @@ function ReviewBrief({
         ) : (
           findings.map((f) => (
             <div key={f.rule + f.message} className="finding">
-              <span className={`chip ${f.severity}`}>{f.severity}</span>
-              {f.message}
+              <button type="button" className="linkish" onClick={() => f.node_id && onSelect(f.node_id)}>
+                <span className={`chip ${f.severity}`}>{f.severity}</span>
+                {f.message}
+              </button>
             </div>
           ))
         )}
@@ -1523,6 +1958,28 @@ function ReviewBrief({
               {reason}
             </div>
           ))}
+          {review.contract_break.sides?.rows?.length ? (
+            <table className="type-table" data-testid="contract-sides">
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>Serializer</th>
+                  <th>Zod</th>
+                  <th>GraphQL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {review.contract_break.sides.rows.map((row) => (
+                  <tr key={row.field} className={row.status}>
+                    <td>{row.field}</td>
+                    <td>{row.serializer ? "yes" : "—"}</td>
+                    <td>{row.zod ? "yes" : "—"}</td>
+                    <td>{row.graphql ? "yes" : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
         </details>
       ) : null}
       {review.auth?.note ? (
@@ -1546,6 +2003,15 @@ function ReviewBrief({
             <div key={sketch.title} className="residual">
               <strong>{sketch.title}</strong>
               <pre className="headline">{sketch.body}</pre>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  void navigator.clipboard.writeText(sketch.body);
+                }}
+              >
+                Copy sketch
+              </button>
             </div>
           ))}
         </details>
@@ -1573,6 +2039,26 @@ function ReviewBrief({
           </div>
         ))}
       </details>
+      {history.length ? (
+        <details className="section" data-testid="review-history">
+          <summary>
+            History <span className="count">{history.length}</span>
+          </summary>
+          {diff ? <div className="muted">{diff.note}</div> : null}
+          {history.slice(0, 12).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={item.id === review.id ? "history-item current" : "history-item"}
+              onClick={() => onReopen(item.id)}
+            >
+              <span className={`chip ${item.level || ""}`}>{item.level || "walk"}</span>
+              {item.title || item.id.slice(0, 8)}
+              <span className="muted">{item.created_at ? formatWhen(item.created_at) : ""}</span>
+            </button>
+          ))}
+        </details>
+      ) : null}
       {(review.evolution?.notes?.length || review.evolution?.hotspots?.some((h) => h.commits)) ? (
         <details className="section">
           <summary>Churn & coupling</summary>
@@ -1598,6 +2084,9 @@ function ReviewBrief({
         <button type="button" className="btn" data-testid="btn-copy-markdown" onClick={onCopy}>
           Copy markdown
         </button>
+        <button type="button" className="btn" data-testid="btn-export-html" onClick={onExport}>
+          Save HTML
+        </button>
         <button type="button" className="btn" data-testid="btn-post-comment" onClick={onPost}>
           Post to PR
         </button>
@@ -1605,6 +2094,9 @@ function ReviewBrief({
       {aiNote ? <pre className="headline">{aiNote}</pre> : null}
       <div className="kicker">Reviewers</div>
       <div className="muted">{review.suggested_reviewers.join(", ") || "—"}</div>
+      {review.codeowners_reviewers?.length ? (
+        <div className="muted">CODEOWNERS: {review.codeowners_reviewers.join(", ")}</div>
+      ) : null}
       {review.knowledge_owners?.length ? (
         <div className="muted">Knowledge: {review.knowledge_owners.join(", ")}</div>
       ) : null}
@@ -1617,11 +2109,21 @@ function ArchitectureBrief({
   busy,
   onReindex,
   onReview,
+  onSelect,
+  config,
+  health,
+  onSaveConfig,
+  onWaiver,
 }: {
   architecture: ArchitectureReport;
   busy: boolean;
   onReindex: () => void;
   onReview: () => void;
+  onSelect: (id: string | null) => void;
+  config: LoadpathConfigDoc | null;
+  health: ArchitectureHealth | null;
+  onSaveConfig: (doc: LoadpathConfigDoc) => void;
+  onWaiver: (rule: string, node: string, reason: string) => void;
 }) {
   const hits = architecture.findings.filter((f) => !f.waived);
   return (
@@ -1667,13 +2169,43 @@ function ArchitectureBrief({
         ) : (
           hits.map((f) => (
             <div key={f.rule + f.message} className="finding">
-              <span className={`chip ${f.severity}`}>{f.severity}</span>
-              {f.message}
+              <button type="button" className="linkish" onClick={() => f.node_id && onSelect(f.node_id)}>
+                <span className={`chip ${f.severity}`}>{f.severity}</span>
+                {f.message}
+              </button>
             </div>
           ))
         )}
       </details>
       <DeepeningList cards={architecture.deepening} />
+      {health?.points?.length ? (
+        <details className="section" open data-testid="architecture-health">
+          <summary>
+            Health over time <span className="count">{health.points.length}</span>
+          </summary>
+          <div className="sparkline" aria-hidden="true">
+            {health.points.map((point) => (
+              <i
+                key={point.id || point.created_at}
+                className={point.level || ""}
+                title={`${point.level} · ${point.findings} findings`}
+                style={{ height: `${8 + Math.min(24, (point.findings || 0) * 4)}px` }}
+              />
+            ))}
+          </div>
+          {Object.entries(health.contexts).map(([name, series]) => (
+            <div key={name} className="muted">
+              <strong>{name}</strong> — last {series[series.length - 1]?.findings ?? 0} findings
+            </div>
+          ))}
+        </details>
+      ) : null}
+      {config ? (
+        <details className="section" open>
+          <summary>loadpath.yml</summary>
+          <ConfigEditor config={config} busy={busy} onSave={onSaveConfig} onWaiver={onWaiver} />
+        </details>
+      ) : null}
       <details className="section" open>
         <summary>Types</summary>
         <table className="type-table">

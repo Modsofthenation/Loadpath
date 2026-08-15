@@ -152,12 +152,30 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     wait_visible_graph(page)
 
     page.get_by_test_id("tab-review").click()
+    page.get_by_test_id("merge-box").wait_for()
+    page.get_by_test_id("merge-checklist").wait_for()
     page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=base_url)
     page.get_by_test_id("btn-copy-markdown").click()
     page.get_by_test_id("status-note").wait_for(timeout=10_000)
     assert "Copied markdown" in page.get_by_test_id("status-note").inner_text()
     clip = page.evaluate("navigator.clipboard.readText()")
     assert "Loadpath" in clip or "Invoice" in clip or clip.strip()
+
+    page.locator(".brand").click()
+    page.keyboard.press("Control+K")
+    page.get_by_test_id("command-palette").wait_for()
+    page.get_by_test_id("command-palette-input").fill("Impact graph")
+    page.keyboard.press("Enter")
+    page.get_by_test_id("graph-full").wait_for()
+    page.get_by_test_id("graph-search").fill("Invoice")
+    page.get_by_test_id("graph-search-hits").wait_for()
+    page.get_by_test_id("graph-neighborhood").wait_for()
+    page.get_by_test_id("graph-test-overlay").click()
+    assert page.get_by_test_id("graph-test-overlay").get_attribute("aria-pressed") == "true"
+
+    page.get_by_test_id("tab-review").click()
+    page.get_by_test_id("btn-export-html").click()
+    page.get_by_test_id("status-note").wait_for(timeout=10_000)
 
     page.get_by_test_id("btn-post-comment").click()
     post_err = _assert_readable_error(page)

@@ -44,6 +44,37 @@ export type DeepeningCandidate = {
   top?: boolean;
 };
 
+export type ChecklistItem = {
+  id: string;
+  kind: string;
+  status: "todo" | "done" | "info" | string;
+  title: string;
+  detail?: string;
+  node_id?: string | null;
+  file_path?: string | null;
+  rule?: string | null;
+  body?: string;
+  action?: string;
+};
+
+export type ContractSideRow = {
+  field: string;
+  serializer: boolean;
+  zod: boolean;
+  openapi: boolean;
+  graphql: boolean;
+  status: string;
+};
+
+export type FileMark = {
+  path: string;
+  line?: number | null;
+  roles: string[];
+  node_id?: string;
+  badge: string;
+  tooltip: string;
+};
+
 export type Review = {
   id: string;
   title: string;
@@ -72,7 +103,18 @@ export type Review = {
   architecture_note: string;
   depth_note?: string;
   deepening?: DeepeningCandidate[];
-  contract_break?: { kind: string; reasons: string[]; fields: string[] };
+  contract_break?: {
+    kind: string;
+    reasons: string[];
+    fields: string[];
+    sides?: {
+      serializer: string[];
+      zod: string[];
+      openapi: string[];
+      graphql: string[];
+      rows: ContractSideRow[];
+    };
+  };
   auth?: {
     note: string;
     sinks: { id: string; name: string; permissions: string[] }[];
@@ -86,9 +128,20 @@ export type Review = {
     change_coupling: { a: string; b: string; together: number; cross_context?: boolean }[];
     notes: string[];
   };
+  seed_ids?: string[];
+  node_roles?: Record<string, string[]>;
+  checklist?: ChecklistItem[];
+  marks?: FileMark[];
+  codeowners?: {
+    path?: string | null;
+    owners: string[];
+    files: { path: string; owners: string[] }[];
+  };
+  codeowners_reviewers?: string[];
   nodes: GraphNode[];
   edges: GraphEdge[];
   markdown?: string;
+  pull_request?: Record<string, unknown>;
   index?: {
     db: string;
     counts: { nodes: number; edges: number };
@@ -157,6 +210,75 @@ export type ArchitectureReport = {
   boot_residuals?: string[];
 };
 
+export type ReviewSummary = {
+  id: string;
+  created_at?: string;
+  base_ref?: string | null;
+  head_ref?: string | null;
+  title?: string;
+  level?: string;
+  sinks?: number;
+  covered_sinks?: number;
+  contract_break?: string;
+  findings?: number;
+  low_risk?: boolean;
+  labels?: string[];
+  what_if?: boolean;
+  contexts?: string[];
+};
+
+export type ReviewDiff = {
+  direction: string;
+  added_sinks: string[];
+  removed_sinks: string[];
+  added_findings: number;
+  removed_findings: number;
+  from_level?: string;
+  to_level?: string;
+  from_contract?: string;
+  to_contract?: string;
+  note: string;
+};
+
+export type ArchitectureHealth = {
+  points: {
+    id?: string;
+    created_at?: string;
+    level?: string;
+    sinks?: number;
+    findings?: number;
+    inferred_ratio?: number;
+    contexts?: Record<string, number>;
+    title?: string;
+  }[];
+  contexts: Record<string, { created_at?: string; findings: number; level?: string }[]>;
+};
+
+export type LoadpathConfigDoc = {
+  repo_root: string;
+  path: string;
+  exists: boolean;
+  contexts: Record<
+    string,
+    { name: string; django_apps: string[]; react: string[]; public_api: string[]; owners: string[] }
+  >;
+  rules: string[];
+  available_rules: string[];
+  waivers: { rule: string; node?: string | null; reason?: string }[];
+  django_root: string;
+  react_root: string;
+  openapi_paths: string[];
+  boot_django: boolean;
+  layers: { django: string[]; react: string[] };
+};
+
+export type WorkspaceStatus = {
+  repo_path: string;
+  dirty: string[];
+  dirty_count: number;
+  fingerprint: string;
+};
+
 export type IndexedRepo = {
   path: string;
   name: string;
@@ -185,6 +307,7 @@ export type PullRequest = {
   draft: boolean;
   head_sha?: string;
   base_sha?: string;
+  loadpath?: ReviewSummary;
 };
 
 export type RemoteRepo = {

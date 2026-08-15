@@ -48,4 +48,9 @@ def compact_review(review: dict[str, Any]) -> dict[str, Any]:
         "trend": review.get("trend"),
         "index": review.get("index"),
         "workspace": review.get("workspace"),
+        "checklist": review.get("checklist") or [],
+        "marks": review.get("marks") or [],
+        "seed_ids": review.get("seed_ids") or [],
+        "codeowners": review.get("codeowners"),
+        "codeowners_reviewers": review.get("codeowners_reviewers") or [],
     }

@@ -61,6 +61,37 @@ def test_api_health_index_review_graph_settings(tmp_path, monkeypatch):
     assert body["index"]["reindexed"] is False
     assert "workspace" in body
     assert body["index"]["django_boot"] == "off"
+    assert body["checklist"]
+    assert body["seed_ids"]
+    assert body["marks"]
+    assert "node_roles" in body
+
+    listed = client.get("/api/reviews", params={"repo_path": str(repo)})
+    assert listed.status_code == 200
+    assert listed.json()["reviews"]
+    review_id = listed.json()["reviews"][0]["id"]
+    stored = client.get(f"/api/reviews/{review_id}", params={"repo_path": str(repo)})
+    assert stored.status_code == 200
+    assert stored.json()["markdown"]
+    marks = client.get("/api/marks", params={"repo_path": str(repo)})
+    assert marks.json()["files"]
+    health = client.get("/api/architecture/health", params={"repo_path": str(repo)})
+    assert health.json()["points"]
+    status = client.get("/api/workspace/status", params={"repo_path": str(repo)})
+    assert status.json()["fingerprint"]
+    html = client.get(f"/api/reviews/{review_id}/html", params={"repo_path": str(repo)})
+    assert html.status_code == 200
+    assert "text/html" in html.headers["content-type"]
+
+    cfg = client.get("/api/config", params={"repo_path": str(repo)})
+    assert "billing" in cfg.json()["contexts"]
+    assert "waivers" in cfg.json()
+    waived = client.post(
+        "/api/config/waiver",
+        json={"repo_path": str(repo), "rule": "leaked_seam", "reason": "e2e"},
+    )
+    assert waived.status_code == 200
+    assert any(w["rule"] == "leaked_seam" for w in waived.json()["waivers"])
 
     init = client.post("/api/init", json={"repo_path": str(repo)})
     assert init.status_code == 200

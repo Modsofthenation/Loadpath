@@ -43,6 +43,10 @@ npm run dev       # Vite, proxies /api to the Django-shaped FastAPI server
 
 If you change `ui/` and only run `loadpath serve`, you are looking at a stale bundle until you `npm run build`.
 
+## Editor gutter
+
+`editors/vscode` is a local Cursor/VS Code extension that polls `/api/marks` and badges files on the current load path (`S` seed, `!` untested sink, `C` contract). Install from that folder; `loadpath serve` must be running.
+
 ## Desktop
 
 ```bash

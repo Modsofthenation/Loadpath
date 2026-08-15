@@ -244,3 +244,83 @@ def review_pull_request(
     compact = compact_review(review)
     compact["pull_request"] = prepared
     return compact
+
+
+def load_path_marks(repo_path: str, review_id: str | None = None) -> dict[str, Any]:
+    """Files on the current load path with gutter roles (seed, untested sink, contract)."""
+    root = _repo(repo_path)
+    if isinstance(root, dict):
+        return root
+    from loadpath.graph.store import GraphStore
+    from loadpath.index import default_db_path
+    from loadpath.review.experience import attach_experience, summarize_stored_review
+
+    db = default_db_path(root)
+    if not db.is_file():
+        return {"error": "Index the repo first", "files": []}
+    store = GraphStore(db)
+    item = store.get_review(review_id) if review_id else None
+    if item is None:
+        listed = store.list_reviews(include_payload=True, limit=1)
+        item = listed[0] if listed else None
+    store.close()
+    if not item:
+        return {"repo_path": str(root), "review_id": None, "files": []}
+    payload = attach_experience(dict(item.get("payload") or {}), repo_root=root)
+    return {
+        "repo_path": str(root),
+        "review_id": payload.get("id") or item.get("id"),
+        "title": payload.get("title"),
+        "level": (payload.get("confidence") or {}).get("level"),
+        "files": payload.get("marks") or [],
+        "summary": summarize_stored_review(item),
+    }
+
+
+def list_reviews(repo_path: str, limit: int = 20) -> dict[str, Any]:
+    """Stored load-path reviews for a workspace (no full graphs)."""
+    root = _repo(repo_path)
+    if isinstance(root, dict):
+        return root
+    from loadpath.graph.store import GraphStore
+    from loadpath.index import default_db_path
+    from loadpath.review.experience import summarize_stored_review
+
+    db = default_db_path(root)
+    if not db.is_file():
+        return {"reviews": []}
+    store = GraphStore(db)
+    items = store.list_reviews(include_payload=True, limit=limit)
+    store.close()
+    return {"reviews": [summarize_stored_review(item) for item in items]}
+
+
+def save_config(
+    repo_path: str,
+    contexts: dict[str, Any] | None = None,
+    rules: list[str] | None = None,
+    waivers: list[dict[str, Any]] | None = None,
+    django_root: str | None = None,
+    react_root: str | None = None,
+    boot_django: bool | None = None,
+) -> dict[str, Any]:
+    """Write loadpath.yml contexts, owners, rules, and waivers."""
+    root = _repo(repo_path)
+    if isinstance(root, dict):
+        return root
+    from loadpath.config import write_config
+
+    document: dict[str, Any] = {}
+    if contexts is not None:
+        document["contexts"] = contexts
+    if rules is not None:
+        document["rules"] = rules
+    if waivers is not None:
+        document["waivers"] = waivers
+    if django_root is not None:
+        document["django_root"] = django_root
+    if react_root is not None:
+        document["react_root"] = react_root
+    if boot_django is not None:
+        document["boot_django"] = boot_django
+    return write_config(root, document)
