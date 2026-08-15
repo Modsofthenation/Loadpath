@@ -141,6 +141,9 @@ describe("inspectNode", () => {
   it("tags sinks and contracts", () => {
     const info = inspectNode(route, [route], []);
     expect(info.roles).toEqual(["sink", "contract"]);
+    expect(info.pathSummary).toBe("");
+    expect(info.degreeIn).toBe(0);
+    expect(info.degreeOut).toBe(0);
   });
 
   it("tags django-filter FilterSets without repeating the flag as a fact", () => {

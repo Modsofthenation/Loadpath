@@ -182,9 +182,11 @@ function GraphInspector({
       <div className="muted inspector-degree" data-testid="graph-inspector-degree">
         {info.degreeIn} in · {info.degreeOut} out
       </div>
-      <p className="inspector-path" data-testid="graph-inspector-path">
-        {info.pathSummary}
-      </p>
+      {info.pathSummary ? (
+        <p className="inspector-path" data-testid="graph-inspector-path">
+          {info.pathSummary}
+        </p>
+      ) : null}
       {info.facts.length ? (
         <dl className="inspector-facts" data-testid="graph-inspector-facts">
           {info.facts.map((fact) => (

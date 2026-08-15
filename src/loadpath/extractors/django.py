@@ -219,7 +219,7 @@ def _default_repr(node: ast.AST | None) -> str | None:
         return None
     if isinstance(node, ast.Constant):
         if node.value is None:
-            return "None"
+            return None
         if isinstance(node.value, str):
             return node.value
         if isinstance(node.value, (int, float, bool)):
@@ -976,7 +976,7 @@ class DjangoExtractor(ast.NodeVisitor):
                 node.name,
                 qname,
                 node.lineno,
-                {"app": self.app, "ninja": True, "method": short.upper()},
+                _with_doc({"app": self.app, "ninja": True, "method": short.upper()}, node),
             )
             if route:
                 rn = self.add_node(
@@ -1016,12 +1016,15 @@ class DjangoExtractor(ast.NodeVisitor):
             if not route:
                 continue
             qname = f"{self.app}.{node.name}"
-            extra = {
-                "app": self.app,
-                "fastapi": True,
-                "method": "WS" if short == "websocket" else short.upper(),
-                "route": route,
-            }
+            extra = _with_doc(
+                {
+                    "app": self.app,
+                    "fastapi": True,
+                    "method": "WS" if short == "websocket" else short.upper(),
+                    "route": route,
+                },
+                node,
+            )
             view = self.add_node(NodeType.VIEW, node.name, qname, node.lineno, extra)
             rn = self.add_node(
                 NodeType.FASTAPI_ROUTE,

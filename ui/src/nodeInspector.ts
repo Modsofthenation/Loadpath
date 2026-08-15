@@ -400,7 +400,7 @@ export function pathSummary(info: Pick<NodeInspection, "inputKinds" | "outputKin
   if (ins && outs) return `${ins} → this → ${outs}`;
   if (outs) return `this → ${outs}`;
   if (ins) return `${ins} → this`;
-  return "No neighbors in this graph";
+  return "";
 }
 
 function toLink(edge: GraphEdge, byId: Map<string, GraphNode>, otherId: string): InspectorLink {

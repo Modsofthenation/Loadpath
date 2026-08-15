@@ -122,7 +122,9 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert page.get_by_test_id("graph-inspector-outputs").is_visible()
     degree = page.get_by_test_id("graph-inspector-degree").inner_text()
     assert "in ·" in degree and "out" in degree
-    assert page.get_by_test_id("graph-inspector-path").inner_text().strip()
+    path = page.get_by_test_id("graph-inspector-path")
+    if path.count():
+        assert path.inner_text().strip()
     overflow = inspector.evaluate(
         """el => {
             const pane = el.parentElement;
