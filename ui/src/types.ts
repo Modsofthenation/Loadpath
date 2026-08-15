@@ -257,7 +257,28 @@ export function layerFor(type: string): number {
   return LAYER_ORDER[type] ?? 8;
 }
 
-export function layoutNodes(nodes: GraphNode[]): Map<string, { x: number; y: number }> {
+export const GRAPH_NODE_WIDTH = 208;
+export const GRAPH_NODE_HEIGHT = 64;
+export const GRAPH_COL_GAP = 88;
+export const GRAPH_ROW_GAP = 28;
+
+const LAYOUT_PASSES = 8;
+
+function median(values: number[]): number {
+  if (!values.length) return Number.NaN;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/** Layered left-to-right layout: occupied columns only, barycenter ordering, no in-column overlap. */
+export function layoutNodes(
+  nodes: GraphNode[],
+  edges: GraphEdge[] = [],
+): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>();
+  if (!nodes.length) return pos;
+
   const columns = new Map<number, GraphNode[]>();
   for (const n of nodes) {
     const layer = layerFor(n.type);
@@ -265,12 +286,64 @@ export function layoutNodes(nodes: GraphNode[]): Map<string, { x: number; y: num
     list.push(n);
     columns.set(layer, list);
   }
-  const pos = new Map<string, { x: number; y: number }>();
-  for (const [layer, list] of columns) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
-    list.forEach((n, i) => {
-      pos.set(n.id, { x: layer * 260, y: i * 108 });
-    });
+
+  const layers = [...columns.keys()].sort((a, b) => a - b);
+  const order = layers.map((layer) =>
+    [...(columns.get(layer) ?? [])].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+  );
+
+  const ids = new Set(nodes.map((n) => n.id));
+  const preds = new Map<string, string[]>();
+  const succs = new Map<string, string[]>();
+  for (const n of nodes) {
+    preds.set(n.id, []);
+    succs.set(n.id, []);
   }
+  for (const e of edges) {
+    if (!ids.has(e.src) || !ids.has(e.dst) || e.src === e.dst) continue;
+    succs.get(e.src)!.push(e.dst);
+    preds.get(e.dst)!.push(e.src);
+  }
+
+  const rank = new Map<string, number>();
+  const refreshRanks = () => {
+    for (const col of order) {
+      col.forEach((n, i) => rank.set(n.id, i));
+    }
+  };
+  refreshRanks();
+
+  const sortByBarycenter = (col: GraphNode[], neighborsOf: (id: string) => string[]) => {
+    const keyed = col.map((n, i) => {
+      const nbrs = neighborsOf(n.id)
+        .map((id) => rank.get(id))
+        .filter((v): v is number => v !== undefined);
+      const bary = median(nbrs);
+      return { n, bary: Number.isNaN(bary) ? i : bary, name: n.name, id: n.id };
+    });
+    keyed.sort((a, b) => a.bary - b.bary || a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+    return keyed.map((k) => k.n);
+  };
+
+  for (let pass = 0; pass < LAYOUT_PASSES; pass++) {
+    for (let i = 1; i < order.length; i++) {
+      order[i] = sortByBarycenter(order[i]!, (id) => preds.get(id) ?? []);
+      refreshRanks();
+    }
+    for (let i = order.length - 2; i >= 0; i--) {
+      order[i] = sortByBarycenter(order[i]!, (id) => succs.get(id) ?? []);
+      refreshRanks();
+    }
+  }
+
+  const colPitch = GRAPH_NODE_WIDTH + GRAPH_COL_GAP;
+  const rowPitch = GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP;
+  const maxRows = Math.max(...order.map((col) => col.length), 1);
+  order.forEach((col, colIndex) => {
+    const y0 = ((maxRows - col.length) * rowPitch) / 2;
+    col.forEach((n, i) => {
+      pos.set(n.id, { x: colIndex * colPitch, y: y0 + i * rowPitch });
+    });
+  });
   return pos;
 }

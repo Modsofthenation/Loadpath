@@ -1170,7 +1170,11 @@ kbd {
   flex-direction: column;
 }
 .graph-3d-host { position: relative; min-height: 0; display: flex; flex-direction: column; }
-.graph-3d-canvas-host { position: relative; min-height: 0; }
+.graph-3d-canvas-host {
+  position: relative;
+  min-height: 0;
+  background: var(--graph-bg);
+}
 .graph-3d canvas { display: block; width: 100%; height: 100%; }
 .graph-3d-tip {
   position: absolute;
@@ -1648,9 +1652,9 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
   border-radius: var(--radius);
   border: 1px solid var(--node-line);
   background: var(--node-bg);
-  width: 180px;
+  width: 208px;
   max-width: 100%;
-  height: 56px;
+  height: 64px;
   box-sizing: border-box;
   box-shadow: 0 0 0 1px var(--shadow);
   overflow: visible;
@@ -1660,9 +1664,12 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
 .lp-node .n {
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }
 .lp-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .react-flow__node-load .react-flow__handle {
