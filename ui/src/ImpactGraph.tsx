@@ -71,7 +71,8 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
           edges={rfEdges}
           nodeTypes={nodeTypes}
           fitView
-          minZoom={0.15}
+          fitViewOptions={{ padding: 0.2, maxZoom: 1.15 }}
+          minZoom={0.25}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable

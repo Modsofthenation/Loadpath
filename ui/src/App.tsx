@@ -316,8 +316,7 @@ export function App() {
             {busy || indexLine}
           </div>
           <div className="kbd-hint">
-            <kbd>1</kbd>–<kbd>5</kbd> tabs · <kbd>⌘</kbd>
-            <kbd>Enter</kbd> review
+            <kbd>1</kbd>–<kbd>5</kbd> tabs · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> review
           </div>
         </div>
       </nav>
@@ -693,16 +692,16 @@ function ReviewBrief({
   onCopy: () => void;
   onPost: () => void;
 }) {
+  const uniqueReasons = [...new Set(review.confidence.reasons || [])];
   return (
     <>
       <div className={`merge-box ${review.confidence.level}`}>
         <div className={`level ${review.confidence.level}`}>
           {review.confidence.level.toUpperCase()} — {review.title}
         </div>
-        <div className="merge-title">{review.headline.split("\n")[0]}</div>
-        {review.confidence.reasons?.length ? (
+        {uniqueReasons.length ? (
           <ul className="reasons">
-            {review.confidence.reasons.map((reason) => (
+            {uniqueReasons.map((reason) => (
               <li key={reason}>{reason}</li>
             ))}
           </ul>
