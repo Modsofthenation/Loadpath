@@ -370,10 +370,14 @@ export function App() {
             value={theme}
             onChange={(e) => persistTheme(e.target.value as ThemeId)}
           >
-            {THEMES.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
+            {(["dark", "light"] as const).map((group) => (
+              <optgroup key={group} label={group === "dark" ? "Dark" : "Light"}>
+                {THEMES.filter((t) => t.group === group).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </div>
@@ -707,10 +711,12 @@ export function App() {
                     <button
                       type="button"
                       key={t.id}
+                      data-theme={t.id}
                       className={theme === t.id ? "theme-swatch active" : "theme-swatch"}
                       data-testid={`theme-${t.id}`}
                       onClick={() => persistTheme(t.id)}
                     >
+                      <div className="swatch-bar" aria-hidden="true" />
                       <div className="name">{t.label}</div>
                       <div className="group">{t.group}</div>
                     </button>
