@@ -951,7 +951,7 @@ class DjangoExtractor(ast.NodeVisitor):
             un = self.add_node(NodeType.URL_NAME, name, name, node.lineno, extra)
             self.add_edge(route_node.id, un.id, EdgeType.BELONGS_TO)
         if view_name:
-            vq = view_name if "." in view_name else f"{self.app}.{view_name.split('.')[-1]}"
+            vq = f"{self.app}.{view_name.split('.')[-1]}"
             self.add_edge(route_node.id, node_id(NodeType.VIEW, vq), EdgeType.PUBLISHES_ROUTE)
 
     def _router_register(self, node: ast.Call) -> None:
@@ -966,7 +966,7 @@ class DjangoExtractor(ast.NodeVisitor):
             NodeType.ROUTE, f"{route}", f"{self.app}:{route}", node.lineno, extra
         )
         if viewset:
-            vq = viewset if "." in viewset else f"{self.app}.{viewset.split('.')[-1]}"
+            vq = f"{self.app}.{viewset.split('.')[-1]}"
             self.add_edge(route_node.id, node_id(NodeType.VIEW, vq), EdgeType.PUBLISHES_ROUTE)
 
     def _get_model(self, node: ast.Call) -> None:

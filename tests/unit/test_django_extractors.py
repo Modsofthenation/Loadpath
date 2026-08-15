@@ -72,6 +72,20 @@ def test_empty_include_route_gets_a_readable_name():
     assert len(routes) == 3
 
 
+def test_module_prefixed_view_links_to_app_view_node():
+    source = (
+        "from django.urls import re_path\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    re_path(r'^add-leader$', views.add_leader, name='groups.add_leader'),\n"
+        "]\n"
+    )
+    g = extract_django_file("kitsune/groups/urls.py", source, _cfg())
+    edges = [e for e in g.edges if e.type.value == "publishes_route"]
+    assert edges
+    assert any(e.dst == "django.view:groups.add_leader" for e in edges)
+
+
 def test_extracts_signal_receiver():
     source = (FIXTURE / "backend/billing/signals.py").read_text()
     g = extract_django_file("backend/billing/signals.py", source, _cfg())
