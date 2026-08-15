@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+
 import pytest
 
 
@@ -332,3 +334,56 @@ def test_ui_oauth_login_and_remote_repo_list(live_app, browser_page):
     page.get_by_test_id("btn-github-login").click()
     page.get_by_test_id("github-user-code").wait_for()
     assert "WXYZ-9876" in page.get_by_test_id("github-user-code").inner_text()
+
+
+def _index_repo(page, repo) -> None:
+    page.get_by_test_id("repo-path").fill(str(repo))
+    with page.expect_response(
+        lambda r: "/api/index" in r.url and r.request.method == "POST",
+        timeout=60_000,
+    ) as pending:
+        page.get_by_test_id("btn-index").click()
+        page.locator(".progress").wait_for(timeout=5_000)
+    if not pending.value.ok:
+        pytest.fail(f"index API {pending.value.status}: {pending.value.text()}")
+    page.wait_for_function("() => !document.querySelector('[data-testid=\"btn-index\"]')?.disabled")
+
+
+@pytest.mark.playwright
+def test_ui_workspace_switch_shows_loading(live_app, browser_page):
+    base_url, repo = live_app
+    other = repo.parent / "other-billing"
+    shutil.copytree(repo, other)
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+
+    _index_repo(page, repo)
+    _index_repo(page, other)
+    page.get_by_test_id("workspace-select").wait_for()
+    assert page.get_by_test_id("workspace-select").input_value() == str(other)
+    page.get_by_test_id("tab-review").click()
+    page.get_by_test_id("review-empty").wait_for()
+
+    page.evaluate(
+        """() => {
+          const orig = window.fetch;
+          window.fetch = async (input, init) => {
+            const url = String(typeof input === "string" ? input : input.url);
+            if (url.includes("/api/architecture")) {
+              await new Promise((resolve) => setTimeout(resolve, 800));
+            }
+            return orig.call(window, input, init);
+          };
+        }"""
+    )
+
+    page.get_by_test_id("workspace-select").select_option(value=str(repo))
+    loading = page.get_by_test_id("workspace-loading")
+    loading.wait_for(timeout=5_000)
+    assert "loading" in loading.inner_text().lower()
+    page.get_by_test_id("progress").wait_for()
+    loading.wait_for(state="hidden", timeout=15_000)
+    assert page.get_by_test_id("workspace-select").input_value() == str(repo)
+    page.get_by_test_id("review-empty").wait_for()
+

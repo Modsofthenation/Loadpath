@@ -60,4 +60,14 @@ describe("graph selected-node overflow", () => {
     expect(style.display).toBe("-webkit-box");
     expect(style.webkitLineClamp).toBe("2");
   });
+
+  it("centers the workspace loading placeholder in the stage", () => {
+    mount(`<div class="empty workspace-loading"><h2>Loading pretix…</h2></div>`);
+    const el = document.querySelector(".workspace-loading") as HTMLElement;
+    const style = getComputedStyle(el);
+    expect(style.display).toBe("flex");
+    expect(style.flexDirection).toBe("column");
+    expect(style.justifyContent).toBe("center");
+    expect(style.textAlign).toBe("center");
+  });
 });
