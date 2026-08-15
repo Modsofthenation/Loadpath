@@ -26,6 +26,22 @@ export type Finding = {
   node_id?: string | null;
   file_path?: string | null;
   waived: boolean;
+  extra?: Record<string, unknown>;
+};
+
+export type DeepeningCandidate = {
+  rule: string;
+  strength: "strong" | "worth_exploring" | "speculative" | string;
+  title: string;
+  message: string;
+  file_path?: string | null;
+  node_id?: string | null;
+  deletion_test?: string;
+  leverage?: string;
+  locality?: string;
+  before?: string;
+  after?: string;
+  top?: boolean;
 };
 
 export type Review = {
@@ -52,6 +68,8 @@ export type Review = {
   sinks: { id: string; type: string; name: string }[];
   tests_note: string;
   architecture_note: string;
+  depth_note?: string;
+  deepening?: DeepeningCandidate[];
   evolution?: {
     hotspots: { path: string; commits: number; bus_factor: number; complexity?: number }[];
     change_coupling: { a: string; b: string; together: number; cross_context?: boolean }[];
@@ -101,6 +119,7 @@ export type ArchitectureReport = {
   >;
   rules: string[];
   findings: Finding[];
+  deepening?: DeepeningCandidate[];
   residuals: string[];
   has_config?: boolean;
   nodes: GraphNode[];

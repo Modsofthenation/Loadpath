@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from loadpath.architecture.depth import deepening_candidates
 from loadpath.architecture.rules import _related_accesses, evaluate
 from loadpath.config import LoadpathConfig, load_config
 from loadpath.graph.store import GraphStore
@@ -411,6 +412,8 @@ def run_review(
     sinks = _sink_summaries(impact_nodes, store)
     tests_note = _tests_note(confidence, impact_nodes)
     arch_note = _arch_note(scoped, kinds, impact_nodes)
+    depth_note = _depth_note(scoped)
+    deepening = deepening_candidates(scoped)
     drift = index_drift(store, repo_root, config)
     dirty_set = set(dirty)
     overlap = [p for p in diff.paths if p in dirty_set]
@@ -436,6 +439,8 @@ def run_review(
         "sinks": sinks,
         "tests_note": tests_note,
         "architecture_note": arch_note,
+        "depth_note": depth_note,
+        "deepening": deepening,
         "evolution": evolution,
         "nodes": impact_nodes,
         "edges": impact_edges,
@@ -464,7 +469,7 @@ def run_review(
             "head_sha": range_info.get("head_sha"),
         },
         "headline": _headline(
-            confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution
+            confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution, depth_note
         ),
     }
     store.save_review(payload["id"], payload["created_at"], str(repo_root), diff.base, diff.head, payload)
@@ -531,7 +536,16 @@ def _arch_note(findings: list, kinds: list[str], impact_nodes: list[dict] | None
     return "no cross-context rule hits"
 
 
-def _headline(confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution=None) -> str:
+def _depth_note(findings: list) -> str:
+    hits = [f for f in findings if not f.waived and f.rule in {"leaked_seam", "tests_bypass_interface"}]
+    if not hits:
+        return "published seams hold"
+    return hits[0].message
+
+
+def _headline(
+    confidence, title, sinks, tests_note, arch_note, residuals, reviewers, evolution=None, depth_note=""
+) -> str:
     sink_bits = []
     routes = [s["name"] for s in sinks if s["type"] == NodeType.ROUTE.value]
     celery_tasks = [s["name"] for s in sinks if s["type"] == NodeType.TASK.value and s.get("broker") == "celery"]
@@ -561,6 +575,7 @@ def _headline(confidence, title, sinks, tests_note, arch_note, residuals, review
         f"Sinks: {'; '.join(sink_bits) or 'none typed'}\n"
         f"Tests: {tests_note}\n"
         f"Architecture: {arch_note}\n"
+        f"Depth: {depth_note or 'published seams hold'}\n"
         f"Residual: {residual}\n"
         f"Churn: {churn}\n"
         f"Suggested reviewers: {owners}"
