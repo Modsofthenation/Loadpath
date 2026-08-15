@@ -198,6 +198,44 @@ def test_blank_and_missing_repo_path_rejected(tmp_path, monkeypatch):
     assert "not found" in missing.json()["detail"].lower()
 
 
+def test_api_browse_fs_and_git_refs(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    repo = prepare_review_repo(tmp_path)
+    client = TestClient(create_app())
+
+    home = client.get("/api/fs")
+    assert home.status_code == 200
+    assert home.json()["path"] == str((tmp_path / "home").resolve())
+
+    listing = client.get("/api/fs", params={"path": str(repo.parent)})
+    assert listing.status_code == 200
+    names = {item["name"]: item for item in listing.json()["entries"]}
+    assert names[repo.name]["is_git"] is True
+
+    here = client.get("/api/fs", params={"path": str(repo)})
+    assert here.json()["is_git"] is True
+
+    refs = client.get("/api/git/refs", params={"repo_path": str(repo), "limit": 50})
+    assert refs.status_code == 200, refs.text
+    body = refs.json()
+    assert body["git"] is True
+    assert body["presets"] == ["HEAD", "HEAD~1"]
+    subjects = [c["subject"] for c in body["commits"]]
+    assert "tighten Invoice.total contract" in subjects
+    assert any(b["name"] == "main" for b in body["branches"])
+    assert len(body["commits"]) <= 50
+
+    missing = client.get("/api/git/refs", params={"repo_path": "/no/such/loadpath-repo"})
+    assert missing.status_code == 404
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    not_git = client.get("/api/git/refs", params={"repo_path": str(plain)})
+    assert not_git.status_code == 200
+    assert not_git.json()["git"] is False
+
+
 def test_settings_empty_model_does_not_wipe(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir()

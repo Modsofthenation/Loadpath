@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
 import { formatWhen, kindLabel, strengthLabel, typeLabel } from "./format";
-import { IconArchitecture, IconGraph, IconPrs, IconReview, IconSettings } from "./icons";
+import { IconArchitecture, IconFolder, IconGraph, IconPrs, IconReview, IconSettings } from "./icons";
 import { ImpactGraph } from "./ImpactGraph";
+import { RefCombobox } from "./RefCombobox";
+import { RepoExplorer } from "./RepoExplorer";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
-import type { ArchitectureReport, DeepeningCandidate, IndexedRepo, PullRequest, Review } from "./types";
+import type { ArchitectureReport, DeepeningCandidate, GitRefs, IndexedRepo, PullRequest, Review } from "./types";
 
 type Tab = "review" | "architecture" | "graph" | "prs" | "settings";
 type GraphMode = "review" | "architecture";
@@ -37,8 +39,13 @@ export function App() {
   const [aiNote, setAiNote] = useState("");
   const [theme, setTheme] = useState<ThemeId>(readTheme);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [explorerOpen, setExplorerOpen] = useState(false);
+  const [gitRefs, setGitRefs] = useState<GitRefs | null>(null);
   const repoRef = useRef(repo);
   repoRef.current = repo;
+  const explorerOpenRef = useRef(false);
+  explorerOpenRef.current = explorerOpen;
+  const gitRefsPath = useRef("");
 
   const persistTheme = (id: ThemeId) => {
     setTheme(id);
@@ -86,7 +93,28 @@ export function App() {
   const persistRepo = (path: string) => {
     setRepo(path);
     localStorage.setItem("loadpath.repo", path);
+    if (path.trim() !== gitRefsPath.current) {
+      gitRefsPath.current = "";
+      setGitRefs(null);
+    }
   };
+
+  const loadGitRefs = useCallback(() => {
+    const path = repoRef.current.trim();
+    if (!path || gitRefsPath.current === path) return;
+    gitRefsPath.current = path;
+    api
+      .gitRefs(path)
+      .then((next) => {
+        if (repoRef.current.trim() === path) setGitRefs(next);
+      })
+      .catch(() => {
+        if (gitRefsPath.current === path) {
+          gitRefsPath.current = "";
+          setGitRefs(null);
+        }
+      });
+  }, []);
 
   const persistRefs = (nextBase: string, nextHead: string) => {
     setBase(nextBase);
@@ -259,6 +287,13 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (explorerOpenRef.current) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setExplorerOpen(false);
+        }
+        return;
+      }
       const el = event.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
         if (event.key === "Escape") (el as HTMLInputElement).blur();
@@ -381,32 +416,54 @@ export function App() {
           ) : null}
           <label className="field path">
             <span>Repository</span>
-            <input
-              data-testid="repo-path"
-              placeholder="Local monorepo path"
-              value={repo}
-              onChange={(e) => setRepo(e.target.value)}
-              spellCheck={false}
-            />
+            <div className="path-row">
+              <input
+                data-testid="repo-path"
+                placeholder="Local monorepo path"
+                value={repo}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setRepo(next);
+                  if (next.trim() !== gitRefsPath.current) {
+                    gitRefsPath.current = "";
+                    setGitRefs(null);
+                  }
+                }}
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className="icon-btn"
+                data-testid="btn-browse-repo"
+                aria-label="Browse for a local repository"
+                onClick={() => setExplorerOpen(true)}
+              >
+                <IconFolder />
+              </button>
+            </div>
           </label>
           <label className="field ref">
             <span>Base</span>
-            <input
-              data-testid="base-ref"
+            <RefCombobox
+              testId="base-ref"
+              menuTestId="base-ref-menu"
               value={base}
-              onChange={(e) => persistRefs(e.target.value, head)}
+              onChange={(next) => persistRefs(next, head)}
               placeholder="base"
-              spellCheck={false}
+              refs={gitRefs}
+              onNeedRefs={loadGitRefs}
             />
           </label>
           <label className="field ref">
             <span>Head</span>
-            <input
-              data-testid="head-ref"
+            <RefCombobox
+              testId="head-ref"
+              menuTestId="head-ref-menu"
               value={head}
-              onChange={(e) => persistRefs(base, e.target.value)}
+              onChange={(next) => persistRefs(base, next)}
               placeholder="head"
-              spellCheck={false}
+              refs={gitRefs}
+              onNeedRefs={loadGitRefs}
             />
           </label>
           <div className="topbar-actions">
@@ -715,6 +772,16 @@ export function App() {
           )}
         </div>
       </div>
+      {explorerOpen ? (
+        <RepoExplorer
+          initialPath={repo}
+          onClose={() => setExplorerOpen(false)}
+          onSelect={(path) => {
+            persistRepo(path);
+            setExplorerOpen(false);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
