@@ -1533,6 +1533,20 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
   color: var(--muted);
   white-space: nowrap;
 }
+.inspector-close {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.inspector-close:hover { color: var(--ink); }
 .inspector-purpose {
   margin: 6px 0 8px;
   color: var(--ink);

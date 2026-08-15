@@ -43,6 +43,18 @@ describe("factsFromExtra", () => {
       { key: "looks_idempotent_on_pk", label: "Idempotent on pk", value: "no" },
     ]);
   });
+
+  it("does not repeat role chips as facts", () => {
+    const facts = factsFromExtra({
+      generated: true,
+      inferred: true,
+      mutation: true,
+      fbv: true,
+      ninja: true,
+      method: "GET",
+    });
+    expect(facts.map((f) => f.key)).toEqual(["method"]);
+  });
 });
 
 describe("inspectNode", () => {
@@ -105,7 +117,6 @@ describe("inspectNode", () => {
     expect(info.facts.map((f) => `${f.label}: ${f.value}`)).toEqual([
       "Extends: ModelViewSet",
       "Permissions: IsAuthenticated",
-      "App: billing",
     ]);
     expect(info.inputs).toEqual([
       expect.objectContaining({
@@ -123,6 +134,21 @@ describe("inspectNode", () => {
   it("tags sinks and contracts", () => {
     const info = inspectNode(route, [route], []);
     expect(info.roles).toEqual(["sink", "contract"]);
+  });
+
+  it("keeps app when it is not the bounded context", () => {
+    const info = inspectNode(
+      node({
+        id: "django.view:billing.InvoiceViewSet",
+        type: "django.view",
+        name: "InvoiceViewSet",
+        context: "commerce",
+        extra: { app: "billing" },
+      }),
+      [],
+      [],
+    );
+    expect(info.facts).toEqual([{ key: "app", label: "App", value: "billing" }]);
   });
 
   it("caps long neighbor lists", () => {

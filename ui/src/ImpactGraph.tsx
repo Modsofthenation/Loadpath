@@ -105,10 +105,12 @@ function GraphInspector({
   node,
   nodes,
   edges,
+  onClose,
 }: {
   node: GraphNode;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  onClose: () => void;
 }) {
   const info = inspectNode(node, nodes, edges);
   return (
@@ -121,6 +123,15 @@ function GraphInspector({
               {role}
             </span>
           ))}
+          <button
+            type="button"
+            className="inspector-close"
+            data-testid="graph-inspector-close"
+            aria-label="Close inspector"
+            onClick={onClose}
+          >
+            ×
+          </button>
         </div>
       </div>
       <div className="n">{wrapHint(info.name)}</div>
@@ -240,6 +251,11 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
     setSelectedId(node.id);
   };
 
+  const clearSelection = () => {
+    setSelectedId(null);
+    setNeighborhoodOnly(false);
+  };
+
   const toggleFamily = (family: GraphFamily) => {
     setFamilies((current) => {
       const next = new Set(current);
@@ -355,7 +371,9 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
                 }}
               />
             </Suspense>
-            {selected ? <GraphInspector node={selected} nodes={nodes} edges={edges} /> : null}
+            {selected ? (
+              <GraphInspector node={selected} nodes={nodes} edges={edges} onClose={clearSelection} />
+            ) : null}
           </div>
         ) : (
           <ReactFlowProvider>
@@ -371,7 +389,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
               elementsSelectable
               deleteKeyCode={null}
               onNodeClick={onNodeClick}
-              onPaneClick={() => setSelectedId(null)}
+              onPaneClick={clearSelection}
               proOptions={{ hideAttribution: false }}
               data-testid="impact-graph"
             >
@@ -391,7 +409,9 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
               />
               <Controls />
             </ReactFlow>
-            {selected ? <GraphInspector node={selected} nodes={nodes} edges={edges} /> : null}
+            {selected ? (
+              <GraphInspector node={selected} nodes={nodes} edges={edges} onClose={clearSelection} />
+            ) : null}
           </ReactFlowProvider>
         )}
       </div>

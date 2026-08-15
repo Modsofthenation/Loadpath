@@ -198,6 +198,7 @@ const HIDDEN_EXTRA_KEYS = new Set([
 ]);
 
 const ALWAYS_SHOW_FALSE = new Set(["looks_idempotent_on_pk"]);
+const ROLE_FACT_KEYS = new Set(["inferred", "generated", "mutation", "fbv", "ninja"]);
 
 export type InspectorLink = {
   id: string;
@@ -275,7 +276,7 @@ export function inspectNode(
     file: loc,
     context: node.context,
     roles,
-    facts: factsFromExtra(extra),
+    facts: factsFromExtra(extra).filter((fact) => !(fact.key === "app" && fact.value === node.context)),
     inputs,
     outputs,
     extraInputs: Math.max(0, incoming.length - LINK_LIMIT),
@@ -305,7 +306,7 @@ export function factsFromExtra(extra: Record<string, unknown>): InspectorFact[] 
   const facts: InspectorFact[] = [];
   const seen = new Set<string>();
   for (const key of keys) {
-    if (seen.has(key) || HIDDEN_EXTRA_KEYS.has(key)) continue;
+    if (seen.has(key) || HIDDEN_EXTRA_KEYS.has(key) || ROLE_FACT_KEYS.has(key)) continue;
     seen.add(key);
     const formatted = formatFact(key, extra[key]);
     if (formatted == null) continue;
