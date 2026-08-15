@@ -36,9 +36,12 @@ MODEL_BASES = {"Model"}
 # Subpackages that are never the Django app name (billing/views/foo.py → billing).
 APP_PACKAGE_DIRS = {
     "views",
+    "viewsets",
     "serializers",
     "models",
     "forms",
+    "filtersets",
+    "filters",
     "tasks",
     "admin",
     "tests",
@@ -51,8 +54,11 @@ APP_PACKAGE_DIRS = {
     "receivers",
     "services",
     "handlers",
+    "api",
+    "endpoints",
+    "permissions",
+    "throttles",
 }
-REGEX_NAMED_GROUP = re.compile(r"\(\?P<(\w+)>[^)]*\)")
 ADMIN_BASES = {"ModelAdmin", "StackedInline", "TabularInline"}
 CELERY_DECORATORS = {"shared_task", "task", "periodic_task"}
 DRAMATIQ_DECORATORS = {"actor"}
@@ -166,17 +172,52 @@ def strip_url_anchors(route: str) -> str:
     return route
 
 
+def _replace_named_groups(route: str) -> str:
+    """Turn `(?P<slug>(?:[\\w-]+))` into `{slug}` without choking on nested groups."""
+    out: list[str] = []
+    i = 0
+    n = len(route)
+    while i < n:
+        if route.startswith("(?P<", i):
+            name_end = route.find(">", i + 4)
+            if name_end != -1:
+                name = route[i + 4 : name_end]
+                k = name_end + 1
+                depth = 1
+                in_class = False
+                while k < n and depth:
+                    ch = route[k]
+                    escaped = k > 0 and route[k - 1] == "\\"
+                    if not escaped:
+                        if in_class:
+                            if ch == "]":
+                                in_class = False
+                        elif ch == "[":
+                            in_class = True
+                        elif ch == "(":
+                            depth += 1
+                        elif ch == ")":
+                            depth -= 1
+                    k += 1
+                if depth == 0:
+                    out.append("{" + name + "}")
+                    i = k
+                    continue
+        out.append(route[i])
+        i += 1
+    return "".join(out)
+
+
 def pretty_url_pattern(route: str) -> str:
     """Turn `^$` / `(?P<slug>…)` into a graph-readable path fragment."""
-    route = REGEX_NAMED_GROUP.sub(r"{\1}", route or "")
-    return strip_url_anchors(route)
+    return strip_url_anchors(_replace_named_groups(route or ""))
 
 
 def _app_from_path(rel: str) -> str | None:
     parts = list(Path(rel).parts)
     if parts and parts[-1].endswith(".py"):
         parts = parts[:-1]
-    while parts and parts[-1] in APP_PACKAGE_DIRS:
+    while len(parts) > 1 and parts[-1] in APP_PACKAGE_DIRS:
         parts.pop()
     return parts[-1] if parts else None
 

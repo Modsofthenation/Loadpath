@@ -527,6 +527,10 @@ def test_views_package_uses_django_app_not_views_namespace():
     assert _app_from_path("src/pretix/control/views/vouchers.py") == "control"
     assert _app_from_path("src/pretix/presale/views/widget.py") == "presale"
     assert _app_from_path("wger/nutrition/tests/test_search_api.py") == "nutrition"
+    assert _app_from_path("wger/nutrition/api/views.py") == "nutrition"
+    assert _app_from_path("wger/nutrition/api/filtersets.py") == "nutrition"
+    assert _app_from_path("shop/api/viewsets/order.py") == "shop"
+    assert _app_from_path("api/views.py") == "api"
     assert _app_from_path("backend/billing/views.py") == "billing"
     assert _app_from_path("backend/billing/migrations/0001_initial.py") == "billing"
 
@@ -560,6 +564,30 @@ def test_regex_empty_and_named_group_routes_are_readable():
     assert any("{slug}/clone/" == n.name or n.name == "{slug}/clone" for n in routes)
     assert any(e.dst == "django.view:nimbus_ui.clone" for e in g.edges if e.type.value == "publishes_route")
 
+    nested = extract_django_file(
+        "shop/urls.py",
+        (
+            "from django.urls import re_path\n"
+            "from . import views\n"
+            "urlpatterns = [\n"
+            "    re_path(r'^(?P<slug>(?:[\\w-]+))/$', views.item, name='item'),\n"
+            "]\n"
+        ),
+        _cfg(),
+    )
+    nested_names = {n.name for n in nested.nodes if n.type is NodeType.ROUTE}
+    assert "{slug}/" in nested_names or "{slug}" in nested_names
+    assert not any(")" in name for name in nested_names)
+
+
+def test_pretty_url_pattern_nested_named_groups():
+    from loadpath.extractors.django import pretty_url_pattern
+
+    assert pretty_url_pattern(r"^(?P<slug>(?:[\w-]+))/$") in {"{slug}/", "{slug}"}
+    assert ")" not in pretty_url_pattern(r"^(?P<slug>(?:[\w-]+))/$")
+    assert pretty_url_pattern(r"^$") in {"", "/"}
+    assert pretty_url_pattern(r"^") == ""
+
 
 def test_filterset_is_a_form_and_links_from_the_view():
     filters = (
@@ -585,10 +613,10 @@ def test_filterset_is_a_form_and_links_from_the_view():
     fs = next(n for n in fg.nodes if n.name == "IngredientFilterSet")
     assert fs.type is NodeType.FORM
     assert fs.extra.get("filterset") is True
-    assert fs.qualified_name == "api.IngredientFilterSet"
+    assert fs.qualified_name == "nutrition.IngredientFilterSet"
     assert any(e.src == fs.id and e.type.value == "serializes" for e in fg.edges)
     assert any(
-        e.src == "django.view:api.IngredientViewSet" and e.dst == "django.form:api.IngredientFilterSet"
+        e.src == "django.view:nutrition.IngredientViewSet" and e.dst == "django.form:nutrition.IngredientFilterSet"
         for e in vg.edges
     )
 

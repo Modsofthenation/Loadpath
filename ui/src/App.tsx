@@ -44,6 +44,7 @@ export function App() {
   const [graphMode, setGraphMode] = useState<GraphMode>("review");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [copied, setCopied] = useState("");
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [prs, setPrs] = useState<PullRequest[]>([]);
@@ -269,20 +270,27 @@ export function App() {
   const switchWorkspace = async (path: string) => {
     const next = path.trim();
     if (!next || next === repoRef.current) return;
-    if (busyRef.current) return;
+    if (busyRef.current) {
+      setError("Wait for the current job to finish before switching workspace.");
+      return;
+    }
     setError("");
     setCopied("");
     setReview(null);
     setArchitecture(null);
     setGraphMode("architecture");
     persistRepo(next);
+    setWorkspaceLoading(true);
     markBusy(`Loading ${repoName(next)}…`);
     try {
       await Promise.all([loadArchitecture(next), loadGitRefs(next)]);
     } catch (e) {
       if (repoRef.current === next) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      if (repoRef.current === next) markBusy("");
+      if (repoRef.current === next) {
+        markBusy("");
+        setWorkspaceLoading(false);
+      }
     }
   };
 
@@ -517,7 +525,6 @@ export function App() {
       : "Not indexed";
 
   const findings = (review?.findings || []).filter((f) => !f.waived);
-  const workspaceLoading = busy.startsWith("Loading ");
 
   return (
     <div className="app">
@@ -1116,6 +1123,10 @@ export function App() {
           initialPath={repo}
           onClose={() => setExplorerOpen(false)}
           onSelect={(path) => {
+            if (busyRef.current) {
+              setError("Wait for the current job to finish before switching workspace.");
+              return;
+            }
             setExplorerOpen(false);
             void switchWorkspace(path);
           }}

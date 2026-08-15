@@ -307,6 +307,11 @@ export function layoutNodes(
     preds.get(e.dst)!.push(e.src);
   }
 
+  const colOf = new Map<string, number>();
+  order.forEach((col, colIndex) => {
+    for (const n of col) colOf.set(n.id, colIndex);
+  });
+
   const rank = new Map<string, number>();
   const refreshRanks = () => {
     for (const col of order) {
@@ -327,13 +332,15 @@ export function layoutNodes(
     return keyed.map((k) => k.n);
   };
 
+  const inColumn = (colIndex: number) => (nbr: string) => colOf.get(nbr) === colIndex;
+
   for (let pass = 0; pass < LAYOUT_PASSES; pass++) {
     for (let i = 1; i < order.length; i++) {
-      order[i] = sortByBarycenter(order[i]!, (id) => preds.get(id) ?? []);
+      order[i] = sortByBarycenter(order[i]!, (id) => (preds.get(id) ?? []).filter(inColumn(i - 1)));
       refreshRanks();
     }
     for (let i = order.length - 2; i >= 0; i--) {
-      order[i] = sortByBarycenter(order[i]!, (id) => succs.get(id) ?? []);
+      order[i] = sortByBarycenter(order[i]!, (id) => (succs.get(id) ?? []).filter(inColumn(i + 1)));
       refreshRanks();
     }
   }

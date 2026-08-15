@@ -89,4 +89,22 @@ describe("load-path layout", () => {
     const swappedTargets = pos.get("bp")!.y - pos.get("ap")!.y;
     expect(sourceOrder * swappedTargets).toBeGreaterThan(0);
   });
+
+  it("ignores skip-layer edges when ordering a middle column", () => {
+    const nodes = [
+      node("a", "django.route", "A"),
+      node("b", "django.route", "B"),
+      node("ua", "django.url_name", "UA"),
+      node("ub", "django.url_name", "UB"),
+      node("va", "django.view", "VA"),
+      node("vb", "django.view", "VB"),
+    ];
+    const edges = [edge("a", "ua"), edge("ua", "va"), edge("b", "ub"), edge("ub", "vb"), edge("a", "vb")];
+    const pos = layoutNodes(nodes, edges);
+    expect(pos.get("ua")!.x).toBeGreaterThan(pos.get("a")!.x);
+    expect(pos.get("va")!.x).toBeGreaterThan(pos.get("ua")!.x);
+    const urlOrder = pos.get("ua")!.y - pos.get("ub")!.y;
+    const routeOrder = pos.get("a")!.y - pos.get("b")!.y;
+    expect(urlOrder * routeOrder).toBeGreaterThan(0);
+  });
 });
