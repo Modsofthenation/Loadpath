@@ -8,6 +8,8 @@ contexts:
       - "POST /api/invoices"
       - "GET /api/invoices/{id}"
       - "PUT /api/invoices/{id}"
+      - "GET /api/invoices/totals"
+      - "POST /graphql"
     owners: [billing-team]
   identity:
     django_apps: [accounts]

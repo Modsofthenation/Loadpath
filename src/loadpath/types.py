@@ -38,6 +38,18 @@ class NodeType(StrEnum):
     ADMIN = "django.admin"
     MANAGEMENT_COMMAND = "django.management_command"
     TEST = "django.test"
+    CONSUMER = "django.consumer"
+    WEBSOCKET_ROUTE = "django.websocket_route"
+    TEMPLATE = "django.template"
+    HTMX_CALL = "django.htmx"
+    CACHE_KEY = "django.cache_key"
+    FEATURE_FLAG = "django.feature_flag"
+    SIDE_EFFECT = "django.side_effect"
+    GRAPHQL_TYPE = "graphql.type"
+    GRAPHQL_FIELD = "graphql.field"
+    GRAPHQL_OPERATION = "graphql.operation"
+    FASTAPI_ROUTE = "fastapi.route"
+    PYDANTIC_MODEL = "fastapi.model"
     # React
     REACT_ROUTE = "react.route"
     PAGE = "react.page"
@@ -76,6 +88,12 @@ class EdgeType(StrEnum):
     HAS_PERMISSION = "has_permission"
     SERVES = "serves"
     RELATES_TO = "relates_to"
+    SERVES_TEMPLATE = "serves_template"
+    HTMX_CALLS = "htmx_calls"
+    INVALIDATES_CACHE = "invalidates_cache"
+    CHECKS_FLAG = "checks_flag"
+    ON_COMMIT = "on_commit"
+    PUBLISHES_GRAPHQL = "publishes_graphql"
 
 
 class EdgeWeight(StrEnum):
@@ -93,6 +111,8 @@ CHEAP_EDGES = {
     EdgeType.SERVES,
     EdgeType.USES_QUERY_KEY,
     EdgeType.RELATES_TO,
+    EdgeType.SERVES_TEMPLATE,
+    EdgeType.CHECKS_FLAG,
 }
 EXPENSIVE_EDGES = {
     EdgeType.SERIALIZES,
@@ -104,6 +124,10 @@ EXPENSIVE_EDGES = {
     EdgeType.HAS_PERMISSION,
     EdgeType.TESTED_BY,
     EdgeType.MATCHES_SCHEMA,
+    EdgeType.HTMX_CALLS,
+    EdgeType.INVALIDATES_CACHE,
+    EdgeType.ON_COMMIT,
+    EdgeType.PUBLISHES_GRAPHQL,
 }
 CRITICAL_EDGES = {
     EdgeType.PUBLISHES_ROUTE,
@@ -124,6 +148,14 @@ SINK_TYPES = {
     NodeType.ADMIN,
     NodeType.MANAGEMENT_COMMAND,
     NodeType.OPENAPI_PATH,
+    NodeType.CONSUMER,
+    NodeType.WEBSOCKET_ROUTE,
+    NodeType.TEMPLATE,
+    NodeType.CACHE_KEY,
+    NodeType.FEATURE_FLAG,
+    NodeType.SIDE_EFFECT,
+    NodeType.GRAPHQL_OPERATION,
+    NodeType.FASTAPI_ROUTE,
 }
 
 CONTRACT_TYPES = {
@@ -133,6 +165,11 @@ CONTRACT_TYPES = {
     NodeType.OPENAPI_PATH,
     NodeType.FORM_SCHEMA,
     NodeType.ROUTE,
+    NodeType.GRAPHQL_TYPE,
+    NodeType.GRAPHQL_FIELD,
+    NodeType.GRAPHQL_OPERATION,
+    NodeType.PYDANTIC_MODEL,
+    NodeType.FASTAPI_ROUTE,
 }
 
 GENERATED_PATH_MARKERS = (
@@ -156,6 +193,13 @@ class ChangeKind(StrEnum):
     AUTH = "auth"
     CROSS_CONTEXT = "cross_context"
     MIXED = "mixed"
+
+
+class ContractBreakKind(StrEnum):
+    NONE = "none"
+    ADDITIVE = "additive"
+    BREAKING = "breaking"
+    DRIFT = "drift"
 
 
 class ConfidenceLevel(StrEnum):

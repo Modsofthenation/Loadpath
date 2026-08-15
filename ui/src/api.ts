@@ -1,4 +1,4 @@
-import type { ArchitectureReport, FsListing, GitRefs, IndexedRepo, PullRequest, RemoteRepo, Review } from "./types";
+import type { ArchitectureReport, FsListing, GitRefs, GraphNode, IndexedRepo, PullRequest, RemoteRepo, Review } from "./types";
 
 export function formatApiError(text: string, fallback = "Request failed"): string {
   const trimmed = (text || "").trim();
@@ -39,6 +39,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 const BLANK_SETTINGS_KEYS = [
   "github_token",
+  "gitlab_token",
+  "gitlab_oauth_client_secret",
   "bitbucket_token",
   "bitbucket_oauth_client_secret",
   "ai_api_key",
@@ -70,10 +72,31 @@ export const api = {
     req<ArchitectureReport>(`/api/index?repo_path=${encodeURIComponent(repo_path)}`),
   architecture: (repo_path: string) =>
     req<ArchitectureReport>(`/api/architecture?repo_path=${encodeURIComponent(repo_path)}`),
-  review: (repo_path: string, base: string, head?: string, reindex = true) =>
+  review: (repo_path: string, base: string, head?: string, reindex = true, dirty = false) =>
     req<Review>("/api/review", {
       method: "POST",
-      body: JSON.stringify({ repo_path, base, head: head || null, reindex, incremental: true, three_dot: true }),
+      body: JSON.stringify({
+        repo_path,
+        base,
+        head: head || null,
+        reindex,
+        incremental: true,
+        three_dot: true,
+        dirty,
+      }),
+    }),
+  whatIf: (repo_path: string, node_id: string) =>
+    req<
+      Review & {
+        ok: boolean;
+        node: GraphNode;
+        what_if?: boolean;
+      }
+    >("/api/whatif", { method: "POST", body: JSON.stringify({ repo_path, node_id }) }),
+  reviewPr: (provider: string, repo: string, number: number, repo_path?: string) =>
+    req<Review & { pull_request?: Record<string, unknown> }>("/api/prs/review", {
+      method: "POST",
+      body: JSON.stringify({ provider, repo, number, repo_path: repo_path || null }),
     }),
   init: (repo_path: string, overwrite = false) =>
     req<{ wrote: boolean; message: string; django_root: string; react_root: string; has_config: boolean }>(
@@ -100,7 +123,8 @@ export const api = {
     ),
   oauthStatus: () =>
     req<{
-      github: { connected: boolean; user: string; token_set: boolean; oauth_ready: boolean };
+      github: { connected: boolean; user: string; token_set: boolean; oauth_ready: boolean; host?: string };
+      gitlab: { connected: boolean; user: string; token_set: boolean; oauth_ready: boolean; host?: string };
       bitbucket: { connected: boolean; user: string; token_set: boolean; oauth_ready: boolean };
     }>("/api/oauth/status"),
   githubOAuthStart: () =>
@@ -119,6 +143,8 @@ export const api = {
     }),
   bitbucketOAuthStart: () =>
     req<{ flow_id: string; authorize_url: string }>("/api/oauth/bitbucket/start"),
+  gitlabOAuthStart: () =>
+    req<{ flow_id: string; authorize_url: string }>("/api/oauth/gitlab/start"),
   oauthDisconnect: (provider: string) =>
     req<Record<string, unknown>>("/api/oauth/disconnect", {
       method: "POST",

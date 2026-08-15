@@ -13,6 +13,8 @@ export function isAllowedExternalUrl(url) {
     host.endsWith(".github.com") ||
     host === "bitbucket.org" ||
     host.endsWith(".bitbucket.org") ||
+    host === "gitlab.com" ||
+    host.endsWith(".gitlab.com") ||
     host === "id.atlassian.com" ||
     host.endsWith(".atlassian.com")
   );

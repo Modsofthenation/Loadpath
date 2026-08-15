@@ -40,6 +40,13 @@ class AppSettings(BaseModel):
     github_token: str = ""
     github_user: str = ""
     github_oauth_client_id: str = ""
+    github_host: str = ""
+    gitlab_token: str = ""
+    gitlab_user: str = ""
+    gitlab_host: str = ""
+    gitlab_oauth_client_id: str = ""
+    gitlab_oauth_client_secret: str = ""
+    gitlab_refresh_token: str = ""
     bitbucket_token: str = ""
     bitbucket_username: str = ""
     bitbucket_workspace: str = ""
@@ -108,14 +115,23 @@ def register_workspace(path: Path, name: str | None = None) -> AppSettings:
 def public_settings(settings: AppSettings) -> dict[str, Any]:
     data = settings.model_dump()
     data["github_token"] = mask_secret(settings.github_token)
+    data["gitlab_token"] = mask_secret(settings.gitlab_token)
+    data["gitlab_refresh_token"] = mask_secret(settings.gitlab_refresh_token)
+    data["gitlab_oauth_client_secret"] = mask_secret(settings.gitlab_oauth_client_secret)
     data["bitbucket_token"] = mask_secret(settings.bitbucket_token)
     data["bitbucket_refresh_token"] = mask_secret(settings.bitbucket_refresh_token)
     data["bitbucket_oauth_client_secret"] = mask_secret(settings.bitbucket_oauth_client_secret)
     data["github_token_set"] = bool(settings.github_token)
+    data["gitlab_token_set"] = bool(settings.gitlab_token)
+    data["gitlab_oauth_client_secret_set"] = bool(settings.gitlab_oauth_client_secret)
     data["bitbucket_token_set"] = bool(settings.bitbucket_token)
     data["bitbucket_oauth_client_secret_set"] = bool(settings.bitbucket_oauth_client_secret)
     data["github_oauth_ready"] = bool(
         (os.environ.get("LOADPATH_GITHUB_CLIENT_ID") or settings.github_oauth_client_id or "").strip()
+    )
+    data["gitlab_oauth_ready"] = bool(
+        (os.environ.get("LOADPATH_GITLAB_CLIENT_ID") or settings.gitlab_oauth_client_id or "").strip()
+        and (os.environ.get("LOADPATH_GITLAB_CLIENT_SECRET") or settings.gitlab_oauth_client_secret or "").strip()
     )
     data["bitbucket_oauth_ready"] = bool(
         (os.environ.get("LOADPATH_BITBUCKET_CLIENT_ID") or settings.bitbucket_oauth_client_id or "").strip()

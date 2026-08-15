@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from loadpath.providers.scm import BitbucketProvider, GitHubProvider
+from loadpath.providers.scm import BitbucketProvider, GitHubProvider, GitLabProvider
 from loadpath.server.app import create_app
 from loadpath.settings import AppSettings
 
@@ -115,7 +115,9 @@ def test_parse_remote_url_github_and_bitbucket():
     assert parse_remote_url("https://x-access-token:tok@github.com/acme/demo.git") == ("github", "acme/demo")
     assert parse_remote_url("https://bitbucket.org/acme/demo.git") == ("bitbucket", "acme/demo")
     assert parse_remote_url("git@bitbucket.org:acme/demo.git") == ("bitbucket", "acme/demo")
-    assert parse_remote_url("https://gitlab.com/acme/demo.git") is None
+    assert parse_remote_url("https://gitlab.com/acme/demo.git") == ("gitlab", "acme/demo")
+    assert parse_remote_url("git@gitlab.com:acme/demo.git") == ("gitlab", "acme/demo")
+    assert parse_remote_url("https://gitlab.example.com/acme/demo.git") == ("gitlab", "acme/demo")
 
 
 def test_github_lists_repositories_across_pages():
@@ -218,3 +220,60 @@ def test_bitbucket_lists_repositories_via_next():
     assert bb.current_user()["login"] == "bob"
     repos = bb.list_repositories()
     assert [r.slug for r in repos] == ["acme/demo", "acme/ledger"]
+
+
+def test_github_enterprise_uses_api_v3():
+    gh = GitHubProvider("tok", host="github.example.com")
+    assert gh.base == "https://github.example.com/api/v3"
+    cloud = GitHubProvider("tok", host="github.com")
+    assert cloud.base == "https://api.github.com"
+
+
+def test_gitlab_lists_merge_requests():
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/user"):
+            return httpx.Response(200, json={"username": "ada", "name": "Ada", "web_url": "https://gitlab.com/ada"})
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": 90,
+                    "iid": 4,
+                    "title": "Invoice total",
+                    "web_url": "https://gitlab.com/acme/demo/-/merge_requests/4",
+                    "author": {"username": "ada"},
+                    "source_branch": "feat/total",
+                    "target_branch": "main",
+                    "state": "opened",
+                    "updated_at": "2026-08-14T00:00:00Z",
+                    "draft": False,
+                    "sha": "abc",
+                    "diff_refs": {"base_sha": "def", "head_sha": "abc"},
+                }
+            ],
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    gl = GitLabProvider("tok", client=client)
+    assert gl.current_user()["login"] == "ada"
+    mrs = gl.list_pull_requests("acme/demo")
+    assert mrs[0].number == 4
+    assert mrs[0].provider == "gitlab"
+    assert mrs[0].source_branch == "feat/total"
+
+
+def test_clone_url_and_fetch_spec():
+    from loadpath.providers.pr_fetch import clone_url, fetch_spec, local_pr_ref
+
+    gh = clone_url("github", "acme/demo", "tok")
+    assert "x-access-token:tok@" in gh
+    assert gh.endswith("github.com/acme/demo.git")
+    gl = clone_url("gitlab", "acme/demo", "glpat", "gitlab.example.com")
+    assert "oauth2:glpat@" in gl
+    assert "gitlab.example.com/acme/demo.git" in gl
+    assert fetch_spec("github", 12) == "pull/12/head"
+    assert fetch_spec("gitlab", 4) == "merge-requests/4/head"
+    assert fetch_spec("bitbucket", 3) == "pull-requests/3/from"
+    assert local_pr_ref(12) == "refs/loadpath/pr-12"

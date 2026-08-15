@@ -30,6 +30,16 @@ ARCHITECTURE_NODE_TYPES = {
     NodeType.HOOK.value,
     NodeType.API_CLIENT.value,
     NodeType.FORM_SCHEMA.value,
+    NodeType.GRAPHQL_TYPE.value,
+    NodeType.GRAPHQL_OPERATION.value,
+    NodeType.FASTAPI_ROUTE.value,
+    NodeType.PYDANTIC_MODEL.value,
+    NodeType.CONSUMER.value,
+    NodeType.WEBSOCKET_ROUTE.value,
+    NodeType.TEMPLATE.value,
+    NodeType.CACHE_KEY.value,
+    NodeType.FEATURE_FLAG.value,
+    NodeType.SIDE_EFFECT.value,
 }
 
 

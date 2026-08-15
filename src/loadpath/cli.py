@@ -87,10 +87,43 @@ def review(
     reindex: bool = typer.Option(True, "--reindex/--no-reindex", help="Refresh the index before walking the diff"),
     full: bool = typer.Option(False, "--full", help="Full reindex instead of incremental"),
     three_dot: bool = typer.Option(True, "--three-dot/--two-dot", help="PR-shaped range (merge-base...head)"),
+    dirty: bool = typer.Option(False, "--dirty", help="Include uncommitted files in the review"),
+    fail_on: str = typer.Option(
+        "never",
+        "--fail-on",
+        help="CI gate: never | blocker | low | medium",
+    ),
+    comment: bool = typer.Option(False, "--comment", help="Upsert the Loadpath brief on --pr"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="github | gitlab | bitbucket"),
+    pr: Optional[int] = typer.Option(None, "--pr", help="Pull/merge request number to comment on or fetch"),
+    scm_repo: Optional[str] = typer.Option(None, "--repo", help="owner/name for --comment / --pr fetch"),
+    fetch_pr: bool = typer.Option(False, "--fetch-pr", help="Fetch --pr refs into this clone before reviewing"),
+    github_output: Optional[Path] = typer.Option(None, "--github-output", help="Append gate fields for GitHub Actions"),
 ) -> None:
     """Review a git range as clustered load paths + confidence brief."""
+    import os
+
+    from loadpath.review.gate import FAIL_ON_CHOICES, gate_result, write_github_output
+    from loadpath.review.render import render_html, render_markdown
+
+    repo_path = repo
+    if fetch_pr and pr and provider and scm_repo:
+        from loadpath.providers.pr_fetch import prepare_pull_request
+
+        prepared = prepare_pull_request(provider, scm_repo, pr, repo_path=str(repo))
+        repo_path = Path(prepared["repo_path"])
+        base = prepared["base"]
+        head = prepared["head"]
+        console.print(f"Fetched {provider} #{pr} → {head} (base {base})")
+
     payload = run_review(
-        repo, base=base, head=head, reindex=reindex, incremental=not full, three_dot=three_dot
+        repo_path,
+        base=base,
+        head=head,
+        reindex=reindex,
+        incremental=not full,
+        three_dot=three_dot,
+        dirty=dirty,
     )
     if format == "json":
         import json
@@ -101,13 +134,77 @@ def review(
     else:
         text = render_markdown(payload)
         console.print(Markdown(text))
-        if out is None:
-            return
+        if out is None and not comment and fail_on == "never" and github_output is None and not os.environ.get("GITHUB_OUTPUT"):
+            gate = gate_result(payload, fail_on)
+            raise typer.Exit(code=gate["exit_code"])
     if out:
         out.write_text(text, encoding="utf-8")
         console.print(f"Wrote {out}")
     elif format != "markdown":
         console.print(text)
+
+    if comment:
+        from loadpath.providers.scm import provider_for
+        from loadpath.settings import AppSettings
+
+        settings = AppSettings.load()
+        name = provider or "github"
+        number = pr
+        slug = scm_repo
+        if not number or not slug:
+            console.print("--comment needs --pr and --repo owner/name")
+            raise typer.Exit(code=1)
+        token = ""
+        username = ""
+        host = ""
+        if name == "github":
+            token = settings.github_token or os.environ.get("GITHUB_TOKEN") or os.environ.get("LOADPATH_GITHUB_TOKEN") or ""
+            host = settings.github_host
+        elif name == "gitlab":
+            token = settings.gitlab_token or os.environ.get("GITLAB_TOKEN") or os.environ.get("LOADPATH_GITLAB_TOKEN") or ""
+            host = settings.gitlab_host
+        else:
+            token = settings.bitbucket_token
+            username = settings.bitbucket_username
+        if not token:
+            console.print(f"No {name} token in settings or environment")
+            raise typer.Exit(code=1)
+        posted = provider_for(name, token, username=username, host=host).upsert_pull_request_comment(
+            slug, number, render_markdown(payload)
+        )
+        action = "Updated" if posted.get("updated") else "Posted"
+        console.print(f"{action} Loadpath comment on {slug}#{number}")
+
+    output_path = github_output or (Path(os.environ["GITHUB_OUTPUT"]) if os.environ.get("GITHUB_OUTPUT") else None)
+    gate = gate_result(payload, fail_on if fail_on in FAIL_ON_CHOICES else "never")
+    if output_path:
+        write_github_output(str(output_path), gate, payload)
+    if fail_on != "never" or gate["exit_code"]:
+        if not gate["passed"]:
+            console.print(gate["annotation"])
+        raise typer.Exit(code=gate["exit_code"])
+
+
+@app.command("whatif")
+def whatif_cmd(
+    repo: Path = typer.Argument(Path("."), exists=True, file_okay=False),
+    node: str = typer.Argument(..., help="Node id from the index (e.g. django.field:billing.Invoice.total)"),
+) -> None:
+    """Walk sinks from one indexed node — no git range required."""
+    from loadpath.review.whatif import simulate_node
+
+    try:
+        payload = simulate_node(repo, node)
+    except (FileNotFoundError, KeyError) as exc:
+        console.print(str(exc))
+        raise typer.Exit(code=1) from exc
+    console.print(f"{payload['title']}")
+    console.print(f"Confidence: {payload['confidence']['level']}")
+    sinks = payload.get("sinks") or []
+    if sinks:
+        console.print("Sinks: " + ", ".join(s.get("name") or "" for s in sinks[:8]))
+    for sketch in (payload.get("suggested_tests") or [])[:3]:
+        console.print(f"Test: {sketch['title']}")
 
 
 @app.command()

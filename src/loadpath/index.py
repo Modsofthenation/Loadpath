@@ -7,15 +7,16 @@ from pathlib import Path
 from loadpath.config import LoadpathConfig, load_config
 from loadpath.extractors.django import extract_django_file
 from loadpath.extractors.react import extract_react_file
+from loadpath.extractors.templates import extract_template_file
 from loadpath.extractors.django_boot import try_boot_models
 from loadpath.graph.store import GraphStore
 from loadpath.stitch.openapi import stitch
 from loadpath.types import GENERATED_PATH_MARKERS, ExtractedGraph, Node, NodeType, node_id
 
 PY_SKIP = {"migrations"}  # still extract migrations, just not skip
-INDEX_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx"}
+INDEX_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".html", ".htm"}
 # Bump when extractor/stitch node identity changes so incremental indexes rebuild.
-INDEX_REVISION = "8"
+INDEX_REVISION = "10"
 
 
 def default_db_path(repo_root: Path) -> Path:
@@ -68,6 +69,8 @@ def file_hash(path: Path) -> str:
 def language_for(path: Path) -> str:
     if path.suffix == ".py":
         return "python"
+    if path.suffix in {".html", ".htm"}:
+        return "html"
     if path.suffix in {".ts", ".tsx"}:
         return "typescript"
     return "javascript"
@@ -177,7 +180,9 @@ def index_repo(
             continue
         store.delete_file_nodes(rel, drop_incoming=False)
         source = path.read_text(encoding="utf-8", errors="replace")
-        if path.suffix == ".py":
+        if path.suffix in {".html", ".htm"}:
+            graph = extract_template_file(rel, source, config)
+        elif path.suffix == ".py":
             graph = extract_django_file(rel, source, config)
         else:
             graph = extract_react_file(rel, source, config)
@@ -234,7 +239,7 @@ def _assign_contexts(graph: ExtractedGraph, config: LoadpathConfig, rel: str) ->
     for node in graph.nodes:
         if node.context:
             continue
-        if node.type.value.startswith("django.") or node.type.value.startswith("react."):
+        if node.type.value.startswith(("django.", "react.", "fastapi.", "graphql.")):
             if rel.endswith(".py"):
                 app = (node.extra or {}).get("app")
                 if app:

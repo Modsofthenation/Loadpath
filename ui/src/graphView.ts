@@ -13,6 +13,7 @@ export const OVERVIEW_HIDDEN_TYPES = new Set([
   "django.relation",
   "django.test",
   "react.test",
+  "graphql.field",
   "django.url_name",
   "django.throttle",
 ]);
@@ -36,6 +37,17 @@ export const TYPE_COLOR: Record<string, string> = {
   "django.test": "#6c757d",
   "django.admin": "#adb5bd",
   "django.migration_op": "#9d4edd",
+  "django.consumer": "#e76f51",
+  "django.websocket_route": "#4cc9f0",
+  "django.template": "#c77dff",
+  "django.htmx": "#ff6b6b",
+  "django.cache_key": "#6c757d",
+  "django.feature_flag": "#f4a261",
+  "django.side_effect": "#e85d04",
+  "graphql.type": "#00bbf9",
+  "graphql.operation": "#00bbf9",
+  "fastapi.route": "#4cc9f0",
+  "fastapi.model": "#f4a261",
   "openapi.path": "#00bbf9",
   "react.api_client": "#ff6b6b",
   "react.query_key": "#adb5bd",
@@ -71,7 +83,7 @@ export const LAYER_LABELS: Record<number, string> = {
 
 export function familyFor(type: string): GraphFamily {
   if (type.startsWith("react.")) return "react";
-  if (type.startsWith("openapi.")) return "stitch";
+  if (type.startsWith("openapi.") || type.startsWith("graphql.") || type.startsWith("fastapi.")) return "stitch";
   if (type.startsWith("arch.")) return "arch";
   return "django";
 }

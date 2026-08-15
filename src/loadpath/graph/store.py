@@ -300,11 +300,25 @@ class GraphStore:
             "payload": json.loads(row["payload"]),
         }
 
-    def list_reviews(self) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT id, created_at, repo_root, base_ref, head_ref FROM reviews ORDER BY created_at DESC"
-        ).fetchall()
-        return [dict(r) for r in rows]
+    def list_reviews(self, *, include_payload: bool = False, limit: int = 40) -> list[dict[str, Any]]:
+        sql = "SELECT id, created_at, repo_root, base_ref, head_ref"
+        if include_payload:
+            sql += ", payload"
+        sql += " FROM reviews ORDER BY created_at DESC LIMIT ?"
+        rows = self.conn.execute(sql, (max(1, min(limit, 200)),)).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "repo_root": row["repo_root"],
+                "base_ref": row["base_ref"],
+                "head_ref": row["head_ref"],
+            }
+            if include_payload:
+                item["payload"] = json.loads(row["payload"])
+            out.append(item)
+        return out
 
     def counts(self) -> dict[str, int]:
         n = self.conn.execute("SELECT COUNT(*) AS c FROM nodes").fetchone()["c"]

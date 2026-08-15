@@ -51,6 +51,8 @@ export function App() {
   const [scmRepo, setScmRepo] = useState(localStorage.getItem("loadpath.scmRepo") || "");
   const [provider, setProvider] = useState(localStorage.getItem("loadpath.provider") || "github");
   const [prNumber, setPrNumber] = useState(localStorage.getItem("loadpath.prNumber") || "");
+  const [dirty, setDirty] = useState(localStorage.getItem("loadpath.dirty") === "1");
+  const [tourIndex, setTourIndex] = useState(0);
   const [aiNote, setAiNote] = useState("");
   const [theme, setTheme] = useState<ThemeId>(readTheme);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -63,6 +65,7 @@ export function App() {
     interval: number;
   } | null>(null);
   const [bitbucketWaiting, setBitbucketWaiting] = useState(false);
+  const [gitlabWaiting, setGitlabWaiting] = useState(false);
   const repoRef = useRef(repo);
   repoRef.current = repo;
   const explorerOpenRef = useRef(false);
@@ -157,7 +160,11 @@ export function App() {
   };
 
   const tokenSetFor = (name: string) =>
-    name === "github" ? Boolean(settings.github_token_set) : Boolean(settings.bitbucket_token_set);
+    name === "github"
+      ? Boolean(settings.github_token_set)
+      : name === "gitlab"
+        ? Boolean(settings.gitlab_token_set)
+        : Boolean(settings.bitbucket_token_set);
 
   const loadRemoteRepos = useCallback(async (name = provider) => {
     try {
@@ -166,7 +173,11 @@ export function App() {
       if (listed.user?.login) {
         setSettings((current) => ({
           ...current,
-          ...(name === "github" ? { github_user: listed.user.login } : { bitbucket_user: listed.user.login }),
+          ...(name === "github"
+            ? { github_user: listed.user.login }
+            : name === "gitlab"
+              ? { gitlab_user: listed.user.login }
+              : { bitbucket_user: listed.user.login }),
         }));
       }
     } catch {
@@ -258,6 +269,42 @@ export function App() {
     };
   }, [bitbucketWaiting, loadRemoteRepos]);
 
+  useEffect(() => {
+    if (!gitlabWaiting) return;
+    let cancelled = false;
+    let timer = 0;
+    const started = Date.now();
+    const tick = async () => {
+      try {
+        const status = await api.oauthStatus();
+        if (cancelled) return;
+        if (status.gitlab.connected) {
+          setGitlabWaiting(false);
+          const next = await api.settings();
+          setSettings(next);
+          setCopied(status.gitlab.user ? `Signed in to GitLab as ${status.gitlab.user}` : "Signed in to GitLab");
+          void loadRemoteRepos("gitlab");
+          return;
+        }
+        if (Date.now() - started > 180_000) {
+          setGitlabWaiting(false);
+          setError("GitLab sign-in timed out. Finish in the browser, or try again.");
+          return;
+        }
+        timer = window.setTimeout(tick, 1500);
+      } catch (e) {
+        if (cancelled) return;
+        setGitlabWaiting(false);
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    timer = window.setTimeout(tick, 1500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [gitlabWaiting, loadRemoteRepos]);
+
   const loadArchitecture = async (path = repo) => {
     if (!path.trim()) return null;
     const report = await api.architecture(path);
@@ -274,8 +321,9 @@ export function App() {
     persistRepo(repo);
     persistRefs(base, head);
     try {
-      const r = await api.review(repo, base, head, true);
+      const r = await api.review(repo, base, head, true, dirty);
       setReview(r);
+      setTourIndex(0);
       setGraphMode("review");
       setTab("review");
       await api.repos().then((x) => setRepos(x.repos)).catch(() => undefined);
@@ -393,6 +441,65 @@ export function App() {
     }
   };
 
+  const startGitlabLogin = async () => {
+    setError("");
+    try {
+      const flow = await api.gitlabOAuthStart();
+      setGitlabWaiting(true);
+      openOAuthUrl(flow.authorize_url, new URL(flow.authorize_url).hostname, "/oauth/authorize");
+    } catch (e) {
+      setGitlabWaiting(false);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const runWhatIf = async (nodeId: string) => {
+    if (busyRef.current || !repo.trim()) return;
+    setError("");
+    markBusy("Walking what-if path…");
+    try {
+      const result = await api.whatIf(repo, nodeId);
+      setCopied(`${result.title} — ${result.confidence.level} · ${(result.sinks || []).length} sinks`);
+      setReview({
+        ...result,
+        markdown: result.markdown || "",
+        index: result.index || review?.index,
+        workspace: result.workspace || review?.workspace,
+      });
+      setTourIndex(0);
+      setGraphMode("review");
+      setTab("review");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      markBusy("");
+    }
+  };
+
+  const reviewRemotePr = async (item: PullRequest) => {
+    if (busyRef.current) return;
+    persistPr(item.provider, item.repo, String(item.number));
+    const match = remoteRepos.find((r) => r.slug.toLowerCase() === item.repo.toLowerCase());
+    if (match?.local_path) persistRepo(match.local_path);
+    setError("");
+    markBusy(`Fetching ${item.provider} #${item.number}…`);
+    try {
+      const r = await api.reviewPr(item.provider, item.repo, item.number, match?.local_path || repo || undefined);
+      setReview(r);
+      setTourIndex(0);
+      if (r.pull_request && typeof r.pull_request.repo_path === "string") persistRepo(r.pull_request.repo_path);
+      persistRefs(String(r.base || item.target_branch), String(r.head || item.source_branch));
+      setGraphMode("review");
+      setTab("review");
+    } catch (e) {
+      persistRefs(item.base_sha || item.target_branch, item.head_sha || item.source_branch);
+      setTab("review");
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      markBusy("");
+    }
+  };
+
   const disconnectProvider = async (name: string) => {
     setError("");
     try {
@@ -410,6 +517,11 @@ export function App() {
     const body = {
       github_token: String(fd.get("github_token") || ""),
       github_oauth_client_id: String(fd.get("github_oauth_client_id") || ""),
+      github_host: String(fd.get("github_host") || ""),
+      gitlab_token: String(fd.get("gitlab_token") || ""),
+      gitlab_host: String(fd.get("gitlab_host") || ""),
+      gitlab_oauth_client_id: String(fd.get("gitlab_oauth_client_id") || ""),
+      gitlab_oauth_client_secret: String(fd.get("gitlab_oauth_client_secret") || ""),
       bitbucket_token: String(fd.get("bitbucket_token") || ""),
       bitbucket_username: String(fd.get("bitbucket_username") || ""),
       bitbucket_oauth_client_id: String(fd.get("bitbucket_oauth_client_id") || ""),
@@ -633,6 +745,22 @@ export function App() {
               onNeedRefs={loadGitRefs}
             />
           </label>
+          <label className="field dirty">
+            <span>Working tree</span>
+            <button
+              type="button"
+              className={dirty ? "chip-btn active" : "chip-btn"}
+              data-testid="btn-dirty"
+              aria-pressed={dirty}
+              onClick={() => {
+                const next = !dirty;
+                setDirty(next);
+                localStorage.setItem("loadpath.dirty", next ? "1" : "0");
+              }}
+            >
+              {dirty ? "Include uncommitted" : "Committed range"}
+            </button>
+          </label>
           <div className="topbar-actions">
             <button type="button" data-testid="btn-init" disabled={!!busy} onClick={draftConfig}>
               Draft config
@@ -695,6 +823,8 @@ export function App() {
                     findings={findings}
                     aiNote={aiNote}
                     busy={!!busy}
+                    tourIndex={tourIndex}
+                    onTour={setTourIndex}
                     onAskAi={askAi}
                     onCopy={copyMarkdown}
                     onPost={postComment}
@@ -715,7 +845,14 @@ export function App() {
                 )}
               </aside>
               <div className="graph-wrap" data-testid="review-graph">
-                {review ? <ImpactGraph nodes={review.nodes} edges={review.edges} /> : null}
+                {review ? (
+                  <ImpactGraph
+                    nodes={review.nodes}
+                    edges={review.edges}
+                    onWhatIf={runWhatIf}
+                    focusPath={review.read_order[tourIndex]?.path}
+                  />
+                ) : null}
               </div>
             </div>
           )}
@@ -734,7 +871,7 @@ export function App() {
               </aside>
               <div className="graph-wrap" data-testid="architecture-graph">
                 {architecture?.indexed ? (
-                  <ImpactGraph nodes={architecture.nodes} edges={architecture.edges} />
+                  <ImpactGraph nodes={architecture.nodes} edges={architecture.edges} onWhatIf={runWhatIf} />
                 ) : null}
               </div>
             </div>
@@ -779,7 +916,7 @@ export function App() {
                 </div>
               </div>
               {graphNodes.length ? (
-                <ImpactGraph nodes={graphNodes} edges={graphEdges} />
+                <ImpactGraph nodes={graphNodes} edges={graphEdges} onWhatIf={runWhatIf} />
               ) : (
                 <p className="empty" data-testid="graph-empty">
                   Index the repo or run a review first. Click a node to inspect it.
@@ -799,6 +936,7 @@ export function App() {
                     onChange={(e) => persistPr(e.target.value, scmRepo, prNumber)}
                   >
                     <option value="github">GitHub</option>
+                    <option value="gitlab">GitLab</option>
                     <option value="bitbucket">Bitbucket</option>
                   </select>
                 </label>
@@ -840,6 +978,7 @@ export function App() {
                 <p className="muted scm-count" data-testid="scm-repo-count">
                   {remoteRepos.length} {provider} repositor{remoteRepos.length === 1 ? "y" : "ies"}
                   {provider === "github" && settings.github_user ? ` · @${String(settings.github_user)}` : ""}
+                  {provider === "gitlab" && settings.gitlab_user ? ` · @${String(settings.gitlab_user)}` : ""}
                   {provider === "bitbucket" && settings.bitbucket_user ? ` · ${String(settings.bitbucket_user)}` : ""}
                 </p>
               ) : null}
@@ -872,15 +1011,9 @@ export function App() {
                         type="button"
                         className="btn primary"
                         data-testid={`pr-review-${p.number}`}
-                        onClick={() => {
-                          persistRefs(p.base_sha || p.target_branch, p.head_sha || p.source_branch);
-                          persistPr(p.provider, p.repo, String(p.number));
-                          const match = remoteRepos.find((item) => item.slug.toLowerCase() === p.repo.toLowerCase());
-                          if (match?.local_path) persistRepo(match.local_path);
-                          setTab("review");
-                        }}
+                        onClick={() => void reviewRemotePr(p)}
                       >
-                        Review this range
+                        Review this PR
                       </button>
                     </div>
                   </article>
@@ -975,6 +1108,65 @@ export function App() {
                 />
                 <label htmlFor="github_token">GitHub token (optional PAT)</label>
                 <input id="github_token" name="github_token" type="password" placeholder="ghp_…" autoComplete="off" />
+                <label htmlFor="github_host">GitHub host (Enterprise)</label>
+                <input
+                  id="github_host"
+                  name="github_host"
+                  data-testid="github-host"
+                  placeholder="github.com"
+                  defaultValue={String(settings.github_host || "")}
+                  autoComplete="off"
+                />
+                <div className="scm-login" data-testid="scm-gitlab">
+                  <div>
+                    <strong>GitLab</strong>
+                    <p className="muted">
+                      {settings.gitlab_token_set
+                        ? settings.gitlab_user
+                          ? `Signed in as @${String(settings.gitlab_user)}`
+                          : "Token saved on this machine"
+                        : "Not connected"}
+                    </p>
+                  </div>
+                  <div className="btn-row">
+                    {settings.gitlab_token_set ? (
+                      <button type="button" className="btn" data-testid="btn-gitlab-disconnect" onClick={() => void disconnectProvider("gitlab")}>
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn primary"
+                        data-testid="btn-gitlab-login"
+                        disabled={gitlabWaiting || !settings.gitlab_oauth_ready}
+                        onClick={() => void startGitlabLogin()}
+                      >
+                        {gitlabWaiting ? "Waiting for GitLab…" : "Sign in with GitLab"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <label htmlFor="gitlab_host">GitLab host</label>
+                <input
+                  id="gitlab_host"
+                  name="gitlab_host"
+                  data-testid="gitlab-host"
+                  placeholder="gitlab.com"
+                  defaultValue={String(settings.gitlab_host || "")}
+                  autoComplete="off"
+                />
+                <label htmlFor="gitlab_oauth_client_id">GitLab OAuth application ID</label>
+                <input
+                  id="gitlab_oauth_client_id"
+                  name="gitlab_oauth_client_id"
+                  data-testid="gitlab-oauth-client-id"
+                  defaultValue={String(settings.gitlab_oauth_client_id || "")}
+                  autoComplete="off"
+                />
+                <label htmlFor="gitlab_oauth_client_secret">GitLab OAuth secret</label>
+                <input id="gitlab_oauth_client_secret" name="gitlab_oauth_client_secret" type="password" autoComplete="off" />
+                <label htmlFor="gitlab_token">GitLab token (optional PAT)</label>
+                <input id="gitlab_token" name="gitlab_token" type="password" placeholder="glpat-…" autoComplete="off" />
                 <div className="scm-login" data-testid="scm-bitbucket">
                   <div>
                     <strong>Bitbucket</strong>
@@ -1100,6 +1292,8 @@ function ReviewBrief({
   findings,
   aiNote,
   busy,
+  tourIndex,
+  onTour,
   onAskAi,
   onCopy,
   onPost,
@@ -1108,6 +1302,8 @@ function ReviewBrief({
   findings: Review["findings"];
   aiNote: string;
   busy: boolean;
+  tourIndex: number;
+  onTour: (index: number) => void;
   onAskAi: () => void;
   onCopy: () => void;
   onPost: () => void;
@@ -1132,6 +1328,11 @@ function ReviewBrief({
             {kindLabel(k)}
           </span>
         ))}
+        {review.contract_break?.kind && review.contract_break.kind !== "none" ? (
+          <span className={`chip ${review.contract_break.kind === "breaking" ? "blocker" : ""}`} data-testid="contract-kind">
+            contract {review.contract_break.kind}
+          </span>
+        ) : null}
       </div>
       <div className="metrics">
         <div className="metric">
@@ -1174,13 +1375,38 @@ function ReviewBrief({
           Read this <span className="count">{review.read_order.length}</span>
         </summary>
         {review.read_order.map((f, i) => (
-          <div key={f.path} className="read-item">
+          <div key={f.path} className={i === tourIndex ? "read-item tour-current" : "read-item"}>
             <span className="file">
               {i + 1}. {f.path}
             </span>
             <div className="why">{f.why}</div>
           </div>
         ))}
+        {review.read_order.length > 0 ? (
+          <div className="btn-row tour-row">
+            <button
+              type="button"
+              className="btn"
+              data-testid="btn-tour-prev"
+              disabled={tourIndex <= 0}
+              onClick={() => onTour(Math.max(0, tourIndex - 1))}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              data-testid="btn-tour-next"
+              disabled={tourIndex >= review.read_order.length - 1}
+              onClick={() => onTour(Math.min(review.read_order.length - 1, tourIndex + 1))}
+            >
+              Next in read order
+            </button>
+            <span className="muted">
+              {tourIndex + 1}/{review.read_order.length}
+            </span>
+          </div>
+        ) : null}
       </details>
       <details className="section">
         <summary>
@@ -1208,6 +1434,55 @@ function ReviewBrief({
         )}
       </details>
       <DeepeningList cards={review.deepening} />
+      {review.contract_break?.reasons?.length ? (
+        <details className="section" open>
+          <summary>
+            Contract <span className="count">{review.contract_break.kind}</span>
+          </summary>
+          {review.contract_break.reasons.map((reason) => (
+            <div key={reason} className="muted">
+              {reason}
+            </div>
+          ))}
+        </details>
+      ) : null}
+      {review.auth?.note ? (
+        <details className="section" open>
+          <summary>Auth</summary>
+          <div className="muted">{review.auth.note}</div>
+          {(review.auth.missing_permissions || []).map((item) => (
+            <div key={item.id} className="finding">
+              <span className="chip warning">missing</span>
+              {item.name}
+            </div>
+          ))}
+        </details>
+      ) : null}
+      {(review.suggested_tests || []).length ? (
+        <details className="section" open>
+          <summary>
+            Suggested tests <span className="count">{review.suggested_tests?.length}</span>
+          </summary>
+          {(review.suggested_tests || []).map((sketch) => (
+            <div key={sketch.title} className="residual">
+              <strong>{sketch.title}</strong>
+              <pre className="headline">{sketch.body}</pre>
+            </div>
+          ))}
+        </details>
+      ) : null}
+      {review.trend?.note ? (
+        <details className="section">
+          <summary>Confidence trend</summary>
+          <div className="muted">{review.trend.note}</div>
+          {(review.trend.points || []).slice(0, 6).map((point) => (
+            <div key={point.id} className="muted">
+              {point.level} · {formatWhen(point.created_at)}
+              {point.sinks != null ? ` · ${point.sinks} sinks` : ""}
+            </div>
+          ))}
+        </details>
+      ) : null}
       <details className="section" open>
         <summary>
           Residual <span className="count">{review.residuals.length}</span>

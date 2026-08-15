@@ -70,6 +70,15 @@ export type Review = {
   architecture_note: string;
   depth_note?: string;
   deepening?: DeepeningCandidate[];
+  contract_break?: { kind: string; reasons: string[]; fields: string[] };
+  auth?: {
+    note: string;
+    sinks: { id: string; name: string; permissions: string[] }[];
+    missing_permissions: { id: string; name: string }[];
+  };
+  suggested_tests?: { sink: string; type: string; kind: string; title: string; body: string }[];
+  trend?: { note: string; points: { id: string; created_at: string; level: string; sinks?: number }[] };
+  what_if?: boolean;
   evolution?: {
     hotspots: { path: string; commits: number; bus_factor: number; complexity?: number }[];
     change_coupling: { a: string; b: string; together: number; cross_context?: boolean }[];
@@ -96,6 +105,7 @@ export type Review = {
     dirty_count: number;
     dirty_overlaps_review: boolean;
     dirty_overlap: string[];
+    dirty_included?: boolean;
     merge_base?: string | null;
     three_dot?: boolean;
     base_sha?: string | null;
@@ -240,6 +250,19 @@ export const LAYER_ORDER: Record<string, number> = {
   "django.test": 7,
   "django.migration_op": 7,
   "django.admin": 7,
+  "django.management_command": 7,
+  "django.consumer": 7,
+  "django.websocket_route": 1,
+  "django.template": 11,
+  "django.htmx": 9,
+  "django.cache_key": 7,
+  "django.feature_flag": 7,
+  "django.side_effect": 7,
+  "graphql.type": 3,
+  "graphql.field": 4,
+  "graphql.operation": 8,
+  "fastapi.route": 1,
+  "fastapi.model": 3,
   "openapi.path": 8,
   "react.api_client": 9,
   "react.query_key": 10,

@@ -52,6 +52,28 @@ def render_markdown(review: dict) -> str:
         lines += ["", "### Residual uncertainty (AI-eligible)"]
         for r in review["residuals"][:12]:
             lines.append(f"- {r}")
+    contract = review.get("contract_break") or {}
+    if contract.get("kind") and contract["kind"] != "none":
+        lines += ["", "### Contract", f"**{contract['kind']}**"]
+        for reason in contract.get("reasons") or []:
+            lines.append(f"- {reason}")
+    auth = review.get("auth") or {}
+    if auth.get("note"):
+        lines += ["", "### Auth", auth["note"]]
+        for item in (auth.get("missing_permissions") or [])[:6]:
+            lines.append(f"- missing permission_classes on `{item.get('name')}`")
+    sketches = review.get("suggested_tests") or []
+    if sketches:
+        lines += ["", "### Suggested tests"]
+        for sketch in sketches[:6]:
+            lines.append(f"- **{sketch['title']}** ({sketch['kind']})")
+            lines.append("")
+            lines.append("```")
+            lines.append((sketch.get("body") or "").rstrip())
+            lines.append("```")
+    trend = review.get("trend") or {}
+    if trend.get("note"):
+        lines += ["", "### Confidence trend", trend["note"]]
     if review["low_risk"]:
         lines += ["", "_Fast-track: `loadpath:low-risk`. Human review can be a glance._"]
     evolution = review.get("evolution") or {}
@@ -99,6 +121,8 @@ def render_markdown(review: dict) -> str:
             "Uncommitted files overlap this review: "
             + ", ".join(f"`{p}`" for p in (workspace.get("dirty_overlap") or [])[:8]),
         ]
+    elif workspace.get("dirty_included"):
+        lines += ["", "### Working tree", "Uncommitted files are included in this review."]
     elif workspace.get("dirty_count"):
         lines += [
             "",
