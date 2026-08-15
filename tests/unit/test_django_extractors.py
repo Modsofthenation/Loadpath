@@ -453,3 +453,17 @@ def autocreate_redirects_on_slug_change(instance_before, instance, **kwargs):
     assert "autocreate_redirects_on_slug_change" in names
     assert "should_skip" not in names
 
+
+def test_testcase_named_form_is_not_a_form():
+    src = """
+from django.test import TestCase
+from kitsune.questions.forms import NewQuestionForm
+
+class TestNewQuestionForm(TestCase):
+    def test_ok(self):
+        NewQuestionForm()
+"""
+    g = extract_django_file("kitsune/questions/tests/test_forms.py", src, _cfg())
+    assert not any(n.type is NodeType.FORM for n in g.nodes)
+    assert any(n.type is NodeType.TEST and n.name == "test_ok" for n in g.nodes)
+

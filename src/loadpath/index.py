@@ -143,7 +143,8 @@ def index_repo(
     store.set_meta("repo_root", str(repo_root))
 
     drift = index_drift(store, repo_root, config)
-    if incremental and store.file_count() > 0 and not drift["stale"]:
+    revision_changed = (store.get_meta("index_revision") or "") != INDEX_REVISION
+    if incremental and store.file_count() > 0 and not drift["stale"] and not revision_changed:
         store.set_meta("reindex_skipped", "1")
         store.set_meta("files_extracted", "0")
         store.set_meta("files_skipped", str(drift["indexed_count"]))
@@ -161,7 +162,7 @@ def index_repo(
     for path in files:
         rel = path.relative_to(repo_root).as_posix()
         digest = file_hash(path)
-        if incremental and store.file_hash(rel) == digest:
+        if incremental and not revision_changed and store.file_hash(rel) == digest:
             skipped.add(rel)
             continue
         store.delete_file_nodes(rel, drop_incoming=False)
@@ -214,6 +215,7 @@ def index_repo(
     store.set_meta("django_boot_detail", boot_detail)
     store.set_meta("config_hash", _config_digest(repo_root))
     store.set_meta("sidecar_hash", _sidecar_digest(repo_root, config))
+    store.set_meta("index_revision", INDEX_REVISION)
     store.conn.commit()
     return store
 

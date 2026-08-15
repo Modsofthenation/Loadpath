@@ -228,7 +228,11 @@ class DjangoExtractor(ast.NodeVisitor):
             self._model(node)
         elif _has_base(node, SERIALIZER_BASES):
             self._serializer(node)
-        elif _has_base(node, FORM_BASES) or node.name.endswith("Form"):
+        elif _has_base(node, FORM_BASES) or (
+            node.name.endswith("Form")
+            and not node.name.startswith("Test")
+            and not _has_base(node, {"TestCase", "SimpleTestCase", "TransactionTestCase", "LiveServerTestCase", "APITestCase"})
+        ):
             self._serializer(node, ntype=NodeType.FORM)
         elif _has_base(node, DJANGO_VIEW_BASES) or node.name.endswith(("View", "ViewSet")):
             self._view(node)

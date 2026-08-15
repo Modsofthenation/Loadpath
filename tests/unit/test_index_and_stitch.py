@@ -83,6 +83,25 @@ def test_incremental_reindex_keeps_enqueue_edges(tmp_path: Path):
     store.close()
 
 
+def test_index_revision_change_reextracts_unchanged_files(tmp_path: Path, monkeypatch):
+    import shutil
+
+    from loadpath import index as index_mod
+
+    root = tmp_path / "repo"
+    shutil.copytree(FIXTURE, root)
+    db = tmp_path / "g.sqlite3"
+    store = index_repo(root, db_path=db, incremental=False)
+    assert store.get_meta("index_revision") == index_mod.INDEX_REVISION
+    store.close()
+    monkeypatch.setattr(index_mod, "INDEX_REVISION", index_mod.INDEX_REVISION + "-next")
+    store = index_repo(root, db_path=db, incremental=True)
+    assert store.get_meta("reindex_skipped") != "1"
+    assert int(store.get_meta("files_extracted") or "0") > 0
+    assert store.get_meta("index_revision") == index_mod.INDEX_REVISION
+    store.close()
+
+
 def test_contexts_assigned(tmp_path: Path):
     store = index_repo(FIXTURE, db_path=tmp_path / "g.sqlite3", incremental=False)
     invoice = next(n for n in store.nodes([NodeType.MODEL]) if n["name"] == "Invoice")
