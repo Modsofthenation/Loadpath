@@ -8,7 +8,14 @@ version = "0.1.0"
 description = "Architecture-typed impact graphs for Django + React pull requests."
 readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "MIT" }
 authors = [{ name = "Loadpath" }]
+keywords = ["django", "react", "code-review", "architecture", "mcp"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
@@ -30,6 +37,11 @@ dev = [
     "respx>=0.21.0",
     "playwright>=1.49.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Modsofthenation/PR-Reviewer"
+Repository = "https://github.com/Modsofthenation/PR-Reviewer"
+Issues = "https://github.com/Modsofthenation/PR-Reviewer/issues"
 
 [project.scripts]
 loadpath = "loadpath.cli:app"

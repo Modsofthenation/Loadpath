@@ -1,5 +1,7 @@
 # Loadpath
 
+[![CI](https://github.com/Modsofthenation/PR-Reviewer/actions/workflows/ci.yml/badge.svg)](https://github.com/Modsofthenation/PR-Reviewer/actions/workflows/ci.yml)
+
 Review as **load-path inspection** on a Django + React architecture graph. Not another hunk-comment bot.
 
 A change is a force. Loadpath traces where that force travels until it hits a sink — HTTP response, UI, Celery/Dramatiq job, migration, permission — then scores whether you have enough evidence to merge.
@@ -19,39 +21,93 @@ On the demo monorepo that path is:
 
 plus the jobs the view enqueues (`send_invoice_email.delay`, `rebuild_ledger.send`).
 
+![Review screen with impact graph](docs/screenshots/review.png)
+
+It is a local CLI, a desktop UI, and an MCP server you can point Cursor at. Not a SaaS. Tokens stay on the machine in `~/.loadpath/settings.json`.
+
 ## App
 
-`loadpath serve --port 7345` opens a local desktop-style UI: icon rail, labeled toolbar, merge-box confidence, and an inspectable impact graph. The same process hosts MCP at `/mcp` (OAuth). Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close. Two dozen themes (Obsidian, Nord, Neon Noir, Synthwave, Phosphor, Sakura, Citrus, Paper, high-contrast, …) live in Settings and `localStorage`. Last repo, git range, and SCM slug are remembered the same way. Copy the markdown brief, or post **one** PR comment (updated in place) from the Review tab. Keyboard: `1`–`5` switches tabs. Outside Settings and Pull requests, `⌘`/`Ctrl`+`Enter` runs a review.
+`loadpath serve --port 7345` opens a local desktop-style UI: icon rail, labeled toolbar, merge-box confidence, and an inspectable impact graph. The same process hosts MCP at `/mcp` (OAuth). AI is used **only** for residual uncertainty the graph cannot close. Twenty-four themes live in Settings and `localStorage`. Last repo, git range, and SCM slug are remembered the same way. Copy the markdown brief, or post **one** PR comment (updated in place) from the Review tab. Keyboard: `1`–`5` switches tabs. Outside Settings and Pull requests, `⌘`/`Ctrl`+`Enter` runs a review.
+
+### Empty review
+
+Until a repo is indexed and a range is walked, Review is an onboarding card — not a blank graph.
+
+![Empty review onboarding](docs/screenshots/review-empty.png)
 
 ### Review
 
 Confidence brief, read-order, clusters, architecture findings on the impact path, residual list, and the subgraph for the git range. Review walks the **indexed** graph (incremental refresh by default).
 
-![Review](docs/screenshots/review.png)
+![Review with brief and impact graph](docs/screenshots/review.png)
+
+### Node inspector
+
+Click a node. The inspector answers *what is this, what feeds it, what does it call, what would break* — not a dump of the indexer row.
+
+![Inspector on InvoiceSerializer](docs/screenshots/review-inspector.png)
 
 ### Architecture
 
 Index a repo first. The architecture tab is the full typed graph plus `loadpath.yml` contexts and rules — not a PR diff. Findings here are repo-wide; review then scopes them to the change.
 
-![Architecture](docs/screenshots/architecture.png)
+![Architecture graph and findings](docs/screenshots/architecture.png)
 
 ### Impact graph
 
-Toggle **This review** (impact subgraph) vs **Indexed architecture** (the repo map). Dashed edges are inferred (URL/Zod overlap); solid edges are extracted or generated-client stitches.
+Toggle **This review** (impact subgraph) vs **Indexed architecture** (the repo map). Dashed edges are inferred (URL/Zod overlap); solid edges are extracted or generated-client stitches. 2D is the default; 3D is available when WebGL is.
 
-![Impact graph](docs/screenshots/graph.png)
+![Impact graph, this review](docs/screenshots/graph.png)
+
+![Indexed architecture in the graph tab](docs/screenshots/graph-architecture.png)
 
 ### Pull requests
 
 GitHub and Bitbucket via API tokens from Settings. Pick a PR and jump to a branch-range review.
 
-![Pull requests](docs/screenshots/pull-requests.png)
+![Pull requests list](docs/screenshots/pull-requests.png)
+
+### Repo explorer
+
+Browse the filesystem, pick a project root. Loadpath remembers recent workspaces.
+
+![Repo explorer](docs/screenshots/explorer.png)
 
 ### Settings
 
-GitHub / Bitbucket tokens; AI providers (Anthropic, OpenAI, Grok/xAI, DeepSeek, Cursor-compatible, Ollama). Residual analysis only — Loadpath does not comment every hunk.
+Appearance (all 24 themes), GitHub / Bitbucket tokens, and AI providers (Anthropic, OpenAI, Grok/xAI, DeepSeek, Cursor-compatible, Ollama). Residual analysis only — Loadpath does not comment every hunk.
 
-![Settings](docs/screenshots/settings.png)
+![Settings with theme grid](docs/screenshots/settings.png)
+
+### MCP consent
+
+When Cursor (or another client) connects over HTTP MCP, Loadpath does not silently grant access. You get a local consent page: client name, callback host, optional PIN. Approve or deny. Tokens stay in `~/.loadpath/oauth.json`.
+
+![MCP consent](docs/screenshots/mcp-consent.png)
+
+## Themes
+
+Default is **Obsidian**. Settings lists every palette; the shots below are the same Review screen under nine of them.
+
+<table>
+<tr>
+<td align="center"><strong>Obsidian</strong><br/><img src="docs/screenshots/theme-obsidian.png" alt="Obsidian theme" /></td>
+<td align="center"><strong>Nord</strong><br/><img src="docs/screenshots/theme-nord.png" alt="Nord theme" /></td>
+<td align="center"><strong>Neon noir</strong><br/><img src="docs/screenshots/theme-neon-noir.png" alt="Neon noir theme" /></td>
+</tr>
+<tr>
+<td align="center"><strong>Synthwave</strong><br/><img src="docs/screenshots/theme-synthwave.png" alt="Synthwave theme" /></td>
+<td align="center"><strong>Phosphor</strong><br/><img src="docs/screenshots/theme-phosphor.png" alt="Phosphor theme" /></td>
+<td align="center"><strong>Paper</strong><br/><img src="docs/screenshots/theme-paper.png" alt="Paper theme" /></td>
+</tr>
+<tr>
+<td align="center"><strong>Sakura</strong><br/><img src="docs/screenshots/theme-sakura.png" alt="Sakura theme" /></td>
+<td align="center"><strong>Citrus</strong><br/><img src="docs/screenshots/theme-citrus.png" alt="Citrus theme" /></td>
+<td align="center"><strong>High contrast</strong><br/><img src="docs/screenshots/theme-high-contrast.png" alt="High contrast theme" /></td>
+</tr>
+</table>
+
+Also shipping: Solarized Dark/Light, Forest, Rose Pine, Midnight Amber, Volcano, Lavender, Aurora, Biolume, Carbon, Seafoam, Peach Fuzz, Cotton Candy, Clear Sky, Coral Reef. High contrast is a first-class theme, not an afterthought.
 
 ## Install
 
@@ -63,6 +119,8 @@ python -m playwright install chromium   # optional, for UI screenshot tests
 cd ui && npm install && npm run build && cd ..
 loadpath --help
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for tests, screenshot regeneration, and the Electron app.
 
 ## Desktop app (Windows, macOS, Linux)
 
@@ -115,6 +173,17 @@ loadpath mcp
 
 **Flow:** `index` builds the architecture graph → `architecture` shows contexts and rule hits on the whole repo → `review` walks that same graph for a git range. The app mirrors this: Index registers a workspace, Architecture inspects it, Review traces a change through it.
 
+The bundled demo checkout is [`fixtures/demo_monorepo`](fixtures/demo_monorepo) (Django billing API + React invoice UI). Copy it and `git init` if you want a range to walk — the fixture itself is not a git repo.
+
+```bash
+cp -R fixtures/demo_monorepo /tmp/acme-billing
+cd /tmp/acme-billing && git init && git add -A && git commit -m "demo"
+loadpath index /tmp/acme-billing
+loadpath serve --open
+```
+
+Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path.
+
 ## MCP (Cursor, Claude, ChatGPT, Gemini)
 
 `loadpath serve` exposes Streamable HTTP MCP at `/mcp`, protected with OAuth 2.1 (PKCE, dynamic client registration, Client ID Metadata Documents). Cloud hosts need HTTPS; set `--public-url` to the public origin when tunneling. `--oauth-pin` adds a PIN on the consent page.
@@ -138,7 +207,7 @@ MCP URL: `https://your-tunnel.example/mcp` (or `http://127.0.0.1:7345/mcp` on th
 }
 ```
 
-**Cursor / Claude / ChatGPT / Gemini (HTTP + OAuth)** — add that MCP URL in the host’s connectors. The first connect opens a consent page on the Loadpath machine. Tokens stay in `~/.loadpath/oauth.json`.
+**Cursor / Claude / ChatGPT / Gemini (HTTP + OAuth)** — add that MCP URL in the host’s connectors. The first connect opens a consent page on the Loadpath machine.
 
 Tools: `list_workspaces`, `init_repo`, `index_repo`, `architecture`, `review`, `detect_repo`, `list_pull_requests`, `post_review_comment`. `review` returns the load-path brief (confidence, sinks, reviewers) — not hunk comments.
 
@@ -192,6 +261,8 @@ AST is enough for review. If you need live `_meta` (db_table, resolved relations
 **React:** react-router tables, composition, TanStack Query `queryKey` + fetch/axios URL templates, Zod schemas, feature-folder imports, RTL `render(<Page/>)` as `tested_by`.
 
 **Stitch (the moat):** OpenAPI from Spectacular/schema files first; generated clients (`generated/`, orval, openapi-typescript) as high-confidence `consumed_by_client`; fallback URL-template matching and serializer/Zod field overlap marked **inferred**.
+
+Frontend roots prefer `frontend/`, `web/src`, `client/src`, `app/` — not a Python `src/` and not `docs/` / `help` trees.
 
 ## Architecture rules (`loadpath.yml`)
 
@@ -247,10 +318,14 @@ node --test desktop/*.test.mjs
 | `tests/e2e/test_mcp_oauth.py` | OAuth metadata/DCR/PKCE, consent, CIMD, MCP `review` stays on the billing load path |
 | `tests/e2e/test_index_architecture_flow.py` | index snapshot, review without index, review walking an existing graph |
 | `tests/e2e/test_brokers_and_django.py` | Celery + Dramatiq sinks, actor-only PR, non-idempotent Dramatiq warning, destructive migration, cross-context blocker, boot overlay, management commands, beat/canvas |
-| `tests/e2e/test_ui_screenshots.py` | Playwright: Architecture, Review, Impact graph, Pull requests, Settings → `docs/screenshots/` |
+| `tests/e2e/test_ui_screenshots.py` | Playwright: every screen, nine themes, explorer, inspector, MCP consent → `docs/screenshots/` |
 | `desktop/*.test.mjs` | Electron sidecar command, health-wait, and external-URL allowlist |
 
-CI installs Chromium and runs the full suite.
+To regenerate the README screenshots:
+
+```bash
+LOADPATH_SCREENSHOT_DIR=docs/screenshots python -m pytest tests/e2e/test_ui_screenshots.py
+```
 
 ## Demo fixture
 
@@ -259,3 +334,7 @@ CI installs Chromium and runs the full suite.
 ## What this is not
 
 Not CodeRabbit (comments without a closed impact set). Not a CodeScene clone (we do not replace its hotspot maps; we only score churn/coupling on the load path). Not django-orm-lens (we do not boot an ER explorer; we reuse its N+1 / cascade / blast-radius heuristics inside the typed graph). Not a generic SCIP call graph. The product is review as load-path inspection.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
