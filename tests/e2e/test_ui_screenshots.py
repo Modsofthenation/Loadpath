@@ -74,6 +74,14 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path, browser_page):
     page.wait_for_timeout(600)
     page.screenshot(path=str(dest / "graph.png"), full_page=False)
 
+    page.get_by_test_id("graph-view-3d").click()
+    page.get_by_test_id("graph-3d").wait_for(timeout=10_000)
+    page.locator("[data-testid='graph-3d-canvas']").wait_for(timeout=10_000)
+    page.wait_for_timeout(800)
+    page.screenshot(path=str(dest / "graph_3d.png"), full_page=False)
+    page.get_by_test_id("graph-view-2d").click()
+    page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+
     page.get_by_test_id("tab-prs").click()
     page.get_by_test_id("pr-repo").fill("acme/demo")
     page.get_by_test_id("btn-list-prs").click()

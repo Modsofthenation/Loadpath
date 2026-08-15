@@ -129,6 +129,12 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert overflow["content"], "selected-node inspector overflows horizontally"
     assert overflow["in_pane"], "selected-node inspector extends outside the graph pane"
 
+    page.get_by_test_id("graph-view-3d").click()
+    page.get_by_test_id("graph-3d").wait_for(timeout=10_000)
+    page.locator("[data-testid='graph-3d-canvas']").wait_for(timeout=10_000)
+    page.get_by_test_id("graph-view-2d").click()
+    page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+
     page.get_by_test_id("graph-mode-architecture").click()
     assert page.get_by_test_id("graph-mode-architecture").get_attribute("aria-pressed") == "true"
     page.locator(".react-flow__node").first.wait_for(timeout=15_000)
