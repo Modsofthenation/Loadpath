@@ -246,7 +246,7 @@ def test_ui_browse_repo_and_pick_git_refs(live_app, browser_page):
     page.get_by_test_id("btn-browse-repo").click()
     explorer.wait_for()
     page.get_by_test_id("explorer-path").fill(str(repo.parent))
-    page.get_by_test_id("explorer-path").press("Enter")
+    page.get_by_role("button", name="Go").click()
     page.get_by_test_id("explorer-entry").filter(has_text=repo.name).wait_for()
     page.get_by_test_id("explorer-entry").filter(has_text=repo.name).click()
     page.get_by_test_id("explorer-use").click()
@@ -262,8 +262,7 @@ def test_ui_browse_repo_and_pick_git_refs(live_app, browser_page):
     menu = page.get_by_test_id("base-ref-menu")
     menu.wait_for()
     menu.get_by_text("HEAD~1", exact=True).wait_for()
-    menu.get_by_text("tighten Invoice.total contract").wait_for()
-    menu.get_by_text("baseline").wait_for()
+    menu.get_by_test_id("ref-option-commit").filter(has_text="tighten Invoice.total contract").wait_for()
     menu.get_by_test_id("ref-option-commit").filter(has_text="baseline").click()
     selected = page.get_by_test_id("base-ref").input_value()
     assert selected != "custom-base"

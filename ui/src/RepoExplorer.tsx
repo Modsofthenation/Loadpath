@@ -18,19 +18,24 @@ export function RepoExplorer({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const pathRef = useRef<HTMLInputElement>(null);
+  const requestRef = useRef(0);
 
   const load = async (path: string) => {
+    const request = requestRef.current + 1;
+    requestRef.current = request;
     setBusy(true);
     try {
       const data = await api.browse(path);
+      if (requestRef.current !== request) return;
       setListing(data);
       setPathDraft(data.path);
       setSelected(data.is_git ? data.path : null);
       setError("");
     } catch (e) {
+      if (requestRef.current !== request) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      if (requestRef.current === request) setBusy(false);
     }
   };
 
