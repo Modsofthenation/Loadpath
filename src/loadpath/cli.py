@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Any, Iterator, Optional
 
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from loadpath import __version__
 from loadpath.architecture.snapshot import architecture_report
@@ -16,6 +18,50 @@ from loadpath.review.render import render_html, render_markdown
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Loadpath — Django+React PR load-path reviewer.")
 console = Console()
+
+
+@contextmanager
+def _index_progress() -> Iterator[Any]:
+    """Live CLI bar so a long extract is distinguishable from a hang."""
+    if not console.is_terminal:
+        def _plain(event: dict[str, Any]) -> None:
+            msg = event.get("message") or event.get("phase")
+            if not msg:
+                return
+            phase = event.get("phase")
+            if phase == "extract" and event.get("current") and str(msg).startswith("Extracting "):
+                return
+            if phase in {"scan", "extract", "boot", "stitch", "done", "skipped"}:
+                console.print(f"[dim]{msg}[/dim]")
+
+        yield _plain
+        return
+
+    bar = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    )
+    task_id: Any = None
+    with bar:
+        def _cb(event: dict[str, Any]) -> None:
+            nonlocal task_id
+            desc = str(event.get("message") or event.get("phase") or "Indexing")
+            total = int(event.get("total") or 0)
+            done = int(event.get("done") or 0)
+            if task_id is None:
+                task_id = bar.add_task(desc, total=total if total else None)
+                return
+            kwargs: dict[str, Any] = {"description": desc, "completed": done}
+            if total:
+                kwargs["total"] = total
+            bar.update(task_id, **kwargs)
+
+        yield _cb
 
 
 @app.callback()
@@ -43,24 +89,41 @@ def init(
 def index(
     repo: Path = typer.Argument(Path("."), exists=True, file_okay=False),
     full: bool = typer.Option(False, "--full", help="Re-extract every file"),
+    jobs: Optional[int] = typer.Option(
+        None,
+        "--jobs",
+        "-j",
+        help="Parallel extract workers (default: CPU count, 1 if few files). LOADPATH_INDEX_JOBS also works.",
+    ),
 ) -> None:
     """Index a Django + React monorepo into a SQLite graph."""
     from loadpath.architecture.snapshot import summarize_index
     from loadpath.config import load_config
     from loadpath.settings import register_workspace
 
-    store = index_repo(repo, incremental=not full, draft_config=True)
+    with _index_progress() as on_progress:
+        store = index_repo(
+            repo,
+            incremental=not full,
+            draft_config=True,
+            progress=on_progress,
+            workers=jobs,
+        )
     register_workspace(repo)
     summary = summarize_index(store, load_config(repo))
     counts = summary["counts"]
     extracted = summary.get("files_extracted") or 0
     skipped = summary.get("reindex_skipped")
+    workers = store.get_meta("index_workers")
+    elapsed = store.get_meta("index_elapsed_ms")
+    timing = f" in {elapsed}ms" if elapsed else ""
+    jobs_note = f" · {workers} extract workers" if workers and workers not in {"0", "1"} else ""
     if skipped:
-        console.print(f"Index already current ({counts['nodes']} nodes / {counts['edges']} edges) → {default_db_path(repo)}")
+        console.print(f"Index already current ({counts['nodes']} nodes / {counts['edges']} edges){timing} → {default_db_path(repo)}")
     else:
         console.print(
             f"Indexed {counts['nodes']} nodes / {counts['edges']} edges"
-            f" (extracted {extracted} files) → {default_db_path(repo)}"
+            f" (extracted {extracted} files){timing}{jobs_note} → {default_db_path(repo)}"
         )
     contexts = ", ".join(summary["contexts"]) or "none"
     console.print(f"Contexts: {contexts}")
@@ -99,6 +162,12 @@ def review(
     scm_repo: Optional[str] = typer.Option(None, "--repo", help="owner/name for --comment / --pr fetch"),
     fetch_pr: bool = typer.Option(False, "--fetch-pr", help="Fetch --pr refs into this clone before reviewing"),
     github_output: Optional[Path] = typer.Option(None, "--github-output", help="Append gate fields for GitHub Actions"),
+    jobs: Optional[int] = typer.Option(
+        None,
+        "--jobs",
+        "-j",
+        help="Parallel extract workers when reindexing (default: CPU count). LOADPATH_INDEX_JOBS also works.",
+    ),
 ) -> None:
     """Review a git range as clustered load paths + confidence brief."""
     import os
@@ -116,15 +185,18 @@ def review(
         head = prepared["head"]
         console.print(f"Fetched {provider} #{pr} → {head} (base {base})")
 
-    payload = run_review(
-        repo_path,
-        base=base,
-        head=head,
-        reindex=reindex,
-        incremental=not full,
-        three_dot=three_dot,
-        dirty=dirty,
-    )
+    with _index_progress() as on_progress:
+        payload = run_review(
+            repo_path,
+            base=base,
+            head=head,
+            reindex=reindex,
+            incremental=not full,
+            three_dot=three_dot,
+            dirty=dirty,
+            progress=on_progress if reindex else None,
+            workers=jobs,
+        )
     if format == "json":
         import json
 

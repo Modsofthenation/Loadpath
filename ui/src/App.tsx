@@ -6,7 +6,7 @@ import { ImpactGraph } from "./ImpactGraph";
 import { RefCombobox } from "./RefCombobox";
 import { RepoExplorer } from "./RepoExplorer";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
-import type { ArchitectureReport, DeepeningCandidate, GitRefs, IndexedRepo, PullRequest, RemoteRepo, Review } from "./types";
+import type { ArchitectureReport, DeepeningCandidate, GitRefs, IndexedRepo, IndexProgress, PullRequest, RemoteRepo, Review } from "./types";
 
 type Tab = "review" | "architecture" | "graph" | "prs" | "settings";
 type GraphMode = "review" | "architecture";
@@ -18,6 +18,12 @@ const TABS: { id: Tab; label: string; testId: string; shortcut: string; icon: ty
   { id: "prs", label: "Pull requests", testId: "tab-prs", shortcut: "4", icon: IconPrs },
   { id: "settings", label: "Settings", testId: "tab-settings", shortcut: "5", icon: IconSettings },
 ];
+
+function progressPercent(p: IndexProgress): number | null {
+  const total = p.total || 0;
+  if (total <= 0) return null;
+  return Math.min(100, Math.round((100 * (p.done || 0)) / total));
+}
 
 function openOAuthUrl(url: string, host: string, pathPrefix: string) {
   let parsed: URL;
@@ -44,6 +50,7 @@ export function App() {
   const [graphMode, setGraphMode] = useState<GraphMode>("review");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [indexPct, setIndexPct] = useState<number | null>(null);
   const [copied, setCopied] = useState("");
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [prs, setPrs] = useState<PullRequest[]>([]);
@@ -81,6 +88,24 @@ export function App() {
   const markBusy = (msg: string) => {
     busyRef.current = msg;
     setBusy(msg);
+  };
+  const watchIndex = (repoPath: string) => {
+    const tick = () => {
+      api
+        .indexProgress(repoPath)
+        .then((p) => {
+          if (!busyRef.current) return;
+          if (p.message) markBusy(p.message);
+          setIndexPct(progressPercent(p));
+        })
+        .catch(() => undefined);
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => {
+      window.clearInterval(id);
+      setIndexPct(null);
+    };
   };
 
   useEffect(() => {
@@ -320,6 +345,7 @@ export function App() {
     markBusy("Tracing load path…");
     persistRepo(repo);
     persistRefs(base, head);
+    const stopWatch = watchIndex(repo);
     try {
       const r = await api.review(repo, base, head, true, dirty);
       setReview(r);
@@ -331,6 +357,7 @@ export function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      stopWatch();
       markBusy("");
     }
   };
@@ -342,6 +369,7 @@ export function App() {
     setCopied("");
     markBusy(incremental ? "Indexing…" : "Full reindex…");
     persistRepo(repo);
+    const stopWatch = watchIndex(repo);
     try {
       await api.index(repo, incremental);
       const report = await loadArchitecture(repo);
@@ -353,6 +381,7 @@ export function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      stopWatch();
       markBusy("");
     }
   };
@@ -483,6 +512,8 @@ export function App() {
     if (match?.local_path) persistRepo(match.local_path);
     setError("");
     markBusy(`Fetching ${item.provider} #${item.number}…`);
+    const watchPath = match?.local_path || repo;
+    const stopWatch = watchPath ? watchIndex(watchPath) : () => undefined;
     try {
       const r = await api.reviewPr(item.provider, item.repo, item.number, match?.local_path || repo || undefined);
       setReview(r);
@@ -496,6 +527,7 @@ export function App() {
       setTab("review");
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      stopWatch();
       markBusy("");
     }
   };
@@ -667,8 +699,14 @@ export function App() {
       </nav>
       <div className="main" id="main">
         {busy ? (
-          <div className="progress" role="status" aria-live="polite" aria-busy="true">
-            <i />
+          <div
+            className={indexPct != null ? "progress determinate" : "progress"}
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            data-testid="index-progress"
+          >
+            <i style={indexPct != null ? { width: `${indexPct}%` } : undefined} />
             <span className="sr-only">{busy}</span>
           </div>
         ) : null}

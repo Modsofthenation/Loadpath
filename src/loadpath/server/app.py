@@ -29,6 +29,7 @@ from loadpath.config import load_config
 from loadpath.detect import detect_layout, write_draft_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_repo
+from loadpath.progress import progress_callback, read_progress
 from loadpath.providers.oauth import (
     callback_html,
     disconnect_scm,
@@ -51,6 +52,7 @@ from loadpath.workspace import DEFAULT_COMMIT_LIMIT, list_directory, list_git_re
 class IndexRequest(BaseModel):
     repo_path: str
     incremental: bool = True
+    jobs: int | None = None
 
 
 class ReviewRequest(BaseModel):
@@ -61,6 +63,7 @@ class ReviewRequest(BaseModel):
     incremental: bool = True
     three_dot: bool = True
     dirty: bool = False
+    jobs: int | None = None
 
 
 class InitRequest(BaseModel):
@@ -294,11 +297,22 @@ def create_app(
     @app.post("/api/index")
     def api_index(body: IndexRequest) -> dict[str, Any]:
         root = require_repo_path(body.repo_path)
-        store = index_repo(root, incremental=body.incremental, draft_config=True)
+        store = index_repo(
+            root,
+            incremental=body.incremental,
+            draft_config=True,
+            progress=progress_callback(root),
+            workers=body.jobs,
+        )
         register_workspace(root)
         summary = summarize_index(store, load_config(root))
         store.close()
         return summary
+
+    @app.get("/api/index/progress")
+    def api_index_progress(repo_path: str) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        return read_progress(root)
 
     @app.get("/api/index")
     def api_index_status(repo_path: str) -> dict[str, Any]:
@@ -356,6 +370,8 @@ def create_app(
                 incremental=body.incremental,
                 three_dot=body.three_dot,
                 dirty=body.dirty,
+                progress=progress_callback(root) if body.reindex else None,
+                workers=body.jobs,
             )
         except FileNotFoundError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -688,6 +704,7 @@ def create_app(
                 reindex=body.reindex,
                 incremental=body.incremental,
                 three_dot=True,
+                progress=progress_callback(root) if body.reindex else None,
             )
         except FileNotFoundError as exc:
             raise HTTPException(409, str(exc)) from exc

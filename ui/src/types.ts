@@ -48,6 +48,8 @@ export type Review = {
   id: string;
   title: string;
   headline: string;
+  base?: string;
+  head?: string;
   change_kinds: string[];
   confidence: {
     level: "high" | "medium" | "low";
@@ -111,6 +113,19 @@ export type Review = {
     base_sha?: string | null;
     head_sha?: string | null;
   };
+};
+
+export type IndexProgress = {
+  phase: string;
+  done?: number;
+  total?: number;
+  current?: string;
+  workers?: number;
+  skipped?: number;
+  elapsed_ms?: number;
+  errors?: number;
+  message?: string;
+  repo_path?: string;
 };
 
 export type ArchitectureReport = {

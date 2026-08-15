@@ -370,6 +370,8 @@ def run_review(
     three_dot: bool = True,
     draft_config: bool = False,
     dirty: bool = False,
+    progress: object | None = None,
+    workers: int | None = None,
 ) -> dict:
     repo_root = repo_root.resolve()
     config = config or load_config(repo_root)
@@ -381,6 +383,8 @@ def run_review(
             config=config,
             incremental=incremental,
             draft_config=draft_config,
+            progress=progress,
+            workers=workers,
         )
     else:
         if not graph_db.is_file():

@@ -1,4 +1,4 @@
-import type { ArchitectureReport, FsListing, GitRefs, GraphNode, IndexedRepo, PullRequest, RemoteRepo, Review } from "./types";
+import type { ArchitectureReport, FsListing, GitRefs, GraphNode, IndexedRepo, IndexProgress, PullRequest, RemoteRepo, Review } from "./types";
 
 export function formatApiError(text: string, fallback = "Request failed"): string {
   const trimmed = (text || "").trim();
@@ -70,6 +70,8 @@ export const api = {
     }),
   indexStatus: (repo_path: string) =>
     req<ArchitectureReport>(`/api/index?repo_path=${encodeURIComponent(repo_path)}`),
+  indexProgress: (repo_path: string) =>
+    req<IndexProgress>(`/api/index/progress?repo_path=${encodeURIComponent(repo_path)}`),
   architecture: (repo_path: string) =>
     req<ArchitectureReport>(`/api/architecture?repo_path=${encodeURIComponent(repo_path)}`),
   review: (repo_path: string, base: string, head?: string, reindex = true, dirty = false) =>

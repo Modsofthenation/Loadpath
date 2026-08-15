@@ -72,6 +72,8 @@ class GraphStore:
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA journal_mode = WAL")
+        self.conn.execute("PRAGMA synchronous = NORMAL")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
 
@@ -131,12 +133,13 @@ class GraphStore:
             "DELETE FROM edges WHERE src NOT IN (SELECT id FROM nodes) OR dst NOT IN (SELECT id FROM nodes)"
         )
 
-    def upsert_graph(self, graph: ExtractedGraph) -> None:
+    def upsert_graph(self, graph: ExtractedGraph, *, commit: bool = True) -> None:
         for node in graph.nodes:
             self.upsert_node(node)
         for edge in graph.edges:
             self.upsert_edge(edge)
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
 
     def upsert_node(self, node: Node) -> None:
         existing = self.get_node(node.id)
