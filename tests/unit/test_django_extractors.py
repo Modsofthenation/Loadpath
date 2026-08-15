@@ -48,6 +48,28 @@ def test_extracts_router_and_path_routes():
     routes = [n for n in g.nodes if n.type is NodeType.ROUTE]
     assert routes
     assert any(e.type.value == "publishes_route" for e in g.edges)
+    assert all(n.name for n in routes)
+
+
+def test_empty_include_route_gets_a_readable_name():
+    source = (
+        "from django.urls import include, path\n"
+        "urlpatterns = [\n"
+        "    path('', include('custom_auth.mfa.urls')),\n"
+        "    path('', include(ffadmin_user_router.urls)),\n"
+        "    path('', InvoiceView.as_view(), name='index'),\n"
+        "]\n"
+    )
+    g = extract_django_file("api/custom_auth/urls.py", source, _cfg())
+    routes = [n for n in g.nodes if n.type is NodeType.ROUTE]
+    names = {n.name for n in routes}
+    assert "include:custom_auth.mfa.urls" in names
+    assert "include:ffadmin_user_router.urls" in names
+    assert "index" in names
+    assert all(n.name for n in routes)
+    ids = [n.id for n in routes]
+    assert len(ids) == len(set(ids))
+    assert len(routes) == 3
 
 
 def test_extracts_signal_receiver():
