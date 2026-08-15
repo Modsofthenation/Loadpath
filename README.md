@@ -231,7 +231,7 @@ Line coverage on changed files is the wrong metric. Loadpath scores the **impact
 ```bash
 pytest
 cd ui && npm test
-node --test desktop/backend.test.mjs
+node --test desktop/*.test.mjs
 ```
 
 | Suite | What it covers |
@@ -244,7 +244,7 @@ node --test desktop/backend.test.mjs
 | `tests/e2e/test_index_architecture_flow.py` | index snapshot, review without index, review walking an existing graph |
 | `tests/e2e/test_brokers_and_django.py` | Celery + Dramatiq sinks, actor-only PR, non-idempotent Dramatiq warning, destructive migration, cross-context blocker, boot overlay, management commands, beat/canvas |
 | `tests/e2e/test_ui_screenshots.py` | Playwright: Architecture, Review, Impact graph, Pull requests, Settings → `docs/screenshots/` |
-| `desktop/backend.test.mjs` | Electron sidecar command (dev vs packaged) and health-wait |
+| `desktop/*.test.mjs` | Electron sidecar command, health-wait, and external-URL allowlist |
 
 CI installs Chromium and runs the full suite.
 

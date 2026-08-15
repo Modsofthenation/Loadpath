@@ -10,7 +10,7 @@
   "main": "main.mjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test backend.test.mjs",
+    "test": "node --test backend.test.mjs urls.test.mjs",
     "pack": "electron-builder --dir --publish never",
     "dist": "electron-builder --publish never"
   },

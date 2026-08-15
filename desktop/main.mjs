@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { backendCommand, pickFreePort, waitForHealth } from "./backend.mjs";
+import { isAllowedExternalUrl, isAppOrigin } from "./urls.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -15,6 +16,13 @@ let quitting = false;
 
 function repoRoot() {
   return path.resolve(__dirname, "..");
+}
+
+function openExternalIfAllowed(url) {
+  if (!isAllowedExternalUrl(url)) return;
+  shell.openExternal(url).catch((err) => {
+    dialog.showErrorBox("Loadpath", `Could not open link: ${err.message}`);
+  });
 }
 
 function createWindow() {
@@ -37,9 +45,10 @@ function createWindow() {
     win.setMenuBarVisibility(false);
   }
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    openExternalIfAllowed(url);
     return { action: "deny" };
   });
+  win.webContents.on("will-attach-webview", (event) => event.preventDefault());
   win.once("ready-to-show", () => win.show());
   return win;
 }
@@ -119,6 +128,11 @@ async function boot() {
   await mainWindow.loadURL(splashUrl());
   try {
     const port = await ensureBackend();
+    mainWindow.webContents.on("will-navigate", (event, url) => {
+      if (isAppOrigin(url, port)) return;
+      event.preventDefault();
+      openExternalIfAllowed(url);
+    });
     await mainWindow.loadURL(`http://127.0.0.1:${port}`);
     if (process.env.LOADPATH_DEVTOOLS === "1") {
       mainWindow.webContents.openDevTools({ mode: "detach" });

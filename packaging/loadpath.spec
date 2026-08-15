@@ -14,7 +14,7 @@ datas: list = []
 binaries: list = []
 hiddenimports: list = collect_submodules("loadpath")
 
-PACKAGES = (
+REQUIRED_PACKAGES = (
     "loadpath",
     "mcp",
     "uvicorn",
@@ -22,15 +22,17 @@ PACKAGES = (
     "starlette",
     "pydantic",
     "pydantic_settings",
-    "pydantic_core",
     "anyio",
     "httpx",
-    "httpcore",
     "jinja2",
     "typer",
     "rich",
     "click",
     "yaml",
+)
+OPTIONAL_PACKAGES = (
+    "pydantic_core",
+    "httpcore",
     "multipart",
     "sse_starlette",
     "jsonschema",
@@ -41,14 +43,24 @@ PACKAGES = (
     "uvloop",
 )
 
-for pkg in PACKAGES:
+
+def _collect(pkg: str, required: bool) -> None:
+    global datas, binaries, hiddenimports
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
     except Exception:
-        continue
+        if required:
+            raise
+        return
     datas += pkg_datas
     binaries += pkg_binaries
     hiddenimports += pkg_hidden
+
+
+for pkg in REQUIRED_PACKAGES:
+    _collect(pkg, required=True)
+for pkg in OPTIONAL_PACKAGES:
+    _collect(pkg, required=False)
 
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],

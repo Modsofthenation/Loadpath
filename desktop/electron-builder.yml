@@ -8,6 +8,7 @@ directories:
 files:
   - main.mjs
   - backend.mjs
+  - urls.mjs
   - package.json
 extraResources:
   - from: backend-dist/loadpath
