@@ -25,7 +25,6 @@ EXPECTED = (
     "architecture.png",
     "graph.png",
     "graph-architecture.png",
-    "graph-3d.png",
     "pull-requests.png",
     "settings.png",
     "explorer.png",
@@ -35,10 +34,7 @@ EXPECTED = (
 
 
 def _wait_fonts(page) -> None:
-    try:
-        page.wait_for_function("document.fonts ? document.fonts.status === 'loaded' : true", timeout=5_000)
-    except Exception:
-        pass
+    page.wait_for_function("document.fonts ? document.fonts.status === 'loaded' : true", timeout=5_000)
 
 
 def _shot(page, dest: Path, name: str) -> None:
@@ -71,11 +67,14 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path, browser_page):
     dest = Path(os.environ.get("LOADPATH_SCREENSHOT_DIR", str(tmp_path / "shots")))
     dest.mkdir(parents=True, exist_ok=True)
 
-    pretty = Path("/tmp/acme-billing")
-    if pretty.exists():
-        shutil.rmtree(pretty)
-    shutil.copytree(repo, pretty)
-    repo = pretty
+    # Pretty path only when regenerating README assets. CI must not rmtree a
+    # shared /tmp directory that the demo instructions also use.
+    if os.environ.get("LOADPATH_SCREENSHOT_DIR"):
+        pretty = Path("/tmp/acme-billing")
+        if pretty.exists():
+            shutil.rmtree(pretty)
+        shutil.copytree(repo, pretty)
+        repo = pretty
 
     _shot(page, dest, "review-empty.png")
     page.get_by_test_id("repo-path").fill(str(repo))
@@ -148,8 +147,6 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path, browser_page):
     assert page.get_by_test_id("graph-view-3d").get_attribute("aria-pressed") == "true"
     page.get_by_test_id("graph-3d").wait_for(timeout=15_000)
     page.locator("[data-testid='graph-3d-canvas'], [data-testid='graph-3d-fallback']").first.wait_for(timeout=20_000)
-    page.wait_for_timeout(800)
-    _shot(page, dest, "graph-3d.png")
     page.get_by_test_id("graph-view-2d").click()
     _wait_graph(page)
 

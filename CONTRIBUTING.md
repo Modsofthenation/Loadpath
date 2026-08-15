@@ -19,9 +19,7 @@ cd ui && npm test
 node --test desktop/*.test.mjs
 ```
 
-CI installs Chromium and runs the full suite.
-
-Parity tests clone public OSS repos at pinned SHAs. The first run needs network; after that the clone is reused.
+CI installs Chromium and runs the full suite. The demo fixture is `fixtures/demo_monorepo`.
 
 ## Screenshots
 
@@ -31,7 +29,7 @@ README images live in `docs/screenshots/` and are produced by Playwright:
 LOADPATH_SCREENSHOT_DIR=docs/screenshots python -m pytest tests/e2e/test_ui_screenshots.py
 ```
 
-Headless Chromium in this environment often cannot render WebGL, so `graph-3d.png` may be the fallback card. Do not treat that file as a 3D demo.
+Do not commit a 3D screenshot from headless Chromium unless `[data-testid=graph-3d-canvas]` is present. This environment often falls back to “WebGL is unavailable.”
 
 ## UI
 

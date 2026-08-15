@@ -63,7 +63,7 @@ Toggle **This review** (impact subgraph) vs **Indexed architecture** (the repo m
 
 ### Pull requests
 
-GitHub and Bitbucket via API tokens from Settings. Pick a PR and jump to a branch-range review.
+GitHub and Bitbucket via API tokens from Settings. Pick a PR and jump to a branch-range review. The screenshot uses a fixture PR so the tab is not empty.
 
 ![Pull requests list](docs/screenshots/pull-requests.png)
 
@@ -81,7 +81,7 @@ Appearance (all 24 themes), GitHub / Bitbucket tokens, and AI providers (Anthrop
 
 ### MCP consent
 
-When Cursor (or another client) connects over HTTP MCP, Loadpath does not silently grant access. You get a local consent page: client name, callback host, optional PIN. Approve or deny. Tokens stay in `~/.loadpath/oauth.json`.
+When Cursor (or another client) connects over HTTP MCP, Loadpath does not silently grant access. You get a local consent page: client name, Loadpath issuer URL, optional PIN. Approve or deny. Tokens stay in `~/.loadpath/oauth.json`.
 
 ![MCP consent](docs/screenshots/mcp-consent.png)
 
@@ -173,16 +173,28 @@ loadpath mcp
 
 **Flow:** `index` builds the architecture graph → `architecture` shows contexts and rule hits on the whole repo → `review` walks that same graph for a git range. The app mirrors this: Index registers a workspace, Architecture inspects it, Review traces a change through it.
 
-The bundled demo checkout is [`fixtures/demo_monorepo`](fixtures/demo_monorepo) (Django billing API + React invoice UI). Copy it and `git init` if you want a range to walk — the fixture itself is not a git repo.
+The bundled demo checkout is [`fixtures/demo_monorepo`](fixtures/demo_monorepo) (Django billing API + React invoice UI). Copy it and make **two** commits so `HEAD~1` is a real range — the fixture itself is not a git repo, and a single commit leaves the default range empty.
 
 ```bash
 cp -R fixtures/demo_monorepo /tmp/acme-billing
-cd /tmp/acme-billing && git init && git add -A && git commit -m "demo"
+cd /tmp/acme-billing
+git init -b main
+git add -A && git commit -m "baseline"
+# Same contract tweak the screenshots use:
+python3 - <<'PY'
+from pathlib import Path
+p = Path("backend/billing/serializers.py")
+p.write_text(p.read_text().replace(
+    'fields = ["id", "customer_id", "total", "status"]',
+    'fields = ["id", "customer_id", "total", "status"]\n        extra_kwargs = {"total": {"required": True}}',
+))
+PY
+git add -A && git commit -m "tighten Invoice.total contract"
 loadpath index /tmp/acme-billing
 loadpath serve --open
 ```
 
-Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path.
+Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path. Default range is `HEAD~1`…`HEAD`.
 
 ## MCP (Cursor, Claude, ChatGPT, Gemini)
 
@@ -262,7 +274,7 @@ AST is enough for review. If you need live `_meta` (db_table, resolved relations
 
 **Stitch (the moat):** OpenAPI from Spectacular/schema files first; generated clients (`generated/`, orval, openapi-typescript) as high-confidence `consumed_by_client`; fallback URL-template matching and serializer/Zod field overlap marked **inferred**.
 
-Frontend roots prefer `frontend/`, `web/src`, `client/src`, `app/` — not a Python `src/` and not `docs/` / `help` trees.
+Frontend roots prefer `frontend/src`, `frontend`, `web/src`, `client/src`, `ui/src`, `src-ui/src` — not a Python package `src/` and not `docs` / docs-site trees. `app/` is a Django root candidate.
 
 ## Architecture rules (`loadpath.yml`)
 
@@ -318,7 +330,7 @@ node --test desktop/*.test.mjs
 | `tests/e2e/test_mcp_oauth.py` | OAuth metadata/DCR/PKCE, consent, CIMD, MCP `review` stays on the billing load path |
 | `tests/e2e/test_index_architecture_flow.py` | index snapshot, review without index, review walking an existing graph |
 | `tests/e2e/test_brokers_and_django.py` | Celery + Dramatiq sinks, actor-only PR, non-idempotent Dramatiq warning, destructive migration, cross-context blocker, boot overlay, management commands, beat/canvas |
-| `tests/e2e/test_ui_screenshots.py` | Playwright: every screen, nine themes, explorer, inspector, MCP consent → `docs/screenshots/` |
+| `tests/e2e/test_ui_screenshots.py` | Playwright screenshots (tmpdir by default; set `LOADPATH_SCREENSHOT_DIR=docs/screenshots` to regenerate README assets) |
 | `desktop/*.test.mjs` | Electron sidecar command, health-wait, and external-URL allowlist |
 
 To regenerate the README screenshots:
@@ -337,4 +349,4 @@ Not CodeRabbit (comments without a closed impact set). Not a CodeScene clone (we
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Vulnerability reports: [SECURITY.md](SECURITY.md).
