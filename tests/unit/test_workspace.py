@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from loadpath.review.diff import git_diff
@@ -19,6 +20,23 @@ def test_merge_base_and_three_dot_range(tmp_path: Path):
     info = resolve_review_range(repo, "HEAD~1", "HEAD", three_dot=True)
     assert info["merge_base"] == mb
     diff = git_diff(repo, "HEAD~1", "HEAD", three_dot=True)
+    assert any(f.path == "b.txt" for f in diff.files)
+
+
+def test_git_diff_falls_back_when_three_dot_has_no_merge_base(tmp_path: Path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    (repo / "a.txt").write_text("one\n")
+    git_init_with_main(repo)
+    def run(*args: str) -> None:
+        subprocess.check_call(["git", "-C", str(repo), *args], stdout=subprocess.DEVNULL)
+
+    run("checkout", "--orphan", "pr")
+    run("rm", "-rf", ".")
+    (repo / "b.txt").write_text("pr\n")
+    git_commit_all(repo, "pr")
+    diff = git_diff(repo, "main", "HEAD", three_dot=True)
+    assert isinstance(diff.files, list)
     assert any(f.path == "b.txt" for f in diff.files)
 
 

@@ -287,7 +287,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
         el_m = ROUTE_ATTR_ELEMENT.search(attrs)
         if not path_m:
             continue
-        rpath = path_m.group(1)
+        rpath = path_m.group(1) or "/"
         line = source[: m.start()].count("\n") + 1
         page_name = el_m.group(1) if el_m else rpath
         rn = add(NodeType.REACT_ROUTE, rpath, f"react.route:{rpath}", line, {"element": page_name})
@@ -298,7 +298,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
             edge(rn.id, node_id(NodeType.COMPONENT, f"{feat}.{page_name}"), EdgeType.RENDERS)
 
     for m in PATH_OBJ_RE.finditer(source):
-        rpath, page_name = m.group(1), m.group(2)
+        rpath, page_name = m.group(1) or "/", m.group(2)
         line = source[: m.start()].count("\n") + 1
         rn = add(NodeType.REACT_ROUTE, rpath, f"react.route:{rpath}", line, {"element": page_name})
         edge(rn.id, node_id(NodeType.PAGE, f"{feature or 'app'}.{page_name}"), EdgeType.PUBLISHES_ROUTE)

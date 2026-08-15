@@ -51,23 +51,45 @@ def git_diff(
     three_dot: bool = True,
 ) -> DiffSet:
     repo_root = repo_root.resolve()
-    spec = _range_args(base, head, three_dot)
-    numstat = subprocess.check_output(
-        ["git", "-C", str(repo_root), "diff", "--numstat", "-M", *spec],
-        text=True,
-        stderr=subprocess.DEVNULL,
-    )
-    namestat = subprocess.check_output(
-        ["git", "-C", str(repo_root), "diff", "--name-status", "-M", *spec],
-        text=True,
-        stderr=subprocess.DEVNULL,
-    )
-    patch = subprocess.check_output(
-        ["git", "-C", str(repo_root), "diff", "-U3", *spec],
-        text=True,
-        stderr=subprocess.DEVNULL,
-        errors="replace",
-    )
+    specs: list[list[str]] = []
+    if head and three_dot:
+        specs.append(_range_args(base, head, True))
+    if head:
+        two = _range_args(base, head, False)
+        if two not in specs:
+            specs.append(two)
+    if not specs:
+        specs.append(_range_args(base, head, three_dot))
+
+    last_error: subprocess.CalledProcessError | None = None
+    numstat = namestat = patch = ""
+    used = specs[0]
+    for spec in specs:
+        try:
+            numstat = subprocess.check_output(
+                ["git", "-C", str(repo_root), "diff", "--numstat", "-M", *spec],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            namestat = subprocess.check_output(
+                ["git", "-C", str(repo_root), "diff", "--name-status", "-M", *spec],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            patch = subprocess.check_output(
+                ["git", "-C", str(repo_root), "diff", "-U3", *spec],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                errors="replace",
+            )
+            used = spec
+            last_error = None
+            break
+        except subprocess.CalledProcessError as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        return DiffSet(files=[], base=base, head=head or "WORKTREE")
     patches = _split_patches(patch)
 
     added_map: dict[str, tuple[int, int]] = {}

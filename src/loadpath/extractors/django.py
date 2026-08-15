@@ -314,12 +314,7 @@ class DjangoExtractor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        # urlpatterns = [...]
         for target in node.targets:
-            if isinstance(target, ast.Name) and target.id == "urlpatterns" and isinstance(node.value, (ast.List, ast.Tuple)):
-                for elt in node.value.elts:
-                    if isinstance(elt, ast.Call):
-                        self.visit_Call(elt)
             if isinstance(target, ast.Name) and target.id in {"CELERY_BEAT_SCHEDULE", "beat_schedule"}:
                 self._beat_schedule(node.value)
         self.generic_visit(node)
@@ -890,6 +885,30 @@ class DjangoExtractor(ast.NodeVisitor):
                         confidence=0.7,
                     )
 
+    def _include_target(self, call: ast.Call) -> str | None:
+        if not call.args:
+            return None
+        arg0 = call.args[0]
+        hit = _const_str(arg0) or _name(arg0)
+        if hit:
+            return hit
+        if isinstance(arg0, (ast.Tuple, ast.List)) and arg0.elts:
+            return _const_str(arg0.elts[0]) or _name(arg0.elts[0])
+        return None
+
+    def _route_identity(
+        self, route: str, include_mod: str | None, name: str | None, lineno: int
+    ) -> tuple[str, str]:
+        """Empty `path("", …)` must still show a label and a unique id."""
+        stamp = f"{Path(self.rel_path).name}:{lineno}"
+        if route:
+            return route, f"{self.app}:{route}"
+        if include_mod:
+            return f"include:{include_mod}", f"{self.app}:include:{include_mod}:{stamp}"
+        if name:
+            return name, f"{self.app}:{name}:{stamp}"
+        return "/", f"{self.app}:/:{stamp}"
+
     def _url_path(self, node: ast.Call) -> None:
         if not node.args:
             return
@@ -917,7 +936,7 @@ class DjangoExtractor(ast.NodeVisitor):
             if isinstance(view_expr, ast.Call):
                 fn = _name(view_expr.func) or ""
                 if fn.split(".")[-1] == "include":
-                    include_mod = _const_str(view_expr.args[0]) if view_expr.args else _name(view_expr.args[0] if view_expr.args else None)
+                    include_mod = self._include_target(view_expr)
                     view_name = None
         extra = {
             "app": self.app,
@@ -926,12 +945,13 @@ class DjangoExtractor(ast.NodeVisitor):
             "view": view_name,
             "include": include_mod,
         }
-        route_node = self.add_node(NodeType.ROUTE, f"{route}", f"{self.app}:{route}", node.lineno, extra)
+        display, qname = self._route_identity(route, include_mod, name, node.lineno)
+        route_node = self.add_node(NodeType.ROUTE, display, qname, node.lineno, extra)
         if name:
             un = self.add_node(NodeType.URL_NAME, name, name, node.lineno, extra)
             self.add_edge(route_node.id, un.id, EdgeType.BELONGS_TO)
         if view_name:
-            vq = view_name if "." in view_name else f"{self.app}.{view_name.split('.')[-1]}"
+            vq = f"{self.app}.{view_name.split('.')[-1]}"
             self.add_edge(route_node.id, node_id(NodeType.VIEW, vq), EdgeType.PUBLISHES_ROUTE)
 
     def _router_register(self, node: ast.Call) -> None:
@@ -946,7 +966,7 @@ class DjangoExtractor(ast.NodeVisitor):
             NodeType.ROUTE, f"{route}", f"{self.app}:{route}", node.lineno, extra
         )
         if viewset:
-            vq = viewset if "." in viewset else f"{self.app}.{viewset.split('.')[-1]}"
+            vq = f"{self.app}.{viewset.split('.')[-1]}"
             self.add_edge(route_node.id, node_id(NodeType.VIEW, vq), EdgeType.PUBLISHES_ROUTE)
 
     def _get_model(self, node: ast.Call) -> None:

@@ -14,6 +14,7 @@ from loadpath.review.cluster import cluster_diff
 from loadpath.review.confidence import score_confidence
 from loadpath.review.diff import DiffSet, git_diff
 from loadpath.review.evolution import analyze_evolution
+from loadpath.stitch.openapi import published_route
 from loadpath.workspace import git_dirty_paths, resolve_review_range
 from loadpath.types import (
     ChangeKind,
@@ -504,7 +505,7 @@ def _sink_summaries(nodes: list[dict], store: GraphStore) -> list[dict]:
     for n in nodes:
         if n["type"] in interesting:
             extra = n.get("extra") or {}
-            name = extra.get("mounted_at") or extra.get("full_path") or n["name"]
+            name = published_route(n) if n["type"] == NodeType.ROUTE.value else extra.get("mounted_at") or extra.get("full_path") or n["name"]
             item = {
                 "id": n["id"],
                 "type": n["type"],

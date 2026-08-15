@@ -107,3 +107,74 @@ def test_contexts_assigned(tmp_path: Path):
     invoice = next(n for n in store.nodes([NodeType.MODEL]) if n["name"] == "Invoice")
     assert invoice["context"] == "billing"
     store.close()
+
+
+def test_empty_include_prefix_does_not_pollute_child_paths(tmp_path: Path):
+    from loadpath.graph.store import GraphStore
+    from loadpath.stitch.openapi import apply_url_includes, django_route_to_template
+    from loadpath.types import Node, NodeType, node_id
+
+    store = GraphStore(tmp_path / "g.sqlite3")
+    store.upsert_node(
+        Node(
+            id=node_id(NodeType.ROUTE, "zproject:include:tornado"),
+            type=NodeType.ROUTE,
+            name="include:zproject.tornado_urls",
+            qualified_name="zproject:include:zproject.tornado_urls",
+            extra={"app": "zproject", "route": "", "include": "zproject.urls"},
+        )
+    )
+    child_id = node_id(NodeType.ROUTE, "zproject:coverage/{id}")
+    store.upsert_node(
+        Node(
+            id=child_id,
+            type=NodeType.ROUTE,
+            name="coverage/{id}",
+            qualified_name="zproject:coverage/{id}",
+            extra={"app": "zproject", "route": "coverage/{id}"},
+        )
+    )
+    store.conn.commit()
+    apply_url_includes(store)
+    child = store.get_node(child_id)
+    assert child is not None
+    assert "include:" not in child["name"]
+    assert child["name"] == "/coverage/{id}"
+    assert (child.get("extra") or {}).get("full_path") == "/coverage/{id}"
+    store.close()
+    assert django_route_to_template("include:zproject.tornado_urls") == "/"
+    assert django_route_to_template("^base") == "/base"
+    assert django_route_to_template("^$") == "/"
+
+
+def test_regex_include_join_strips_anchors(tmp_path: Path):
+    from loadpath.graph.store import GraphStore
+    from loadpath.stitch.openapi import apply_url_includes
+    from loadpath.types import Node, NodeType, node_id
+
+    store = GraphStore(tmp_path / "g.sqlite3")
+    store.upsert_node(
+        Node(
+            id=node_id(NodeType.ROUTE, "geonode:base"),
+            type=NodeType.ROUTE,
+            name="^base",
+            qualified_name="geonode:^base",
+            extra={"app": "geonode", "route": "^base/", "include": "geonode.base.urls"},
+        )
+    )
+    child_id = node_id(NodeType.ROUTE, "base:index")
+    store.upsert_node(
+        Node(
+            id=child_id,
+            type=NodeType.ROUTE,
+            name="^$",
+            qualified_name="base:^$",
+            extra={"app": "base", "route": "^$"},
+        )
+    )
+    store.conn.commit()
+    apply_url_includes(store)
+    child = store.get_node(child_id)
+    assert child is not None
+    assert child["name"] == "/base"
+    store.close()
