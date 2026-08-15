@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
 
 REPO_SLUG = re.compile(r"^[\w.-]+/[\w.-]+$")
 LOADPATH_COMMENT_MARKER = "<!-- loadpath-review -->"
+REMOTE_HOST = re.compile(
+    r"(github\.com|bitbucket\.org)[:/](?P<slug>[\w.-]+/[\w.-]+?)(?:\.git)?/?$",
+    re.IGNORECASE,
+)
+REPO_LIST_LIMIT = 500
 
 
 def _marked_comment(markdown: str) -> str:
@@ -23,6 +30,49 @@ def require_repo_slug(repo: str) -> str:
     if not REPO_SLUG.match(slug):
         raise ValueError("repo must be owner/name")
     return slug
+
+
+def parse_remote_url(url: str) -> tuple[str, str] | None:
+    """Return (provider, owner/name) for a GitHub or Bitbucket remote URL."""
+    raw = (url or "").strip()
+    match = REMOTE_HOST.search(raw)
+    if not match:
+        return None
+    slug = match.group("slug").strip("/")
+    if not REPO_SLUG.match(slug):
+        return None
+    host = match.group(1).lower()
+    provider = "github" if host == "github.com" else "bitbucket"
+    return provider, slug
+
+
+def attach_local_paths(repos: list[RemoteRepo], workspace_paths: list[str]) -> list[RemoteRepo]:
+    """Fill local_path when a registered workspace remote matches the repo slug."""
+    index: dict[tuple[str, str], str] = {}
+    for raw in workspace_paths:
+        path = Path(raw).expanduser()
+        try:
+            if not path.is_dir():
+                continue
+            listed = subprocess.check_output(
+                ["git", "-C", str(path), "remote", "-v"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        resolved = str(path.resolve()) if path.exists() else str(path)
+        for line in listed.splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            parsed = parse_remote_url(parts[1])
+            if parsed:
+                index[(parsed[0], parsed[1].lower())] = resolved
+    for repo in repos:
+        repo.local_path = index.get((repo.provider, repo.slug.lower()))
+    return repos
 
 
 @dataclass
@@ -46,8 +96,29 @@ class PullRequest:
         return self.__dict__.copy()
 
 
+@dataclass
+class RemoteRepo:
+    provider: str
+    slug: str
+    name: str
+    owner: str
+    url: str
+    private: bool = False
+    default_branch: str = ""
+    updated_at: str = ""
+    description: str = ""
+    local_path: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__.copy()
+
+
 class SCMProvider(Protocol):
     name: str
+
+    def current_user(self) -> dict[str, str]: ...
+
+    def list_repositories(self, limit: int = REPO_LIST_LIMIT) -> list[RemoteRepo]: ...
 
     def list_pull_requests(self, repo: str, state: str = "open") -> list[PullRequest]: ...
 
@@ -72,6 +143,58 @@ class GitHubProvider:
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+
+    def current_user(self) -> dict[str, str]:
+        r = self.client.get(f"{self.base}/user", headers=self._headers())
+        r.raise_for_status()
+        item = r.json()
+        return {
+            "login": item.get("login") or "",
+            "name": item.get("name") or item.get("login") or "",
+            "url": item.get("html_url") or "",
+        }
+
+    def list_repositories(self, limit: int = REPO_LIST_LIMIT) -> list[RemoteRepo]:
+        cap = max(1, min(limit, REPO_LIST_LIMIT))
+        out: list[RemoteRepo] = []
+        page = 1
+        while len(out) < cap:
+            per_page = min(100, cap - len(out))
+            r = self.client.get(
+                f"{self.base}/user/repos",
+                params={
+                    "per_page": per_page,
+                    "page": page,
+                    "sort": "updated",
+                    "affiliation": "owner,collaborator,organization_member",
+                },
+                headers=self._headers(),
+            )
+            r.raise_for_status()
+            batch = r.json() or []
+            if not batch:
+                break
+            for item in batch:
+                slug = item.get("full_name") or ""
+                owner, _, name = slug.partition("/")
+                html = item.get("html_url") or ""
+                out.append(
+                    RemoteRepo(
+                        provider="github",
+                        slug=slug,
+                        name=name or slug,
+                        owner=owner,
+                        url=html,
+                        private=bool(item.get("private")),
+                        default_branch=item.get("default_branch") or "",
+                        updated_at=item.get("updated_at") or "",
+                        description=item.get("description") or "",
+                    )
+                )
+            if len(batch) < per_page:
+                break
+            page += 1
+        return out[:cap]
 
     def list_pull_requests(self, repo: str, state: str = "open") -> list[PullRequest]:
         repo = require_repo_slug(repo)
@@ -207,6 +330,49 @@ class BitbucketProvider:
         if self.username:
             return {}
         return {"Authorization": f"Bearer {self.token}"}
+
+    def current_user(self) -> dict[str, str]:
+        r = self.client.get(f"{self.base}/user", headers=self._headers(), auth=self._auth())
+        r.raise_for_status()
+        item = r.json()
+        login = item.get("username") or ""
+        return {
+            "login": login,
+            "name": item.get("display_name") or login,
+            "url": ((item.get("links") or {}).get("html") or {}).get("href") or "",
+        }
+
+    def list_repositories(self, limit: int = REPO_LIST_LIMIT) -> list[RemoteRepo]:
+        cap = max(1, min(limit, REPO_LIST_LIMIT))
+        out: list[RemoteRepo] = []
+        url: str | None = f"{self.base}/repositories"
+        params: dict[str, Any] | None = {"role": "member", "pagelen": min(50, cap), "sort": "-updated_on"}
+        while url and len(out) < cap:
+            r = self.client.get(url, params=params, headers=self._headers(), auth=self._auth())
+            r.raise_for_status()
+            data = r.json()
+            params = None
+            for item in data.get("values") or []:
+                slug = item.get("full_name") or ""
+                owner, _, name = slug.partition("/")
+                html = ((item.get("links") or {}).get("html") or {}).get("href") or ""
+                out.append(
+                    RemoteRepo(
+                        provider="bitbucket",
+                        slug=slug,
+                        name=name or slug,
+                        owner=owner,
+                        url=html,
+                        private=item.get("is_private", True),
+                        default_branch=((item.get("mainbranch") or {}).get("name") or ""),
+                        updated_at=item.get("updated_on") or "",
+                        description=item.get("description") or "",
+                    )
+                )
+                if len(out) >= cap:
+                    break
+            url = data.get("next") or None
+        return out[:cap]
 
     def list_pull_requests(self, repo: str, state: str = "open") -> list[PullRequest]:
         repo = require_repo_slug(repo)

@@ -276,3 +276,59 @@ def test_ui_browse_repo_and_pick_git_refs(live_app, browser_page):
     heads.wait_for()
     heads.get_by_test_id("ref-option-branch").filter(has_text="main").click()
     assert page.get_by_test_id("head-ref").input_value() == "main"
+
+
+@pytest.mark.playwright
+def test_ui_oauth_login_and_remote_repo_list(live_app, browser_page):
+    base_url, _repo = live_app
+    page = browser_page
+    page.request.put(
+        f"{base_url}/api/settings",
+        headers={"Content-Type": "application/json"},
+        data='{"github_oauth_client_id":"Ov23ui","github_token":"ghp_ui_token"}',
+    )
+    page.route(
+        "**/api/scm/repos**",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=(
+                '{"provider":"github","user":{"login":"ada","name":"Ada","url":"https://github.com/ada"},'
+                '"repos":[{"provider":"github","slug":"acme/demo","name":"demo","owner":"acme",'
+                '"url":"https://github.com/acme/demo","private":true,"default_branch":"main",'
+                '"updated_at":"","description":"","local_path":null},'
+                '{"provider":"github","slug":"acme/ledger","name":"ledger","owner":"acme",'
+                '"url":"https://github.com/acme/ledger","private":false,"default_branch":"main",'
+                '"updated_at":"","description":"","local_path":null}]}'
+            ),
+        ),
+    )
+    page.route(
+        "**/api/oauth/github/start",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=(
+                '{"flow_id":"flow1","user_code":"WXYZ-9876",'
+                '"verification_uri":"https://github.com/login/device",'
+                '"verification_uri_complete":"https://github.com/login/device?user_code=WXYZ-9876",'
+                '"interval":5,"expires_in":900}'
+            ),
+        ),
+    )
+    page.add_init_script("window.open = () => null;")
+    page.goto(base_url, wait_until="networkidle")
+
+    page.get_by_test_id("tab-prs").click()
+    page.get_by_test_id("scm-repo-count").wait_for(timeout=10_000)
+    assert "2 github repositories" in page.get_by_test_id("scm-repo-count").inner_text()
+    page.get_by_test_id("pr-repo").fill("acme/demo")
+
+    page.get_by_test_id("tab-settings").click()
+    page.get_by_test_id("settings-form").wait_for()
+    assert "ada" in page.get_by_test_id("scm-github").inner_text().lower() or "token saved" in page.get_by_test_id("scm-github").inner_text().lower()
+    page.get_by_test_id("btn-github-disconnect").click()
+    page.get_by_test_id("btn-github-login").wait_for()
+    page.get_by_test_id("btn-github-login").click()
+    page.get_by_test_id("github-user-code").wait_for()
+    assert "WXYZ-9876" in page.get_by_test_id("github-user-code").inner_text()

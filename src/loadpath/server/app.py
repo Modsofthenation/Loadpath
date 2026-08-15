@@ -4,10 +4,12 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import httpx
 
 from loadpath import __version__
 from loadpath.paths import package_dir
@@ -27,7 +29,16 @@ from loadpath.config import load_config
 from loadpath.detect import detect_layout, write_draft_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_repo
-from loadpath.providers.scm import provider_for
+from loadpath.providers.oauth import (
+    callback_html,
+    disconnect_scm,
+    finish_bitbucket_authorize,
+    oauth_status,
+    poll_github_device,
+    start_bitbucket_authorize,
+    start_github_device,
+)
+from loadpath.providers.scm import attach_local_paths, provider_for
 from loadpath.review.engine import run_review
 from loadpath.review.render import render_html, render_markdown
 from loadpath.settings import AppSettings, public_settings, register_workspace, settings_path, _should_update_secret
@@ -64,9 +75,12 @@ class PRCommentRequest(BaseModel):
 
 class SettingsUpdate(BaseModel):
     github_token: str | None = None
+    github_oauth_client_id: str | None = None
     bitbucket_token: str | None = None
     bitbucket_username: str | None = None
     bitbucket_workspace: str | None = None
+    bitbucket_oauth_client_id: str | None = None
+    bitbucket_oauth_client_secret: str | None = None
     ai_provider: str | None = None
     ai_api_key: str | None = None
     ai_model: str | None = None
@@ -86,6 +100,14 @@ class ResidualRequest(BaseModel):
     review: dict[str, Any] = Field(default_factory=dict)
 
 
+class GitHubOAuthPoll(BaseModel):
+    flow_id: str
+
+
+class OAuthDisconnect(BaseModel):
+    provider: str
+
+
 def require_repo_path(path: str | None) -> Path:
     if not (path or "").strip():
         raise HTTPException(400, "repo_path is required")
@@ -93,6 +115,39 @@ def require_repo_path(path: str | None) -> Path:
     if not root.is_dir():
         raise HTTPException(404, f"Repo not found: {root}")
     return root
+
+
+def _scm_credentials(settings: AppSettings, provider: str) -> tuple[str, str]:
+    if provider == "github":
+        return settings.github_token, ""
+    if provider == "bitbucket":
+        return settings.bitbucket_token, settings.bitbucket_username
+    raise HTTPException(400, f"Unknown SCM provider: {provider}")
+
+
+def _call_scm(provider: str, fn):
+    from loadpath.providers.oauth import refresh_bitbucket_access_token
+
+    settings = AppSettings.load()
+    token, username = _scm_credentials(settings, provider)
+    if not token:
+        raise HTTPException(400, f"No {provider} token configured")
+    try:
+        return fn(provider_for(provider, token, username=username))
+    except httpx.HTTPStatusError as exc:
+        if (
+            provider == "bitbucket"
+            and exc.response is not None
+            and exc.response.status_code == 401
+            and settings.bitbucket_refresh_token
+        ):
+            try:
+                settings = refresh_bitbucket_access_token(settings)
+            except Exception as refresh_exc:  # noqa: BLE001
+                raise HTTPException(502, str(refresh_exc)) from refresh_exc
+            token, username = _scm_credentials(settings, provider)
+            return fn(provider_for(provider, token, username=username))
+        raise HTTPException(502, str(exc)) from exc
 
 
 def create_app(
@@ -169,12 +224,18 @@ def create_app(
         current = AppSettings.load()
         if _should_update_secret(body.github_token, current.github_token):
             current.github_token = body.github_token or ""
+        if body.github_oauth_client_id is not None:
+            current.github_oauth_client_id = body.github_oauth_client_id.strip()
         if _should_update_secret(body.bitbucket_token, current.bitbucket_token):
             current.bitbucket_token = body.bitbucket_token or ""
         if body.bitbucket_username is not None:
             current.bitbucket_username = body.bitbucket_username
         if body.bitbucket_workspace is not None:
             current.bitbucket_workspace = body.bitbucket_workspace
+        if body.bitbucket_oauth_client_id is not None:
+            current.bitbucket_oauth_client_id = body.bitbucket_oauth_client_id.strip()
+        if _should_update_secret(body.bitbucket_oauth_client_secret, current.bitbucket_oauth_client_secret):
+            current.bitbucket_oauth_client_secret = body.bitbucket_oauth_client_secret or ""
         if body.ai_provider is not None:
             current.ai.provider = body.ai_provider
         if _should_update_secret(body.ai_api_key, current.ai.api_key):
@@ -320,13 +381,19 @@ def create_app(
         settings = AppSettings.load()
         token = body.token
         username = body.username or settings.bitbucket_username
-        if not token:
-            token = settings.github_token if body.provider == "github" else settings.bitbucket_token
-        if not token:
-            raise HTTPException(400, f"No {body.provider} token configured")
+        if token:
+            try:
+                scm = provider_for(body.provider, token, username=username)
+                prs = scm.list_pull_requests(body.repo, state=body.state)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(502, str(exc)) from exc
+            return {"pull_requests": [p.to_dict() for p in prs]}
         try:
-            scm = provider_for(body.provider, token, username=username)
-            prs = scm.list_pull_requests(body.repo, state=body.state)
+            prs = _call_scm(body.provider, lambda scm: scm.list_pull_requests(body.repo, state=body.state))
+        except HTTPException:
+            raise
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
@@ -350,20 +417,133 @@ def create_app(
         settings = AppSettings.load()
         token = body.token
         username = body.username or settings.bitbucket_username
-        if not token:
-            token = settings.github_token if body.provider == "github" else settings.bitbucket_token
-        if not token:
-            raise HTTPException(400, f"No {body.provider} token configured")
         if not body.markdown.strip():
             raise HTTPException(400, "markdown is empty")
+        if token:
+            try:
+                scm = provider_for(body.provider, token, username=username)
+                return scm.upsert_pull_request_comment(body.repo, body.number, body.markdown)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(502, str(exc)) from exc
         try:
-            scm = provider_for(body.provider, token, username=username)
-            posted = scm.upsert_pull_request_comment(body.repo, body.number, body.markdown)
+            return _call_scm(
+                body.provider,
+                lambda scm: scm.upsert_pull_request_comment(body.repo, body.number, body.markdown),
+            )
+        except HTTPException:
+            raise
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(502, str(exc)) from exc
-        return posted
+
+    @app.get("/api/scm/repos")
+    def api_scm_repos(provider: str = Query("github")) -> dict[str, Any]:
+        settings = AppSettings.load()
+
+        def _load(scm):
+            return scm.list_repositories(), scm.current_user()
+
+        try:
+            repos, profile = _call_scm(provider, _load)
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, str(exc)) from exc
+        attach_local_paths(repos, [w.path for w in settings.workspaces])
+        login = profile.get("login") or ""
+        if login:
+            current = AppSettings.load()
+            if provider == "github" and current.github_user != login:
+                current.github_user = login
+                current.save()
+            elif provider == "bitbucket" and current.bitbucket_user != login:
+                current.bitbucket_user = login
+                current.save()
+        return {
+            "provider": provider,
+            "user": profile,
+            "repos": [r.to_dict() for r in repos],
+        }
+
+    @app.get("/api/oauth/status")
+    def api_oauth_status() -> dict[str, Any]:
+        return oauth_status()
+
+    @app.post("/api/oauth/github/start")
+    def api_github_oauth_start() -> dict[str, Any]:
+        try:
+            return start_github_device()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+
+    @app.post("/api/oauth/github/poll")
+    def api_github_oauth_poll(body: GitHubOAuthPoll) -> dict[str, Any]:
+        try:
+            return poll_github_device(body.flow_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(502, str(exc)) from exc
+
+    @app.get("/api/oauth/bitbucket/start")
+    def api_bitbucket_oauth_start() -> dict[str, Any]:
+        redirect_uri = f"{base.rstrip('/')}/api/oauth/bitbucket/callback"
+        try:
+            return start_bitbucket_authorize(redirect_uri)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/oauth/bitbucket/callback")
+    def api_bitbucket_oauth_callback(code: str = "", state: str = "", error: str = "") -> HTMLResponse:
+        if error:
+            return HTMLResponse(
+                callback_html(
+                    ok=False,
+                    title="Bitbucket sign-in cancelled",
+                    body=error.replace("_", " "),
+                ),
+                status_code=400,
+            )
+        if not code or not state:
+            return HTMLResponse(
+                callback_html(ok=False, title="Bitbucket sign-in failed", body="Missing code or state."),
+                status_code=400,
+            )
+        try:
+            settings = finish_bitbucket_authorize(code, state)
+        except ValueError as exc:
+            return HTMLResponse(
+                callback_html(ok=False, title="Bitbucket sign-in failed", body=str(exc)),
+                status_code=400,
+            )
+        except httpx.HTTPError as exc:
+            return HTMLResponse(
+                callback_html(ok=False, title="Bitbucket sign-in failed", body=str(exc)),
+                status_code=502,
+            )
+        user = settings.bitbucket_user or "your account"
+        return HTMLResponse(
+            callback_html(
+                ok=True,
+                title="Connected to Bitbucket",
+                body=f"Signed in as {user}. Return to Loadpath — your repositories are available on the Pull requests tab.",
+            )
+        )
+
+    @app.post("/api/oauth/disconnect")
+    def api_oauth_disconnect(body: OAuthDisconnect) -> dict[str, Any]:
+        try:
+            settings = disconnect_scm(body.provider)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return public_settings(settings)
 
     @app.post("/api/ai/residual")
     def api_residual(body: ResidualRequest) -> dict[str, Any]:

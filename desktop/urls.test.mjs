@@ -7,6 +7,7 @@ describe("isAllowedExternalUrl", () => {
   it("allows GitHub and Bitbucket https PR links", () => {
     assert.equal(isAllowedExternalUrl("https://github.com/acme/demo/pull/12"), true);
     assert.equal(isAllowedExternalUrl("https://bitbucket.org/acme/demo/pull-requests/3"), true);
+    assert.equal(isAllowedExternalUrl("https://id.atlassian.com/login"), true);
   });
 
   it("rejects credentials, other hosts, and non-https schemes", () => {

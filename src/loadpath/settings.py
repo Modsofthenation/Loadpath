@@ -38,9 +38,15 @@ class Workspace(BaseModel):
 
 class AppSettings(BaseModel):
     github_token: str = ""
+    github_user: str = ""
+    github_oauth_client_id: str = ""
     bitbucket_token: str = ""
     bitbucket_username: str = ""
     bitbucket_workspace: str = ""
+    bitbucket_user: str = ""
+    bitbucket_refresh_token: str = ""
+    bitbucket_oauth_client_id: str = ""
+    bitbucket_oauth_client_secret: str = ""
     ai: AISettings = Field(default_factory=AISettings)
     workspaces: list[Workspace] = Field(default_factory=list)
     connections: list[SCMConnection] = Field(default_factory=list)
@@ -103,8 +109,18 @@ def public_settings(settings: AppSettings) -> dict[str, Any]:
     data = settings.model_dump()
     data["github_token"] = mask_secret(settings.github_token)
     data["bitbucket_token"] = mask_secret(settings.bitbucket_token)
+    data["bitbucket_refresh_token"] = mask_secret(settings.bitbucket_refresh_token)
+    data["bitbucket_oauth_client_secret"] = mask_secret(settings.bitbucket_oauth_client_secret)
     data["github_token_set"] = bool(settings.github_token)
     data["bitbucket_token_set"] = bool(settings.bitbucket_token)
+    data["bitbucket_oauth_client_secret_set"] = bool(settings.bitbucket_oauth_client_secret)
+    data["github_oauth_ready"] = bool(
+        (os.environ.get("LOADPATH_GITHUB_CLIENT_ID") or settings.github_oauth_client_id or "").strip()
+    )
+    data["bitbucket_oauth_ready"] = bool(
+        (os.environ.get("LOADPATH_BITBUCKET_CLIENT_ID") or settings.bitbucket_oauth_client_id or "").strip()
+        and (os.environ.get("LOADPATH_BITBUCKET_CLIENT_SECRET") or settings.bitbucket_oauth_client_secret or "").strip()
+    )
     data["ai"] = {
         "provider": settings.ai.provider,
         "model": settings.ai.model,

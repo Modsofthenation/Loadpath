@@ -63,7 +63,7 @@ Toggle **This review** (impact subgraph) vs **Indexed architecture** (the repo m
 
 ### Pull requests
 
-GitHub and Bitbucket via API tokens from Settings. Pick a PR and jump to a branch-range review. The screenshot uses a fixture PR so the tab is not empty.
+GitHub and Bitbucket via **Sign in** (OAuth) or a token in Settings. After connecting, **My repos** lists every repository the account can access. Pick one and jump to a branch-range review. Review still runs against a **local clone** — if that clone is already a Loadpath workspace, selecting the remote repo fills the local path from `git remote`. The screenshot uses a fixture PR so the tab is not empty.
 
 ![Pull requests list](docs/screenshots/pull-requests.png)
 
@@ -75,7 +75,11 @@ Browse the filesystem, pick a project root. Loadpath remembers recent workspaces
 
 ### Settings
 
-Appearance (all 24 themes), GitHub / Bitbucket tokens, and AI providers (Anthropic, OpenAI, Grok/xAI, DeepSeek, Cursor-compatible, Ollama). Residual analysis only — Loadpath does not comment every hunk.
+Appearance (all 24 themes), GitHub / Bitbucket **OAuth sign-in** (or a classic PAT / app password), and AI providers (Anthropic, OpenAI, Grok/xAI, DeepSeek, Cursor-compatible, Ollama). Residual analysis only — Loadpath does not comment every hunk.
+
+GitHub uses device flow (`repo read:user read:org`). Create an OAuth App, enable Device Flow, then set `LOADPATH_GITHUB_CLIENT_ID` or paste the client ID in Settings.
+
+Bitbucket uses authorization code. Create an OAuth consumer whose callback is `http://127.0.0.1:7345/api/oauth/bitbucket/callback`, then set `LOADPATH_BITBUCKET_CLIENT_ID` / `LOADPATH_BITBUCKET_CLIENT_SECRET` or paste the key and secret in Settings. Access tokens are refreshed automatically. SCM sign-in and repo listing are local-only (loopback) so a tunneled MCP server does not expose private repos.
 
 ![Settings with theme grid](docs/screenshots/settings.png)
 
@@ -221,7 +225,7 @@ MCP URL: `https://your-tunnel.example/mcp` (or `http://127.0.0.1:7345/mcp` on th
 
 **Cursor / Claude / ChatGPT / Gemini (HTTP + OAuth)** — add that MCP URL in the host’s connectors. The first connect opens a consent page on the Loadpath machine.
 
-Tools: `list_workspaces`, `init_repo`, `index_repo`, `architecture`, `review`, `detect_repo`, `list_pull_requests`, `post_review_comment`. `review` returns the load-path brief (confidence, sinks, reviewers) — not hunk comments.
+Tools: `list_workspaces`, `init_repo`, `index_repo`, `architecture`, `review`, `detect_repo`, `list_pull_requests`, `list_remote_repositories`, `post_review_comment`. `review` returns the load-path brief (confidence, sinks, reviewers) — not hunk comments.
 
 Put `loadpath.yml` at the repo root (see [`loadpath.yml.example`](loadpath.yml.example) and [`fixtures/demo_monorepo/loadpath.yml`](fixtures/demo_monorepo/loadpath.yml)). The tool is opinionated about *your* architecture, not a generic module graph.
 

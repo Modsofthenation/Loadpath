@@ -8,7 +8,7 @@ from loadpath.config import load_config
 from loadpath.detect import detect_layout, write_draft_config
 from loadpath.index import index_repo
 from loadpath.mcp.compact import compact_architecture, compact_review
-from loadpath.providers.scm import provider_for
+from loadpath.providers.scm import attach_local_paths, provider_for
 from loadpath.review.engine import run_review
 from loadpath.review.render import render_markdown
 from loadpath.settings import AppSettings, register_workspace
@@ -135,6 +135,23 @@ def list_pull_requests(
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
     return {"pull_requests": [p.to_dict() for p in prs]}
+
+
+def list_remote_repositories(provider: str) -> dict[str, Any]:
+    """List GitHub or Bitbucket repositories the saved token can access."""
+    settings = AppSettings.load()
+    token = settings.github_token if provider == "github" else settings.bitbucket_token
+    username = settings.bitbucket_username
+    if not token:
+        return {"error": f"No {provider} token configured in Loadpath settings"}
+    try:
+        scm = provider_for(provider, token, username=username)
+        repos = scm.list_repositories()
+        profile = scm.current_user()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+    attach_local_paths(repos, [w.path for w in settings.workspaces])
+    return {"provider": provider, "user": profile, "repos": [r.to_dict() for r in repos]}
 
 
 def post_review_comment(
