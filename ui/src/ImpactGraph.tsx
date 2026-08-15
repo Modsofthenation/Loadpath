@@ -221,7 +221,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
         </div>
         <div className="seg" aria-label="Graph families">
           {(["django", "stitch", "react"] as const)
-            .filter((family) => presentFamilies.has(family) || family === "django")
+            .filter((family) => presentFamilies.has(family))
             .map((family) => (
               <button
                 key={family}

@@ -47,6 +47,7 @@ function makeLayerLabel(text: string, color: string): THREE.Sprite {
 }
 
 export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect }: Props) {
+  const wrapRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null);
   const [webglError, setWebglError] = useState<string | null>(null);
@@ -72,6 +73,11 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
         powerPreference: "low-power",
       });
     } catch {
+      setWebglError("WebGL is unavailable in this browser, so the 3D view cannot start. Switch back to 2D map.");
+      return;
+    }
+    if (!renderer.getContext()) {
+      renderer.dispose();
       setWebglError("WebGL is unavailable in this browser, so the 3D view cannot start. Switch back to 2D map.");
       return;
     }
@@ -145,8 +151,11 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
     });
     const labelColor = cssColor("--muted", "#8b9bb0");
     const labels: THREE.Sprite[] = [];
+    const discGeoms: THREE.BufferGeometry[] = [];
     for (const layer of layerCenters(nodes)) {
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(discRadius(layer.count), 48), planeMat);
+      const discGeom = new THREE.CircleGeometry(discRadius(layer.count), 48);
+      discGeoms.push(discGeom);
+      const disc = new THREE.Mesh(discGeom, planeMat);
       disc.rotation.y = Math.PI / 2;
       disc.position.x = layer.x;
       group.add(disc);
@@ -207,7 +216,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
         return;
       }
       renderer.domElement.style.cursor = "pointer";
-      const rect = host.getBoundingClientRect();
+      const rect = (wrapRef.current ?? host).getBoundingClientRect();
       setHover({ node, x: event.clientX - rect.left, y: event.clientY - rect.top });
     };
     const onClick = (event: MouseEvent) => {
@@ -250,6 +259,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
       sphere.dispose();
       edgeGeom.dispose();
       planeMat.dispose();
+      for (const geom of discGeoms) geom.dispose();
       (lines.material as THREE.Material).dispose();
       for (const label of labels) {
         const material = label.material as THREE.SpriteMaterial;
@@ -258,6 +268,11 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
       }
       for (const mesh of meshById.values()) {
         (mesh.material as THREE.Material).dispose();
+      }
+      try {
+        renderer.forceContextLoss();
+      } catch {
+        /* already lost */
       }
       renderer.dispose();
       renderer.domElement.remove();
@@ -270,7 +285,8 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
   }, [selectedId, neighborIds]);
 
   return (
-    <div className="graph-3d-host" ref={hostRef}>
+    <div className="graph-3d-host" ref={wrapRef}>
+      <div className="graph-3d-canvas-host" ref={hostRef} />
       {webglError ? (
         <p className="muted graph-3d-hint" data-testid="graph-3d-fallback">
           {webglError}
