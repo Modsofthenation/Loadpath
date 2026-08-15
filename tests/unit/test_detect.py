@@ -43,6 +43,27 @@ def test_write_draft_creates_manifest(tmp_path: Path):
     assert "queryset_nplusone" in text
 
 
+def test_detect_prefers_frontend_over_docs_site(tmp_path: Path):
+    (tmp_path / "api" / "billing").mkdir(parents=True)
+    (tmp_path / "api" / "billing" / "apps.py").write_text("class BillingConfig:\n    pass\n")
+    (tmp_path / "docs" / "src").mkdir(parents=True)
+    (tmp_path / "docs" / "package.json").write_text('{"dependencies":{"react":"19.0.0"}}\n')
+    (tmp_path / "frontend" / "web").mkdir(parents=True)
+    (tmp_path / "frontend" / "package.json").write_text('{"dependencies":{"react":"19.0.0"}}\n')
+    layout = detect_layout(tmp_path)
+    assert layout["react_root"] == "frontend"
+    assert layout["django_root"] == "api"
+
+
+def test_detect_does_not_treat_python_src_as_react_root(tmp_path: Path):
+    (tmp_path / "src" / "oscar").mkdir(parents=True)
+    (tmp_path / "src" / "oscar" / "apps.py").write_text("class OscarConfig:\n    pass\n")
+    (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+    layout = detect_layout(tmp_path)
+    assert layout["django_root"] == "src"
+    assert layout["react_root"] == "frontend/src"
+
+
 def test_detect_skips_nested_test_project_manage_py(tmp_path: Path):
     """Library repos (Wagtail) keep manage.py under a test project — index the package."""
     pkg = tmp_path / "pack" / "contrib" / "redirects"

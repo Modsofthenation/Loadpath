@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,12 @@ SKIP_DIRS = {
     ".mypy_cache",
     ".pytest_cache",
     "site-packages",
+    "docs",
+    "documentation",
+    "website",
+    "docusaurus",
+    "storybook",
+    "starlight_help",
 }
 
 TESTISH_PARTS = {"test", "tests", "testing"}
@@ -154,16 +161,62 @@ def _detect_django_root(repo_root: Path) -> str:
     return "backend"
 
 
+PREFERRED_REACT_ROOTS = (
+    "frontend/src",
+    "frontend",
+    "src-ui/src",
+    "web/src",
+    "client/src",
+    "ui/src",
+)
+
+SKIP_REACT_PARTS = {
+    "docs",
+    "documentation",
+    "website",
+    "docusaurus",
+    "storybook",
+    "starlight_help",
+    "e2e",
+    "cypress",
+}
+
+
+def _package_has_react(pkg: Path) -> bool:
+    try:
+        data = json.loads(pkg.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    deps = {**(data.get("dependencies") or {}), **(data.get("devDependencies") or {})}
+    return "react" in deps or "react-dom" in deps
+
+
 def _detect_react_root(repo_root: Path) -> str:
+    for candidate in PREFERRED_REACT_ROOTS:
+        path = repo_root / candidate
+        if path.is_dir():
+            return candidate
+
+    scored: list[tuple[int, str]] = []
     for pkg in repo_root.rglob("package.json"):
         if _skip(pkg):
             continue
+        if any(part in SKIP_REACT_PARTS for part in pkg.parts):
+            continue
+        if not _package_has_react(pkg):
+            continue
         src = pkg.parent / "src"
+        root = src if src.is_dir() else pkg.parent
+        rel = root.relative_to(repo_root).as_posix()
+        score = 0
+        if any(token in rel.split("/") for token in {"frontend", "web", "ui", "client", "src-ui"}):
+            score += 10
         if src.is_dir():
-            return src.relative_to(repo_root).as_posix()
-    for candidate in ("frontend/src", "web/src", "ui/src", "client/src", "src"):
-        if (repo_root / candidate).is_dir():
-            return candidate
+            score += 5
+        scored.append((score, rel))
+    if scored:
+        scored.sort(key=lambda item: (-item[0], len(item[1]), item[1]))
+        return scored[0][1]
     return "frontend/src"
 
 

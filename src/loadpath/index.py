@@ -15,7 +15,7 @@ from loadpath.types import GENERATED_PATH_MARKERS, ExtractedGraph, Node, NodeTyp
 PY_SKIP = {"migrations"}  # still extract migrations, just not skip
 INDEX_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx"}
 # Bump when extractor/stitch node identity changes so incremental indexes rebuild.
-INDEX_REVISION = "4"
+INDEX_REVISION = "5"
 
 
 def default_db_path(repo_root: Path) -> Path:
@@ -35,6 +35,15 @@ def iter_source_files(repo_root: Path, config: LoadpathConfig) -> list[Path]:
         "build",
         ".mypy_cache",
         ".pytest_cache",
+        "docs",
+        "documentation",
+        "website",
+        "docusaurus",
+        "storybook",
+        "starlight_help",
+        "collected_static",
+        "staticfiles",
+        "locale",
     }
     for path in repo_root.rglob("*"):
         if not path.is_file() or path.suffix not in INDEX_EXTENSIONS:
