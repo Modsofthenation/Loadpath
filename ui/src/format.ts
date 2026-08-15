@@ -16,3 +16,8 @@ export function formatWhen(iso?: string | null): string {
 export function repoName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
+
+/** Soft wrap opportunities after path/identifier separators. */
+export function wrapHint(text: string): string {
+  return text.replace(/([/\\._:@-])/g, "$1\u200b");
+}

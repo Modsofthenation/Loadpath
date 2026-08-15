@@ -24,10 +24,10 @@ describe("graph selected-node overflow", () => {
     );
     const inspector = document.querySelector(".inspector") as HTMLElement;
     const name = document.querySelector(".inspector .n") as HTMLElement;
-    expect(getComputedStyle(inspector).overflowWrap).toBe("anywhere");
+    expect(getComputedStyle(inspector).overflowWrap).toBe("break-word");
     expect(getComputedStyle(inspector).overflowX).toBe("hidden");
     expect(getComputedStyle(inspector).maxWidth).not.toBe("none");
-    expect(getComputedStyle(name).overflowWrap).toBe("anywhere");
+    expect(getComputedStyle(name).overflowWrap).toBe("break-word");
   });
 
   it("ellipsizes long titles inside graph nodes", () => {
