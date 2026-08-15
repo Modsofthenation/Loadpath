@@ -115,6 +115,9 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     inspector = page.get_by_test_id("graph-inspector")
     inspector.wait_for(timeout=10_000)
     assert inspector.inner_text().strip()
+    assert page.get_by_test_id("graph-inspector-purpose").inner_text().strip()
+    assert page.get_by_test_id("graph-inspector-inputs").is_visible()
+    assert page.get_by_test_id("graph-inspector-outputs").is_visible()
     overflow = inspector.evaluate(
         """el => {
             const pane = el.parentElement;
