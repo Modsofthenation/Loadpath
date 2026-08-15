@@ -8,6 +8,8 @@ or just moves it. The interface is the test surface.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from loadpath.architecture.rules import Finding
 from loadpath.config import LoadpathConfig
 from loadpath.graph.store import GraphStore
@@ -128,18 +130,24 @@ def _card_for(finding: Finding) -> dict | None:
 def _leaked_seams(store: GraphStore) -> list[Finding]:
     views = {n["id"]: n for n in store.nodes([NodeType.VIEW])}
     models = {n["id"]: n for n in store.nodes([NodeType.MODEL])}
-    services = [n for n in store.nodes([NodeType.SERVICE]) if not (n.get("extra") or {}).get("referenced")]
-    services_by_ctx: dict[str, list[dict]] = {}
-    for svc in services:
-        ctx = svc.get("context") or ""
-        services_by_ctx.setdefault(ctx, []).append(svc)
+    services = [
+        n for n in store.nodes([NodeType.SERVICE]) if not (n.get("extra") or {}).get("referenced")
+    ]
+    queries_by_src: dict[str, set[str]] = {}
     called_by_view: dict[str, set[str]] = {v: set() for v in views}
     for edge in store.edges():
-        if edge["type"] != EdgeType.CALLS.value:
-            continue
-        if edge["src"] in called_by_view:
+        if edge["type"] == EdgeType.QUERIES_MODEL.value:
+            queries_by_src.setdefault(edge["src"], set()).add(edge["dst"])
+        elif edge["type"] == EdgeType.CALLS.value and edge["src"] in called_by_view:
             called_by_view[edge["src"]].add(edge["dst"])
+    modules_by_ctx: dict[str, list[dict]] = {}
+    for svc in services:
+        ctx = svc.get("context") or ""
+        if not ctx or not svc.get("file_path"):
+            continue
+        modules_by_ctx.setdefault(ctx, []).append(svc)
     out: list[Finding] = []
+    seen: set[tuple[str, str]] = set()
     for edge in store.edges():
         if edge["type"] != EdgeType.QUERIES_MODEL.value:
             continue
@@ -150,22 +158,38 @@ def _leaked_seams(store: GraphStore) -> list[Finding]:
         if (edge.get("extra") or {}).get("imported"):
             continue
         ctx = view.get("context") or ""
+        if not ctx:
+            continue
+        key = (view["id"], model["id"])
+        if key in seen:
+            continue
+        called = called_by_view.get(view["id"], set())
         peers = [
             s
-            for s in services_by_ctx.get(ctx, [])
-            if s["id"] not in called_by_view.get(view["id"], set())
-            and s.get("file_path") != view.get("file_path")
+            for s in modules_by_ctx.get(ctx, [])
+            if s.get("file_path") != view.get("file_path")
         ]
         if not peers:
             continue
-        peer = peers[0]
+        # Prefer a service that already queries this model; otherwise the services
+        # module is the seam — not an arbitrary unused function in the same context.
+        same_model = [s for s in peers if model["id"] in queries_by_src.get(s["id"], set())]
+        same_model.sort(key=lambda s: s["name"])
+        unused = [s for s in peers if s["id"] not in called]
+        unused.sort(key=lambda s: s["name"])
+        if same_model:
+            peer_name = same_model[0]["name"]
+        else:
+            files = sorted({s["file_path"] for s in (unused or peers)})
+            peer_name = Path(files[0]).stem
+        seen.add(key)
         out.append(
             Finding(
                 rule="leaked_seam",
                 severity=RuleSeverity.WARNING,
                 message=(
                     f"{view['name']} queries {model.get('qualified_name')} past the "
-                    f"{peer['name']} module's seam. Callers of the view learn the queryset; "
+                    f"{peer_name} module's seam. Callers of the view learn the queryset; "
                     f"depth (leverage at the interface) is lost."
                 ),
                 node_id=view["id"],
@@ -173,10 +197,10 @@ def _leaked_seams(store: GraphStore) -> list[Finding]:
                 extra={
                     "strength": "strong",
                     "module": view["name"],
-                    "query_module": peer["name"],
+                    "query_module": peer_name,
                     "model": model.get("qualified_name"),
                     "deletion_test": (
-                        f"Deleting {peer['name']} would not concentrate complexity — the view already "
+                        f"Deleting {peer_name} would not concentrate complexity — the view already "
                         f"owns the queryset. Deleting the view's queryset would reappear on every action."
                     ),
                     "leverage": (
@@ -184,7 +208,7 @@ def _leaked_seams(store: GraphStore) -> list[Finding]:
                     ),
                     "locality": "Queryset shape, select_related, and auth scoping should live in one module.",
                     "before": f"{view['name']} → {model.get('name')} (queryset in the view)",
-                    "after": f"{view['name']} → {peer['name']} → {model.get('name')}",
+                    "after": f"{view['name']} → {peer_name} → {model.get('name')}",
                 },
             )
         )

@@ -19,6 +19,10 @@ def test_fixture_leaks_queryset_past_query_module(tmp_path: Path):
     assert hits, [f.message for f in findings]
     assert any("InvoiceViewSet" in f.message and "seam" in f.message for f in hits)
     assert any(f.extra.get("strength") == "strong" for f in hits)
+    invoice_hits = [f for f in hits if "InvoiceViewSet" in f.message]
+    modules = {f.extra.get("query_module") for f in invoice_hits}
+    assert "services" in modules
+    assert "recalculate_total" not in modules
     store.close()
 
 
