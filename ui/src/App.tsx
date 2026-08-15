@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { formatWhen, kindLabel, strengthLabel, typeLabel } from "./format";
+import { formatWhen, kindLabel, repoName, strengthLabel, typeLabel } from "./format";
 import { IconArchitecture, IconFolder, IconGraph, IconPrs, IconReview, IconSettings } from "./icons";
 import { ImpactGraph } from "./ImpactGraph";
 import { RefCombobox } from "./RefCombobox";
@@ -44,6 +44,7 @@ export function App() {
   const [graphMode, setGraphMode] = useState<GraphMode>("review");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [copied, setCopied] = useState("");
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [prs, setPrs] = useState<PullRequest[]>([]);
@@ -113,6 +114,7 @@ export function App() {
   }, [tab, repo]);
 
   const persistRepo = (path: string) => {
+    repoRef.current = path;
     setRepo(path);
     localStorage.setItem("loadpath.repo", path);
     if (path.trim() !== gitRefsPath.current) {
@@ -121,11 +123,11 @@ export function App() {
     }
   };
 
-  const loadGitRefs = useCallback(() => {
-    const path = repoRef.current.trim();
-    if (!path || gitRefsPath.current === path) return;
+  const loadGitRefs = useCallback((explicitPath?: string) => {
+    const path = (explicitPath ?? repoRef.current).trim();
+    if (!path || gitRefsPath.current === path) return Promise.resolve();
     gitRefsPath.current = path;
-    api
+    return api
       .gitRefs(path)
       .then((next) => {
         if (repoRef.current.trim() === path) setGitRefs(next);
@@ -263,6 +265,33 @@ export function App() {
     const report = await api.architecture(path);
     if (repoRef.current === path) setArchitecture(report);
     return report;
+  };
+
+  const switchWorkspace = async (path: string) => {
+    const next = path.trim();
+    if (!next || next === repoRef.current) return;
+    if (busyRef.current) {
+      setError("Wait for the current job to finish before switching workspace.");
+      return;
+    }
+    setError("");
+    setCopied("");
+    setReview(null);
+    setArchitecture(null);
+    setGraphMode("architecture");
+    persistRepo(next);
+    setWorkspaceLoading(true);
+    markBusy(`Loading ${repoName(next)}…`);
+    try {
+      await Promise.all([loadArchitecture(next), loadGitRefs(next)]);
+    } catch (e) {
+      if (repoRef.current === next) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (repoRef.current === next) {
+        markBusy("");
+        setWorkspaceLoading(false);
+      }
+    }
   };
 
   const runReview = async () => {
@@ -555,7 +584,7 @@ export function App() {
       </nav>
       <div className="main" id="main">
         {busy ? (
-          <div className="progress" role="status" aria-live="polite" aria-busy="true">
+          <div className="progress" role="status" aria-live="polite" aria-busy="true" data-testid="progress">
             <i />
             <span className="sr-only">{busy}</span>
           </div>
@@ -567,8 +596,10 @@ export function App() {
               <select
                 data-testid="workspace-select"
                 value={repos.some((r) => r.path === repo) ? repo : ""}
+                disabled={!!busy}
+                aria-busy={workspaceLoading}
                 onChange={(e) => {
-                  if (e.target.value) persistRepo(e.target.value);
+                  if (e.target.value) void switchWorkspace(e.target.value);
                 }}
               >
                 <option value="">Indexed repos…</option>
@@ -685,8 +716,14 @@ export function App() {
           ) : null}
         </div>
 
-        <div className="stage">
-          {tab === "review" && (
+        <div className="stage" aria-busy={workspaceLoading}>
+          {workspaceLoading ? (
+            <div className="empty workspace-loading" data-testid="workspace-loading">
+              <h2>{busy}</h2>
+              <p>Fetching the indexed graph for this repository.</p>
+            </div>
+          ) : null}
+          {!workspaceLoading && tab === "review" && (
             <div className="content" data-testid="review-layout">
               <aside className="brief" data-testid="brief">
                 {review ? (
@@ -720,7 +757,7 @@ export function App() {
             </div>
           )}
 
-          {tab === "architecture" && (
+          {!workspaceLoading && tab === "architecture" && (
             <div className="content" data-testid="architecture-panel">
               <aside className="brief" data-testid="architecture-brief">
                 {architecture?.indexed ? (
@@ -740,7 +777,7 @@ export function App() {
             </div>
           )}
 
-          {tab === "graph" && (
+          {!workspaceLoading && tab === "graph" && (
             <div className="graph-wrap" data-testid="graph-full" style={{ height: "100%" }}>
               <div className="graph-modes">
                 <div className="seg" aria-label="Graph scope">
@@ -788,7 +825,7 @@ export function App() {
             </div>
           )}
 
-          {tab === "prs" && (
+          {!workspaceLoading && tab === "prs" && (
             <div className="pr-list" data-testid="pr-list">
               <div className="pr-toolbar">
                 <label className="field provider">
@@ -889,7 +926,7 @@ export function App() {
             </div>
           )}
 
-          {tab === "settings" && settingsReady && (
+          {!workspaceLoading && tab === "settings" && settingsReady && (
             <form className="settings" data-testid="settings-form" onSubmit={saveSettings}>
               <div>
                 <h1>Settings</h1>
@@ -1086,8 +1123,12 @@ export function App() {
           initialPath={repo}
           onClose={() => setExplorerOpen(false)}
           onSelect={(path) => {
-            persistRepo(path);
+            if (busyRef.current) {
+              setError("Wait for the current job to finish before switching workspace.");
+              return;
+            }
             setExplorerOpen(false);
+            void switchWorkspace(path);
           }}
         />
       ) : null}

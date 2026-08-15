@@ -15,7 +15,7 @@ from loadpath.types import GENERATED_PATH_MARKERS, ExtractedGraph, Node, NodeTyp
 PY_SKIP = {"migrations"}  # still extract migrations, just not skip
 INDEX_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx"}
 # Bump when extractor/stitch node identity changes so incremental indexes rebuild.
-INDEX_REVISION = "8"
+INDEX_REVISION = "10"
 
 
 def default_db_path(repo_root: Path) -> Path:

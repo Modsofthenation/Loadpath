@@ -55,20 +55,29 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
   selectRef.current = onSelect;
   const focusRef = useRef({ selectedId, neighborIds });
   focusRef.current = { selectedId, neighborIds };
+  const cameraStateRef = useRef<{
+    position: { x: number; y: number; z: number };
+    target: { x: number; y: number; z: number };
+    topology: string;
+  } | null>(null);
+  const topologyKey = `${nodes.map((n) => n.id).join("\0")}|${edges.map((e) => e.id).join("\0")}`;
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const bg = cssColor("--graph-bg", "#0b0f14");
+    const accent = new THREE.Color(cssColor("--accent", "#4cc9f0"));
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(cssColor("--graph-bg", "#0b0f14"));
+    scene.background = new THREE.Color(bg);
 
     const camera = new THREE.PerspectiveCamera(50, 1, 1, 8000);
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({
         antialias: true,
+        alpha: false,
         failIfMajorPerformanceCaveat: false,
         powerPreference: "low-power",
       });
@@ -82,6 +91,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
       return;
     }
     setWebglError(null);
+    renderer.setClearColor(bg, 1);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.domElement.dataset.testid = "graph-3d-canvas";
     host.appendChild(renderer.domElement);
@@ -165,16 +175,23 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
       labels.push(label);
     }
 
-    const box = new THREE.Box3().setFromObject(group);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    controls.target.copy(center);
-    camera.position.set(
-      center.x + size.x * 0.15,
-      center.y + Math.max(140, size.y * 0.45),
-      center.z + Math.max(280, size.z * 0.9 + 180),
-    );
-    camera.lookAt(center);
+    const saved = cameraStateRef.current;
+    if (saved && saved.topology === topologyKey) {
+      camera.position.set(saved.position.x, saved.position.y, saved.position.z);
+      controls.target.set(saved.target.x, saved.target.y, saved.target.z);
+      camera.lookAt(controls.target);
+    } else {
+      const box = new THREE.Box3().setFromObject(group);
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      controls.target.copy(center);
+      camera.position.set(
+        center.x + size.x * 0.15,
+        center.y + Math.max(140, size.y * 0.45),
+        center.z + Math.max(280, size.z * 0.9 + 180),
+      );
+      camera.lookAt(center);
+    }
 
     const raycaster = new THREE.Raycaster();
     raycaster.params.Mesh = { ...raycaster.params.Mesh, threshold: 2 };
@@ -183,14 +200,15 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
 
     const paint = (focus: string | null, neighbors: Set<string>) => {
       const isolating = Boolean(focus && neighbors.size);
+      const idle = new THREE.Color(0x000000);
       for (const [id, mesh] of meshById) {
         const material = mesh.material as THREE.MeshStandardMaterial;
         const onPath = !isolating || neighbors.has(id);
         const selected = id === focus;
         material.opacity = selected ? 1 : onPath ? 0.95 : 0.12;
-        mesh.scale.setScalar(selected ? 1.7 : onPath ? 1 : 0.7);
-        material.emissive.setHex(selected ? 0xffffff : 0x000000);
-        material.emissiveIntensity = selected ? 0.18 : 0;
+        mesh.scale.setScalar(selected ? 1.25 : onPath ? 1 : 0.7);
+        material.emissive.copy(selected ? accent : idle);
+        material.emissiveIntensity = selected ? 0.35 : 0;
       }
       (lines.material as THREE.LineBasicMaterial).opacity = isolating ? 0.85 : 0.5;
     };
@@ -250,6 +268,11 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
     paint(focusRef.current.selectedId, focusRef.current.neighborIds);
 
     return () => {
+      cameraStateRef.current = {
+        topology: topologyKey,
+        position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+        target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      };
       cancelAnimationFrame(frame);
       ro.disconnect();
       renderer.domElement.removeEventListener("pointermove", onMove);
@@ -269,16 +292,13 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
       for (const mesh of meshById.values()) {
         (mesh.material as THREE.Material).dispose();
       }
-      try {
-        renderer.forceContextLoss();
-      } catch {
-        /* already lost */
-      }
       renderer.dispose();
       renderer.domElement.remove();
       setHover(null);
     };
-  }, [nodes, edges]);
+    // Rebuild only when the graph's node/edge ids change — not when selection paints.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topologyKey]);
 
   useEffect(() => {
     (hostRef.current as HostEl | null)?.__paint?.(selectedId, neighborIds);
