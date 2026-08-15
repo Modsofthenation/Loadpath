@@ -1,0 +1,21 @@
+{
+  "name": "loadpath",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Loadpath desktop app",
+  "author": "Loadpath <loadpath@users.noreply.github.com>",
+  "homepage": "https://github.com/Modsofthenation/PR-Reviewer",
+  "desktopName": "Loadpath",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test backend.test.mjs",
+    "pack": "electron-builder --dir --publish never",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "^36.4.0",
+    "electron-builder": "^26.0.12"
+  }
+}

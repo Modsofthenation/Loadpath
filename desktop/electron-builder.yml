@@ -1,0 +1,43 @@
+appId: app.loadpath.desktop
+productName: Loadpath
+copyright: Copyright © Loadpath
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - main.mjs
+  - backend.mjs
+  - package.json
+extraResources:
+  - from: backend-dist/loadpath
+    to: loadpath
+    filter:
+      - "**/*"
+asar: true
+compression: normal
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  maintainer: Loadpath <loadpath@users.noreply.github.com>
+  synopsis: Architecture-typed impact graphs for Django + React pull requests.
+  syncDesktopName: true
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+dmg:
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}

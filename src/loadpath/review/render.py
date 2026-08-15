@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "report"
+from loadpath.paths import package_dir
+
+TEMPLATE_DIR = package_dir() / "report"
 
 
 def render_markdown(review: dict) -> str:

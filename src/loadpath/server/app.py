@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from loadpath import __version__
+from loadpath.paths import package_dir
 from loadpath.mcp.oauth import SCOPE
 from loadpath.mcp.server import (
     add_mcp_auth_middleware,
@@ -373,7 +374,7 @@ def create_app(
 
     copy_mcp_routes(app, mcp_http)
 
-    static_dir = Path(__file__).resolve().parent.parent / "static"
+    static_dir = package_dir() / "static"
     if static_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
