@@ -210,22 +210,48 @@ def list_source_files(
     return [by_path[path] for path in paths]
 
 
+def _indexed_timestamp(store: GraphStore) -> float:
+    raw = store.get_meta("indexed_at") or ""
+    try:
+        return datetime.fromisoformat(raw).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def index_drift(
     store: GraphStore,
     repo_root: Path,
     config: LoadpathConfig,
     files: list[SourceFile] | None = None,
+    *,
+    hash_contents: bool = True,
 ) -> dict:
-    files = files if files is not None else list_source_files(repo_root, config)
-    present = {src.rel for src in files}
+    """Compare the index to the working tree.
+
+    `hash_contents=False` walks the tree and uses mtimes instead of SHA-256.
+    That is what GET /api/architecture should use: loading a workspace must not
+    re-hash the whole monorepo.
+    """
+    config_changed = _sidecar_digest(repo_root, config) != (store.get_meta("sidecar_hash") or "")
     indexed = set(store.indexed_paths())
-    changed: list[str] = []
-    for src in files:
-        if store.file_hash(src.rel) != src.digest:
-            changed.append(src.rel)
+    if files is None and not hash_contents:
+        paths = iter_source_files(repo_root, config)
+        present = {path.relative_to(repo_root).as_posix() for path in paths}
+        indexed_ts = _indexed_timestamp(store)
+        changed: list[str] = []
+        for path in paths:
+            rel = path.relative_to(repo_root).as_posix()
+            try:
+                if path.stat().st_mtime > indexed_ts:
+                    changed.append(rel)
+            except OSError:
+                changed.append(rel)
+    else:
+        files = files if files is not None else list_source_files(repo_root, config)
+        present = {src.rel for src in files}
+        changed = [src.rel for src in files if store.file_hash(src.rel) != src.digest]
     added = sorted(present - indexed)
     deleted = sorted(indexed - present)
-    config_changed = _sidecar_digest(repo_root, config) != (store.get_meta("sidecar_hash") or "")
     return {
         "stale": bool(changed or added or deleted or config_changed) or store.file_count() == 0,
         "config_changed": config_changed,

@@ -88,8 +88,14 @@ export const api = {
     req<ArchitectureReport>(`/api/index?repo_path=${encodeURIComponent(repo_path)}`),
   indexProgress: (repo_path: string) =>
     req<IndexProgress>(`/api/index/progress?repo_path=${encodeURIComponent(repo_path)}`),
-  architecture: (repo_path: string) =>
-    req<ArchitectureReport>(`/api/architecture?repo_path=${encodeURIComponent(repo_path)}`),
+  architecture: (repo_path: string, graph = true) =>
+    req<ArchitectureReport>(
+      `/api/architecture?repo_path=${encodeURIComponent(repo_path)}&graph=${graph ? "1" : "0"}`,
+    ),
+  architectureGraph: (repo_path: string) =>
+    req<{ nodes: GraphNode[]; edges: GraphEdge[]; counts: { nodes: number; edges: number } }>(
+      `/api/architecture/graph?repo_path=${encodeURIComponent(repo_path)}`,
+    ),
   review: (repo_path: string, base: string, head?: string, reindex = true, dirty = false) =>
     req<Review>("/api/review", {
       method: "POST",

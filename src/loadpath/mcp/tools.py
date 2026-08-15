@@ -5,7 +5,7 @@ from typing import Any, Callable, TypeVar
 
 import httpx
 
-from loadpath.architecture.snapshot import architecture_report, summarize_index
+from loadpath.architecture.snapshot import architecture_report, summarize_index, workspace_index_card
 from loadpath.config import load_config
 from loadpath.detect import detect_layout, write_draft_config
 from loadpath.index import index_repo
@@ -78,7 +78,7 @@ def list_workspaces() -> dict[str, Any]:
             "counts": {"nodes": 0, "edges": 0},
         }
         if path.is_dir():
-            report = architecture_report(path)
+            report = workspace_index_card(path)
             item.update(
                 {
                     "indexed": report["indexed"],
@@ -120,7 +120,7 @@ def architecture(repo_path: str) -> dict[str, Any]:
     root = _repo(repo_path)
     if isinstance(root, dict):
         return root
-    return compact_architecture(architecture_report(root))
+    return compact_architecture(architecture_report(root, include_graph=False))
 
 
 def review_range(

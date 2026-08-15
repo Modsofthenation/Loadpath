@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import httpx
@@ -24,7 +25,12 @@ from loadpath.mcp.server import (
     resource_url,
 )
 from loadpath.ai.providers import client_for, residual_prompt
-from loadpath.architecture.snapshot import architecture_graph, architecture_report, summarize_index
+from loadpath.architecture.snapshot import (
+    architecture_graph,
+    architecture_report,
+    summarize_index,
+    workspace_index_card,
+)
 from loadpath.config import load_config, config_document, write_config, add_waiver
 from loadpath.detect import detect_layout, write_draft_config
 from loadpath.graph.store import GraphStore
@@ -275,6 +281,7 @@ def create_app(
     app.state.mcp = mcp
     app.state.mcp_http = mcp_http
     add_mcp_auth_middleware(app, mcp)
+    app.add_middleware(GZipMiddleware, minimum_size=500)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -392,9 +399,7 @@ def create_app(
     @app.get("/api/index")
     def api_index_status(repo_path: str) -> dict[str, Any]:
         root = require_repo_path(repo_path)
-        report = architecture_report(root)
-        report.pop("nodes", None)
-        report.pop("edges", None)
+        report = architecture_report(root, include_graph=False)
         return report
 
     @app.get("/api/fs")
@@ -420,7 +425,7 @@ def create_app(
                 "counts": {"nodes": 0, "edges": 0},
             }
             if path.is_dir():
-                report = architecture_report(path)
+                report = workspace_index_card(path)
                 item.update(
                     {
                         "indexed": report["indexed"],
@@ -522,9 +527,21 @@ def create_app(
         return payload
 
     @app.get("/api/architecture")
-    def api_architecture(repo_path: str) -> dict[str, Any]:
+    def api_architecture(repo_path: str, graph: bool = True) -> dict[str, Any]:
         root = require_repo_path(repo_path)
-        return architecture_report(root)
+        return architecture_report(root, include_graph=graph)
+
+    @app.get("/api/architecture/graph")
+    def api_architecture_graph(repo_path: str) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        db = default_db_path(root)
+        if not db.is_file():
+            raise HTTPException(409, "Index the repo first")
+        store = GraphStore(db)
+        nodes, edges = architecture_graph(store)
+        payload = {"nodes": nodes, "edges": edges, "counts": store.counts()}
+        store.close()
+        return payload
 
     @app.get("/api/config")
     def api_config(repo_path: str) -> dict[str, Any]:

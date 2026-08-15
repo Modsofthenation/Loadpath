@@ -30,7 +30,7 @@ def test_api_health_index_review_graph_settings(tmp_path, monkeypatch):
 
     status = client.get("/api/index", params={"repo_path": str(repo)})
     assert status.json()["indexed"] is True
-    assert "nodes" not in status.json() or status.json().get("nodes") is None
+    assert not status.json().get("nodes")
 
     repos = client.get("/api/repos")
     assert any(r["path"] == str(repo.resolve()) for r in repos.json()["repos"])
@@ -42,6 +42,18 @@ def test_api_health_index_review_graph_settings(tmp_path, monkeypatch):
     assert "django_boot" in body_arch
     assert any(n["name"] == "InvoicePage" for n in body_arch["nodes"])
     assert "celery_tasks_must_be_idempotent_on_model_pk" in body_arch["rules"]
+
+    summary_only = client.get("/api/architecture", params={"repo_path": str(repo), "graph": 0})
+    assert summary_only.status_code == 200
+    assert summary_only.json()["indexed"] is True
+    assert summary_only.json()["graph_pending"] is True
+    assert summary_only.json()["nodes"] == []
+    assert summary_only.json()["findings"] is not None
+
+    graph_only = client.get("/api/architecture/graph", params={"repo_path": str(repo)})
+    assert graph_only.status_code == 200
+    assert any(n["name"] == "InvoicePage" for n in graph_only.json()["nodes"])
+    assert graph_only.json()["edges"]
 
     review = client.post(
         "/api/review",
@@ -276,7 +288,7 @@ def test_blank_and_missing_repo_path_rejected(tmp_path, monkeypatch):
         assert r.status_code == 400, r.text
         assert r.json()["detail"] == "repo_path is required"
 
-    for url in ("/api/architecture", "/api/graph", "/api/config", "/api/detect", "/api/index"):
+    for url in ("/api/architecture", "/api/architecture/graph", "/api/graph", "/api/config", "/api/detect", "/api/index"):
         r = client.get(url, params={"repo_path": ""})
         assert r.status_code == 400, r.text
         assert r.json()["detail"] == "repo_path is required"

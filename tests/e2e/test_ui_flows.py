@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import time
 
 import pytest
 
@@ -454,4 +455,26 @@ def test_ui_workspace_switch_shows_loading(live_app, browser_page):
     loading.wait_for(state="hidden", timeout=15_000)
     assert page.get_by_test_id("workspace-select").input_value() == str(repo)
     page.get_by_test_id("review-empty").wait_for()
+
+
+@pytest.mark.playwright
+def test_ui_architecture_brief_paints_before_graph(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+
+    def on_route(route):
+        if "/api/architecture/graph" in route.request.url:
+            time.sleep(1.2)
+        route.continue_()
+
+    page.route("**/api/**", on_route)
+    page.get_by_test_id("repo-path").fill(str(repo))
+    _index_repo(page, repo)
+    page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=20_000)
+    page.get_by_test_id("graph-loading").wait_for()
+    assert "drawing" in page.get_by_test_id("graph-loading").inner_text().lower()
+    page.get_by_test_id("graph-loading").wait_for(state="hidden", timeout=20_000)
+    wait_visible_graph(page)
 

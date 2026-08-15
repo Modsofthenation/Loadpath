@@ -68,6 +68,7 @@ export function App() {
   const [busy, setBusy] = useState("");
   const [indexPct, setIndexPct] = useState<number | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [graphLoading, setGraphLoading] = useState(false);
   const [copied, setCopied] = useState("");
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [prs, setPrs] = useState<PullRequest[]>([]);
@@ -112,6 +113,7 @@ export function App() {
   const explorerOpenRef = useRef(false);
   explorerOpenRef.current = explorerOpen;
   const gitRefsPath = useRef("");
+  const archHydratePath = useRef("");
 
   const persistTheme = (id: ThemeId) => {
     setTheme(id);
@@ -163,12 +165,9 @@ export function App() {
     if (tab !== "architecture" || !repo.trim()) return;
     const requested = repo;
     let cancelled = false;
-    api
-      .architecture(requested)
-      .then((report) => {
-        if (!cancelled && repoRef.current === requested) setArchitecture(report);
-      })
-      .catch(() => undefined);
+    if (archHydratePath.current !== requested) {
+      void loadArchitecture(requested);
+    }
     api
       .config(requested)
       .then((doc) => {
@@ -184,6 +183,8 @@ export function App() {
     return () => {
       cancelled = true;
     };
+    // loadArchitecture is stable enough via repoRef; we only want tab/repo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, repo]);
 
   const persistRepo = (path: string) => {
@@ -413,11 +414,28 @@ export function App() {
     };
   }, [gitlabWaiting, loadRemoteRepos]);
 
-  const loadArchitecture = async (path = repo) => {
+  const loadArchitecture = async (path = repo, waitForGraph = false) => {
     if (!path.trim()) return null;
-    const report = await api.architecture(path);
-    if (repoRef.current === path) setArchitecture(report);
-    return report;
+    archHydratePath.current = path;
+    setGraphLoading(true);
+    try {
+      const report = await api.architecture(path, false);
+      if (repoRef.current === path) setArchitecture(report);
+      const graphP = api.architectureGraph(path).then((g) => {
+        if (repoRef.current !== path) return;
+        setArchitecture((prev) =>
+          prev ? { ...prev, nodes: g.nodes, edges: g.edges, graph_pending: false } : prev,
+        );
+      });
+      graphP.catch(() => undefined).finally(() => {
+        if (repoRef.current === path) setGraphLoading(false);
+      });
+      if (waitForGraph) await graphP;
+      return report;
+    } catch (e) {
+      if (repoRef.current === path) setGraphLoading(false);
+      throw e;
+    }
   };
 
   const switchWorkspace = async (path: string) => {
@@ -1174,16 +1192,15 @@ export function App() {
               Uncommitted files overlap this review: {(review.workspace.dirty_overlap || []).slice(0, 6).join(", ")}
             </div>
           ) : null}
-        </div>
-
-        <div className="stage" aria-busy={workspaceLoading}>
           {workspaceLoading ? (
-            <div className="empty workspace-loading" data-testid="workspace-loading">
-              <h2>{busy}</h2>
-              <p>Fetching the indexed graph for this repository.</p>
+            <div className="banner" data-testid="workspace-loading">
+              {busy || "Loading workspace…"}
             </div>
           ) : null}
-          {!workspaceLoading && tab === "review" && (
+        </div>
+
+        <div className="stage" aria-busy={workspaceLoading || graphLoading}>
+          {tab === "review" && (
             <div className="content" data-testid="review-layout">
               <aside className="brief" data-testid="brief">
                 {review ? (
@@ -1245,7 +1262,7 @@ export function App() {
             </div>
           )}
 
-          {!workspaceLoading && tab === "architecture" && (
+          {tab === "architecture" && (
             <div className="content" data-testid="architecture-panel">
               <aside className="brief" data-testid="architecture-brief">
                 {architecture?.indexed ? (
@@ -1270,6 +1287,10 @@ export function App() {
                       });
                     }}
                   />
+                ) : workspaceLoading ? (
+                  <p className="muted" data-testid="architecture-loading">
+                    Loading the index summary…
+                  </p>
                 ) : (
                   <p className="muted" data-testid="architecture-empty">
                     Index this repo to build the architecture graph. Review then walks that same graph for a git range —
@@ -1278,7 +1299,16 @@ export function App() {
                 )}
               </aside>
               <div className="graph-wrap" data-testid="architecture-graph">
-                {architecture?.indexed ? (
+                {graphLoading && !(architecture?.nodes || []).length ? (
+                  <div className="empty graph-loading" data-testid="graph-loading">
+                    <h2>Drawing the architecture map…</h2>
+                    <p>
+                      {architecture?.counts?.nodes
+                        ? `${architecture.counts.nodes} indexed nodes. The brief is ready while the graph loads.`
+                        : "Fetching the indexed graph."}
+                    </p>
+                  </div>
+                ) : architecture?.indexed ? (
                   <ImpactGraph
                     nodes={architecture.nodes}
                     edges={architecture.edges}
@@ -1292,7 +1322,7 @@ export function App() {
             </div>
           )}
 
-          {!workspaceLoading && tab === "graph" && (
+          {tab === "graph" && (
             <div className="graph-wrap" data-testid="graph-full" style={{ height: "100%" }}>
               <div className="graph-modes">
                 <div className="seg" aria-label="Graph scope">
@@ -1351,6 +1381,10 @@ export function App() {
               </div>
               {graphNodes.length ? (
                 <ImpactGraph nodes={graphNodes} edges={graphEdges} onWhatIf={runWhatIf} {...graphBind} />
+              ) : graphLoading ? (
+                <p className="empty" data-testid="graph-loading">
+                  Drawing the architecture map…
+                </p>
               ) : (
                 <p className="empty" data-testid="graph-empty">
                   Index the repo or run a review first. Click a node to inspect it.
@@ -1359,7 +1393,7 @@ export function App() {
             </div>
           )}
 
-          {!workspaceLoading && tab === "prs" && (
+          {tab === "prs" && (
             <div className="pr-list" data-testid="pr-list">
               <div className="pr-toolbar">
                 <label className="field provider">
@@ -1466,7 +1500,7 @@ export function App() {
             </div>
           )}
 
-          {!workspaceLoading && tab === "settings" && settingsReady && (
+          {tab === "settings" && settingsReady && (
             <form className="settings" data-testid="settings-form" onSubmit={saveSettings}>
               <div>
                 <h1>Settings</h1>

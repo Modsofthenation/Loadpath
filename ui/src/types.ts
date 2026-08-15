@@ -208,6 +208,7 @@ export type ArchitectureReport = {
   reindex_skipped?: boolean;
   files_extracted?: number;
   boot_residuals?: string[];
+  graph_pending?: boolean;
 };
 
 export type ReviewSummary = {
