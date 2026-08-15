@@ -42,6 +42,13 @@ describe("graph selected-node overflow", () => {
     expect(getComputedStyle(dd).overflowWrap).toBe("break-word");
   });
 
+  it("gives the inspector close control a 24px target", () => {
+    mount(`<aside class="inspector"><button class="inspector-close">×</button></aside>`);
+    const btn = document.querySelector(".inspector-close") as HTMLElement;
+    expect(getComputedStyle(btn).width).toBe("24px");
+    expect(getComputedStyle(btn).height).toBe("24px");
+  });
+
   it("ellipsizes long titles inside graph nodes", () => {
     mount(`<div class="lp-node"><div class="n">test_index_summary_includes_contexts_and_more</div></div>`);
     const name = document.querySelector(".lp-node .n") as HTMLElement;

@@ -1513,14 +1513,14 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
 .inspector .n { font-weight: 600; margin: 4px 0; }
 .inspector-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: 8px;
 }
 .inspector-roles {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+  flex: 1;
   gap: 4px;
 }
 .inspector-chip {
@@ -1535,8 +1535,8 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
 }
 .inspector-close {
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);

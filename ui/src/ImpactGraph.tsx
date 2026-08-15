@@ -113,6 +113,13 @@ function GraphInspector({
   onClose: () => void;
 }) {
   const info = inspectNode(node, nodes, edges);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <aside className="inspector" data-testid="graph-inspector">
       <div className="inspector-head">
@@ -123,16 +130,16 @@ function GraphInspector({
               {role}
             </span>
           ))}
-          <button
-            type="button"
-            className="inspector-close"
-            data-testid="graph-inspector-close"
-            aria-label="Close inspector"
-            onClick={onClose}
-          >
-            ×
-          </button>
         </div>
+        <button
+          type="button"
+          className="inspector-close"
+          data-testid="graph-inspector-close"
+          aria-label="Close inspector"
+          onClick={onClose}
+        >
+          ×
+        </button>
       </div>
       <div className="n">{wrapHint(info.name)}</div>
       <p className="inspector-purpose" data-testid="graph-inspector-purpose">
