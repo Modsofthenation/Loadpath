@@ -1279,7 +1279,14 @@ export function App() {
               </aside>
               <div className="graph-wrap" data-testid="architecture-graph">
                 {architecture?.indexed ? (
-                  <ImpactGraph nodes={architecture.nodes} edges={architecture.edges} onWhatIf={runWhatIf} {...graphBind} />
+                  <ImpactGraph
+                    nodes={architecture.nodes}
+                    edges={architecture.edges}
+                    onWhatIf={runWhatIf}
+                    {...graphBind}
+                    isolateSource={null}
+                    onIsolate={undefined}
+                  />
                 ) : null}
               </div>
             </div>
