@@ -31,7 +31,28 @@ DJANGO_VIEW_BASES = {
 
 SERIALIZER_BASES = {"Serializer", "ModelSerializer", "HyperlinkedModelSerializer", "ListSerializer"}
 FORM_BASES = {"Form", "ModelForm", "BaseForm", "BaseModelForm"}
+FILTERSET_BASES = {"FilterSet"}
 MODEL_BASES = {"Model"}
+# Subpackages that are never the Django app name (billing/views/foo.py → billing).
+APP_PACKAGE_DIRS = {
+    "views",
+    "serializers",
+    "models",
+    "forms",
+    "tasks",
+    "admin",
+    "tests",
+    "templatetags",
+    "management",
+    "commands",
+    "migrations",
+    "actors",
+    "signals",
+    "receivers",
+    "services",
+    "handlers",
+}
+REGEX_NAMED_GROUP = re.compile(r"\(\?P<(\w+)>[^)]*\)")
 ADMIN_BASES = {"ModelAdmin", "StackedInline", "TabularInline"}
 CELERY_DECORATORS = {"shared_task", "task", "periodic_task"}
 DRAMATIQ_DECORATORS = {"actor"}
@@ -134,32 +155,30 @@ def _truthy(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Constant) and node.value is True
 
 
+def strip_url_anchors(route: str) -> str:
+    route = (route or "").strip()
+    if route.startswith("include:"):
+        return ""
+    if route.startswith("^"):
+        route = route[1:]
+    if route.endswith("$") and not route.endswith("\\$"):
+        route = route[:-1]
+    return route
+
+
+def pretty_url_pattern(route: str) -> str:
+    """Turn `^$` / `(?P<slug>…)` into a graph-readable path fragment."""
+    route = REGEX_NAMED_GROUP.sub(r"{\1}", route or "")
+    return strip_url_anchors(route)
+
+
 def _app_from_path(rel: str) -> str | None:
-    parts = Path(rel).parts
-    # backend/billing/models.py → billing
-    if "migrations" in parts:
-        idx = parts.index("migrations")
-        if idx > 0:
-            return parts[idx - 1]
-    for i, part in enumerate(parts):
-        if part in {
-            "models.py",
-            "views.py",
-            "serializers.py",
-            "urls.py",
-            "signals.py",
-            "signal_handlers.py",
-            "forms.py",
-            "tasks.py",
-            "admin.py",
-            "apps.py",
-        }:
-            return parts[i - 1] if i > 0 else None
-        if part == "management" and i > 0:
-            return parts[i - 1]
-    if len(parts) >= 2 and parts[-1].endswith(".py"):
-        return parts[-2]
-    return None
+    parts = list(Path(rel).parts)
+    if parts and parts[-1].endswith(".py"):
+        parts = parts[:-1]
+    while parts and parts[-1] in APP_PACKAGE_DIRS:
+        parts.pop()
+    return parts[-1] if parts else None
 
 
 def _module_qual(rel: str) -> str:
@@ -234,6 +253,8 @@ class DjangoExtractor(ast.NodeVisitor):
             and not _has_base(node, {"TestCase", "SimpleTestCase", "TransactionTestCase", "LiveServerTestCase", "APITestCase"})
         ):
             self._serializer(node, ntype=NodeType.FORM)
+        elif _has_base(node, FILTERSET_BASES) or node.name.endswith("FilterSet"):
+            self._serializer(node, ntype=NodeType.FORM, filterset=True)
         elif _has_base(node, DJANGO_VIEW_BASES) or node.name.endswith(("View", "ViewSet")):
             self._view(node)
         elif any(b.split(".")[-1] in {"BaseCommand", "AppCommand", "LabelCommand"} for b in _bases(node)):
@@ -364,11 +385,15 @@ class DjangoExtractor(ast.NodeVisitor):
                     if extra.get("on_delete") == "CASCADE":
                         self.add_edge(model.id, rel_id, EdgeType.RELATES_TO, extra={"cascade": True})
 
-    def _serializer(self, node: ast.ClassDef, ntype: NodeType = NodeType.SERIALIZER) -> None:
+    def _serializer(
+        self, node: ast.ClassDef, ntype: NodeType = NodeType.SERIALIZER, *, filterset: bool = False
+    ) -> None:
         qname = f"{self.app}.{node.name}"
         extra: dict = {"app": self.app}
         if ntype is NodeType.FORM:
-            extra["django_form"] = True
+            extra["django_form"] = not filterset
+            if filterset:
+                extra["filterset"] = True
         ser = self.add_node(ntype, node.name, qname, node.lineno, extra)
         meta_model = None
         meta_fields: list[str] | None = None
@@ -486,6 +511,10 @@ class DjangoExtractor(ast.NodeVisitor):
                 else f"{self.app}.{serializer_class.split('.')[-1]}"
             )
             self.add_edge(view.id, node_id(NodeType.SERIALIZER, ser_q), EdgeType.USES_SERIALIZER)
+        if extra.get("filterset") and extra["filterset"] not in {True, False}:
+            fs = str(extra["filterset"])
+            fs_q = fs if "." in fs and not fs.startswith("filter") else f"{self.app}.{fs.split('.')[-1]}"
+            self.add_edge(view.id, node_id(NodeType.FORM, fs_q), EdgeType.CALLS, confidence=0.9)
         for perm in permissions:
             pid = node_id(NodeType.PERMISSION, perm)
             self.graph.nodes.append(
@@ -899,10 +928,11 @@ class DjangoExtractor(ast.NodeVisitor):
     def _route_identity(
         self, route: str, include_mod: str | None, name: str | None, lineno: int
     ) -> tuple[str, str]:
-        """Empty `path("", …)` must still show a label and a unique id."""
+        """Empty `path("")` / `re_path(r"^$")` must still show a label and a unique id."""
         stamp = f"{Path(self.rel_path).name}:{lineno}"
-        if route:
-            return route, f"{self.app}:{route}"
+        pretty = pretty_url_pattern(route)
+        if pretty:
+            return pretty, f"{self.app}:{route}"
         if include_mod:
             return f"include:{include_mod}", f"{self.app}:include:{include_mod}:{stamp}"
         if name:

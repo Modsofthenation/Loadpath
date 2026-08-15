@@ -136,6 +136,22 @@ describe("inspectNode", () => {
     expect(info.roles).toEqual(["sink", "contract"]);
   });
 
+  it("tags django-filter FilterSets without repeating the flag as a fact", () => {
+    const info = inspectNode(
+      node({
+        id: "django.form:api.IngredientFilterSet",
+        type: "django.form",
+        name: "IngredientFilterSet",
+        extra: { filterset: true, fields: ["name"] },
+      }),
+      [],
+      [],
+    );
+    expect(info.roles).toContain("filterset");
+    expect(info.purpose).toMatch(/FilterSet/i);
+    expect(info.facts.map((f) => f.key)).toEqual(["fields"]);
+  });
+
   it("keeps app when it is not the bounded context", () => {
     const info = inspectNode(
       node({

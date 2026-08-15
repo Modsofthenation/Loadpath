@@ -14,14 +14,9 @@ METHOD_PREFIX = re.compile(r"""^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+""", 
 
 
 def _strip_regex_anchors(route: str) -> str:
-    route = (route or "").strip()
-    if route.startswith("include:"):
-        return ""
-    if route.startswith("^"):
-        route = route[1:]
-    if route.endswith("$") and not route.endswith("\\$"):
-        route = route[:-1]
-    return route
+    from loadpath.extractors.django import pretty_url_pattern
+
+    return pretty_url_pattern(route)
 
 
 def django_route_to_template(route: str) -> str:

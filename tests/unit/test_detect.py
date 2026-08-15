@@ -72,6 +72,33 @@ def test_detect_ignores_docs_in_checkout_parent(tmp_path: Path):
     assert layout["django_root"] == "api"
 
 
+def test_detect_skips_graphiql_and_demo_app(tmp_path: Path):
+    (tmp_path / "dcim").mkdir()
+    (tmp_path / "dcim" / "apps.py").write_text("class DcimConfig:\n    pass\n")
+    graphiql = tmp_path / "project-static" / "netbox-graphiql"
+    graphiql.mkdir(parents=True)
+    (graphiql / "package.json").write_text('{"dependencies":{"react":"18.0.0"}}\n')
+    demo = tmp_path / "demo-app" / "frontend" / "src"
+    demo.mkdir(parents=True)
+    (tmp_path / "demo-app" / "frontend" / "package.json").write_text('{"dependencies":{"react":"18.0.0"}}\n')
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / "App.jsx").write_text("export default function App() { return null }\n")
+    layout = detect_layout(tmp_path)
+    assert "graphiql" not in layout["react_root"]
+    assert "demo-app" not in layout["react_root"]
+    assert layout["react_root"] == "ui"
+
+
+def test_detect_prefers_ui_folder_over_repo_root_package(tmp_path: Path):
+    (tmp_path / "webapp").mkdir()
+    (tmp_path / "webapp" / "apps.py").write_text("class WebappConfig:\n    pass\n")
+    (tmp_path / "package.json").write_text('{"dependencies":{"react":"18.0.0"}}\n')
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / "App.jsx").write_text("export default function App() { return null }\n")
+    layout = detect_layout(tmp_path)
+    assert layout["react_root"] == "ui"
+
+
 def test_detect_skips_nested_test_project_manage_py(tmp_path: Path):
     """Library repos (Wagtail) keep manage.py under a test project — index the package."""
     pkg = tmp_path / "pack" / "contrib" / "redirects"

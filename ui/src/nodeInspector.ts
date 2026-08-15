@@ -37,7 +37,7 @@ const TYPE_PURPOSE: Record<string, string> = {
   "django.permission": "Auth gate on a view — who is allowed to hit this path.",
   "django.throttle": "Rate-limit class attached to a view.",
   "django.serializer": "Request/response contract: which fields go in and come out.",
-  "django.form": "Django form that validates submitted input.",
+  "django.form": "Django form or django-filter FilterSet — the typed input contract.",
   "django.serializer_field": "One field on a serializer or form — the typed slot on the contract.",
   "django.service": "Internal service or use-case. Work that is not itself an HTTP sink.",
   "django.model": "ORM model. Schema and relations live here.",
@@ -198,7 +198,7 @@ const HIDDEN_EXTRA_KEYS = new Set([
 ]);
 
 const ALWAYS_SHOW_FALSE = new Set(["looks_idempotent_on_pk"]);
-const ROLE_FACT_KEYS = new Set(["inferred", "generated", "mutation", "fbv", "ninja"]);
+const ROLE_FACT_KEYS = new Set(["inferred", "generated", "mutation", "fbv", "ninja", "filterset"]);
 
 export type InspectorLink = {
   id: string;
@@ -256,6 +256,7 @@ export function inspectNode(
   if (extra.mutation) roles.push("mutation");
   if (extra.fbv) roles.push("function view");
   if (extra.ninja) roles.push("ninja");
+  if (extra.filterset === true) roles.push("filterset");
 
   const incoming = edges.filter((e) => e.dst === node.id);
   const outgoing = edges.filter((e) => e.src === node.id);

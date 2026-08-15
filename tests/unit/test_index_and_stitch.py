@@ -145,6 +145,7 @@ def test_empty_include_prefix_does_not_pollute_child_paths(tmp_path: Path):
     assert django_route_to_template("include:zproject.tornado_urls") == "/"
     assert django_route_to_template("^base") == "/base"
     assert django_route_to_template("^$") == "/"
+    assert django_route_to_template(r"^(?P<slug>[\w-]+)/clone/$") == "/{slug}/clone"
 
 
 def test_regex_include_join_strips_anchors(tmp_path: Path):

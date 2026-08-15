@@ -175,6 +175,7 @@ PREFERRED_REACT_ROOTS = (
     "web/src",
     "client/src",
     "ui/src",
+    "ui",
 )
 
 SKIP_REACT_PARTS = {
@@ -186,6 +187,11 @@ SKIP_REACT_PARTS = {
     "starlight_help",
     "e2e",
     "cypress",
+    "graphiql",
+    "demo-app",
+    "demo",
+    "example",
+    "examples",
 }
 
 
