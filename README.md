@@ -21,7 +21,7 @@ plus the jobs the view enqueues (`send_invoice_email.delay`, `rebuild_ledger.sen
 
 ## App
 
-`loadpath serve --port 7345` opens a local desktop-style UI: icon rail, labeled toolbar, merge-box confidence, and an inspectable impact graph. Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close. A dozen themes (Obsidian, Nord, Solarized, Paper, high-contrast, …) live in Settings and `localStorage`. Last repo, git range, and SCM slug are remembered the same way. Copy the markdown brief, or post **one** PR comment (updated in place) from the Review tab. Keyboard: `1`–`5` switches tabs, `⌘`/`Ctrl`+`Enter` runs a review.
+`loadpath serve --port 7345` opens a local desktop-style UI: icon rail, labeled toolbar, merge-box confidence, and an inspectable impact graph. Tokens stay on the machine in `~/.loadpath/settings.json`. AI is used **only** for residual uncertainty the graph cannot close. A dozen themes (Obsidian, Nord, Solarized, Paper, high-contrast, …) live in Settings and `localStorage`. Last repo, git range, and SCM slug are remembered the same way. Copy the markdown brief, or post **one** PR comment (updated in place) from the Review tab. Keyboard: `1`–`5` switches tabs. Outside Settings and Pull requests, `⌘`/`Ctrl`+`Enter` runs a review.
 
 ### Review
 

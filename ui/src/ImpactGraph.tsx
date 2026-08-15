@@ -31,19 +31,21 @@ function LoadNode({ data, selected }: { data: { name: string; type: string }; se
 const nodeTypes = { load: LoadNode };
 
 export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: GraphEdge[] }) {
-  const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const reduceMotion =
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const selected = selectedId ? byId.get(selectedId) ?? null : null;
   const pos = layoutNodes(nodes);
   const rfNodes: Node[] = nodes.map((n) => ({
     id: n.id,
     type: "load",
     position: pos.get(n.id) ?? { x: 0, y: 0 },
     data: { name: n.name, type: n.type, file: n.file_path },
-    selected: selected?.id === n.id,
+    selected: selectedId === n.id,
   }));
   const rfEdges: Edge[] = edges
-    .filter((e) => nodes.some((n) => n.id === e.src) && nodes.some((n) => n.id === e.dst))
+    .filter((e) => byId.has(e.src) && byId.has(e.dst))
     .map((e) => ({
       id: e.id,
       source: e.src,
@@ -58,9 +60,8 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
       labelStyle: { fill: "var(--muted)", fontSize: 10 },
     }));
 
-  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
   const onNodeClick: NodeMouseHandler = (_evt, node) => {
-    setSelected(byId.get(node.id) ?? null);
+    setSelectedId(node.id);
   };
 
   return (
@@ -78,7 +79,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
           elementsSelectable
           deleteKeyCode={null}
           onNodeClick={onNodeClick}
-          onPaneClick={() => setSelected(null)}
+          onPaneClick={() => setSelectedId(null)}
           proOptions={{ hideAttribution: false }}
           data-testid="impact-graph"
         >

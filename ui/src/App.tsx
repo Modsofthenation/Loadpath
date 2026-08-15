@@ -44,6 +44,12 @@ export function App() {
     applyTheme(id);
   };
 
+  const busyRef = useRef("");
+  const markBusy = (msg: string) => {
+    busyRef.current = msg;
+    setBusy(msg);
+  };
+
   useEffect(() => {
     api.settings().then(setSettings).catch(() => undefined);
     api.repos().then((r) => setRepos(r.repos)).catch(() => undefined);
@@ -95,9 +101,10 @@ export function App() {
   };
 
   const runReview = async () => {
+    if (busyRef.current) return;
     setError("");
     setCopied("");
-    setBusy("Tracing load path…");
+    markBusy("Tracing load path…");
     persistRepo(repo);
     persistRefs(base, head);
     try {
@@ -110,14 +117,15 @@ export function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy("");
+      markBusy("");
     }
   };
 
   const runIndex = async (incremental = true) => {
+    if (busyRef.current) return;
     setError("");
     setCopied("");
-    setBusy(incremental ? "Indexing…" : "Full reindex…");
+    markBusy(incremental ? "Indexing…" : "Full reindex…");
     persistRepo(repo);
     try {
       await api.index(repo, incremental);
@@ -130,14 +138,15 @@ export function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy("");
+      markBusy("");
     }
   };
 
   const draftConfig = async () => {
+    if (busyRef.current) return;
     setError("");
     setCopied("");
-    setBusy("Detecting layout…");
+    markBusy("Detecting layout…");
     persistRepo(repo);
     try {
       const layout = await api.init(repo);
@@ -146,7 +155,7 @@ export function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy("");
+      markBusy("");
     }
   };
 
@@ -161,31 +170,33 @@ export function App() {
   };
 
   const postComment = async () => {
+    if (busyRef.current) return;
     if (!review?.markdown || !scmRepo || !prNumber) {
       setError("Pick a pull request first (Pull requests tab), then post the brief.");
       return;
     }
-    setBusy("Posting Loadpath brief…");
+    markBusy("Posting Loadpath brief…");
     try {
       const posted = await api.postComment(provider, scmRepo, Number(prNumber), review.markdown);
       setCopied(posted.updated ? "Updated the Loadpath PR comment" : "Posted the Loadpath PR comment");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy("");
+      markBusy("");
     }
   };
 
   const loadPrs = async () => {
+    if (busyRef.current) return;
     setError("");
-    setBusy("Fetching pull requests…");
+    markBusy("Fetching pull requests…");
     try {
       const r = await api.prs(provider, scmRepo);
       setPrs(r.pull_requests);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy("");
+      markBusy("");
     }
   };
 
@@ -206,20 +217,24 @@ export function App() {
           ? [{ path: repo, name: repoName(repo) }]
           : [],
     };
-    setSettings(await api.saveSettings(body));
-    setCopied("Settings saved on this machine");
+    try {
+      setSettings(await api.saveSettings(body));
+      setCopied("Settings saved on this machine");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const askAi = async () => {
-    if (!review) return;
-    setBusy("Residual analysis…");
+    if (!review || busyRef.current) return;
+    markBusy("Residual analysis…");
     try {
       const r = await api.residual(review);
       setAiNote(r.note);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy("");
+      markBusy("");
     }
   };
 
@@ -241,9 +256,10 @@ export function App() {
         return;
       }
       const hit = TABS.find((item) => item.shortcut === event.key);
-      if (hit) setTab(hit.id);
+      if (hit && !event.metaKey && !event.ctrlKey && !event.altKey) setTab(hit.id);
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         if (tabRef.current === "settings" || tabRef.current === "prs") return;
+        if (busyRef.current) return;
         event.preventDefault();
         void runReviewRef.current();
       }
@@ -289,6 +305,7 @@ export function App() {
               data-testid={item.testId}
               className={active ? "nav-item active" : "nav-item"}
               aria-current={active ? "page" : undefined}
+              aria-label={item.label}
               onClick={() => setTab(item.id)}
             >
               <Icon />
@@ -488,11 +505,10 @@ export function App() {
           {tab === "graph" && (
             <div className="graph-wrap" data-testid="graph-full" style={{ height: "100%" }}>
               <div className="graph-modes">
-                <div className="seg" role="tablist" aria-label="Graph scope">
+                <div className="seg" aria-label="Graph scope">
                   <button
                     type="button"
-                    role="tab"
-                    aria-selected={graphMode === "review"}
+                    aria-pressed={graphMode === "review"}
                     data-testid="graph-mode-review"
                     className={graphMode === "review" ? "active" : ""}
                     onClick={() => setGraphMode("review")}
@@ -501,8 +517,7 @@ export function App() {
                   </button>
                   <button
                     type="button"
-                    role="tab"
-                    aria-selected={graphMode === "architecture"}
+                    aria-pressed={graphMode === "architecture"}
                     data-testid="graph-mode-architecture"
                     className={graphMode === "architecture" ? "active" : ""}
                     onClick={() => setGraphMode("architecture")}
