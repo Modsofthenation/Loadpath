@@ -221,13 +221,14 @@ def test_settings_empty_workspaces_do_not_wipe(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home").mkdir()
     client = TestClient(create_app())
-    seeded = client.put(
-        "/api/settings",
-        json={"workspaces": [{"path": str(tmp_path / "acme-billing"), "name": "acme-billing"}]},
-    )
-    assert seeded.json()["workspaces"][0]["name"] == "acme-billing"
+    workspace = {"path": str(tmp_path / "acme-billing"), "name": "acme-billing"}
+    seeded = client.put("/api/settings", json={"workspaces": [workspace]})
+    expected = seeded.json()["workspaces"]
+    assert len(expected) == 1
+    assert expected[0]["path"] == workspace["path"]
+    assert expected[0]["name"] == workspace["name"]
     omitted = client.put("/api/settings", json={"ai_provider": "grok"})
-    assert omitted.json()["workspaces"][0]["name"] == "acme-billing"
+    assert omitted.json()["workspaces"] == expected
     emptied = client.put("/api/settings", json={"ai_provider": "none", "workspaces": []})
-    assert emptied.json()["workspaces"][0]["name"] == "acme-billing"
+    assert emptied.json()["workspaces"] == expected
 
