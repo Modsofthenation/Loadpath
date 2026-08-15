@@ -30,6 +30,9 @@ describe("load-path layout", () => {
     expect(pos.get("c")!.x).toBeLessThan(pos.get("p")!.x);
     expect(pos.get("p")!.x).toBeLessThan(pos.get("f")!.x);
     expect(layerFor("django.serializer_field")).toBeLessThan(layerFor("react.form_schema"));
+    expect(layerFor("django.route")).toBeLessThan(layerFor("django.url_name"));
+    expect(layerFor("django.url_name")).toBeLessThan(layerFor("django.view"));
+    expect(layerFor("django.management_command")).toBe(layerFor("django.task"));
   });
 
   it("packs occupied layers so empty columns do not open huge gaps", () => {
@@ -60,6 +63,17 @@ describe("load-path layout", () => {
         expect(col[i]!.y - col[i - 1]!.y).toBeGreaterThanOrEqual(GRAPH_NODE_HEIGHT);
       }
     }
+  });
+
+  it("puts url names in their own column between routes and views", () => {
+    const nodes = [
+      node("r", "django.route", "/widget/product_list"),
+      node("u", "django.url_name", "event.widget.productlist"),
+      node("v", "django.view", "WidgetAPIProductList"),
+    ];
+    const pos = layoutNodes(nodes, [edge("r", "u"), edge("u", "v")]);
+    expect(pos.get("r")!.x).toBeLessThan(pos.get("u")!.x);
+    expect(pos.get("u")!.x).toBeLessThan(pos.get("v")!.x);
   });
 
   it("uncrosses a swapped pair with a barycenter pass", () => {

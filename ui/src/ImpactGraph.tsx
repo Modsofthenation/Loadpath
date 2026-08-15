@@ -51,7 +51,7 @@ function LoadNode({ data, selected }: { data: { name: string; type: string }; se
       <Handle type="target" position={Position.Left} isConnectable={false} />
       <div className="t">{typeLabel(data.type)}</div>
       <div className="n" title={data.name}>
-        {data.name}
+        {wrapHint(data.name)}
       </div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </div>
