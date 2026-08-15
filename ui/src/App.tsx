@@ -95,8 +95,8 @@ export function App() {
         .indexProgress(repoPath)
         .then((p) => {
           if (!busyRef.current) return;
-          if (p.message) markBusy(p.message);
-          setIndexPct(progressPercent(p));
+          if (p.phase && p.phase !== "idle" && p.message) markBusy(p.message);
+          setIndexPct(p.phase && p.phase !== "idle" ? progressPercent(p) : null);
         })
         .catch(() => undefined);
     };

@@ -89,3 +89,12 @@ def test_api_index_progress_idle_then_done(tmp_path, monkeypatch):
     assert body["phase"] == "done"
     assert body["message"]
     assert "elapsed_ms" in body
+
+
+def test_default_workers_stays_sequential_on_small_trees(monkeypatch):
+    from loadpath.index import default_workers
+
+    monkeypatch.delenv("LOADPATH_INDEX_JOBS", raising=False)
+    assert default_workers(42) == 1
+    monkeypatch.setenv("LOADPATH_INDEX_JOBS", "3")
+    assert default_workers(42) == 3

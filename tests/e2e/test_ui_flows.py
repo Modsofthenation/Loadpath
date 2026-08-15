@@ -158,6 +158,51 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
 
 
 @pytest.mark.playwright
+def test_ui_index_polls_progress_endpoint(live_app, browser_page):
+    import time
+
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+    page.get_by_test_id("repo-path").fill(str(repo))
+
+    progress_hits: list[str] = []
+
+    def on_route(route):
+        req = route.request
+        url = req.url
+        if "/api/index/progress" in url:
+            progress_hits.append(url)
+            route.continue_()
+            return
+        if req.method == "POST" and url.rstrip("/").endswith("/api/index"):
+            time.sleep(1.2)
+            route.continue_()
+            return
+        route.continue_()
+
+    page.route("**/api/**", on_route)
+    with page.expect_response(
+        lambda r: r.url.rstrip("/").endswith("/api/index") and r.request.method == "POST",
+        timeout=60_000,
+    ):
+        page.get_by_test_id("btn-index").click()
+        page.locator(".progress").wait_for(timeout=5_000)
+        page.wait_for_function(
+            """() => {
+              const t = document.querySelector('.rail-foot .muted')?.textContent || '';
+              return /Extract|Scan|Stitch|Indexed|Boot|Hashed/.test(t);
+            }""",
+            timeout=10_000,
+        )
+        page.screenshot(path="/opt/cursor/artifacts/index_progress_bar.png")
+    page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=15_000)
+    assert progress_hits, "UI should poll GET /api/index/progress while indexing"
+    page.screenshot(path="/opt/cursor/artifacts/index_complete_architecture.png")
+
+
+@pytest.mark.playwright
 def test_ui_settings_preserve_model_and_theme(live_app, browser_page):
     base_url, _repo = live_app
     page = browser_page

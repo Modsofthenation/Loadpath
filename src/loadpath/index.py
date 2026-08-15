@@ -138,7 +138,7 @@ def default_workers(n_files: int) -> int:
         return max(1, int(env))
     if getattr(sys, "frozen", False):
         return 1
-    if n_files < 6:
+    if n_files < 80:
         return 1
     cpu = os.cpu_count() or 2
     return max(1, min(8, cpu, n_files))
@@ -350,6 +350,7 @@ def _extract_parallel(
                 graph, err = None, f"{type(exc).__name__}: {exc}"
             found[rel] = (graph, err)
             done += 1
+            status = "Extracted" if graph is not None else "Failed"
             _emit(
                 progress,
                 {
@@ -359,7 +360,7 @@ def _extract_parallel(
                     "current": rel,
                     "workers": workers,
                     "elapsed_ms": _elapsed_ms(started),
-                    "message": f"Extracted {rel} ({done}/{total})",
+                    "message": f"{status} {rel} ({done}/{total})",
                 },
             )
     return [(src, found[src.rel][0], found[src.rel][1]) for src in files]
@@ -467,7 +468,12 @@ def index_repo(
                     progress=progress,
                 )
                 used_workers = n_cpu
-            except (BrokenProcessPool, OSError, PermissionError):
+                if results and all(graph is None for _, graph, _err in results):
+                    results = _extract_sequential(
+                        to_extract, config, started=started, progress=progress, workers=1
+                    )
+                    used_workers = 1
+            except (BrokenProcessPool, OSError, PermissionError, RuntimeError):
                 results = _extract_sequential(
                     to_extract, config, started=started, progress=progress, workers=1
                 )
