@@ -23,6 +23,8 @@ SKIP_DIRS = {
     "site-packages",
 }
 
+TESTISH_PARTS = {"test", "tests", "testing"}
+
 
 def _skip(path: Path) -> bool:
     return any(part in SKIP_DIRS or part.startswith(".") for part in path.parts)
@@ -115,15 +117,36 @@ def _first(repo_root: Path, name: str) -> str | None:
     return None
 
 
+def _is_testish(rel: Path) -> bool:
+    return any(part in TESTISH_PARTS for part in rel.parts)
+
+
 def _detect_django_root(repo_root: Path) -> str:
-    manage = None
-    for path in repo_root.rglob("manage.py"):
-        if _skip(path):
+    """Prefer the package that holds real apps, not a nested test project's manage.py."""
+    parents: list[tuple[str, ...]] = []
+    for marker in repo_root.rglob("apps.py"):
+        if _skip(marker):
             continue
-        manage = path
-        break
-    if manage is not None:
-        rel = manage.parent.relative_to(repo_root)
+        app_dir = marker.parent
+        if app_dir.name in {"migrations", "tests", "management"}:
+            continue
+        rel = app_dir.relative_to(repo_root)
+        if _is_testish(rel):
+            continue
+        parents.append(rel.parent.parts)
+    if parents:
+        common: list[str] = []
+        for items in zip(*parents):
+            if len(set(items)) == 1:
+                common.append(items[0])
+            else:
+                break
+        return "/".join(common) if common else "."
+
+    manages = [p for p in repo_root.rglob("manage.py") if not _skip(p)]
+    manages.sort(key=lambda p: (_is_testish(p.relative_to(repo_root)), len(p.relative_to(repo_root).parts)))
+    if manages:
+        rel = manages[0].parent.relative_to(repo_root)
         return rel.as_posix() if rel.parts else "."
     for candidate in ("backend", "server", "api", "app"):
         if (repo_root / candidate).is_dir():
@@ -152,14 +175,15 @@ def _django_apps(repo_root: Path, django_root: str) -> list[str]:
     for marker in root.rglob("apps.py"):
         if _skip(marker):
             continue
-        if marker.parent.name in {"migrations", "tests", "management"}:
+        rel = marker.relative_to(repo_root)
+        if _is_testish(rel) or marker.parent.name in {"migrations", "tests", "management"}:
             continue
         name = marker.parent.name
         if name not in apps and name not in {"config", "project", "settings"}:
             apps.append(name)
     if not apps:
         for marker in root.rglob("models.py"):
-            if _skip(marker):
+            if _skip(marker) or _is_testish(marker.relative_to(repo_root)):
                 continue
             name = marker.parent.name
             if name not in apps and name not in {"migrations", "config"}:
