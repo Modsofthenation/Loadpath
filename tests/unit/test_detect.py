@@ -64,6 +64,14 @@ def test_detect_does_not_treat_python_src_as_react_root(tmp_path: Path):
     assert layout["react_root"] == "frontend/src"
 
 
+def test_detect_ignores_docs_in_checkout_parent(tmp_path: Path):
+    repo = tmp_path / "docs" / "proj"
+    (repo / "api" / "billing").mkdir(parents=True)
+    (repo / "api" / "billing" / "apps.py").write_text("class BillingConfig:\n    pass\n")
+    layout = detect_layout(repo)
+    assert layout["django_root"] == "api"
+
+
 def test_detect_skips_nested_test_project_manage_py(tmp_path: Path):
     """Library repos (Wagtail) keep manage.py under a test project — index the package."""
     pkg = tmp_path / "pack" / "contrib" / "redirects"

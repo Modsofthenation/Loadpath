@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from loadpath.review.diff import git_diff
@@ -27,9 +28,9 @@ def test_git_diff_falls_back_when_three_dot_has_no_merge_base(tmp_path: Path):
     repo.mkdir()
     (repo / "a.txt").write_text("one\n")
     git_init_with_main(repo)
-    run = lambda *args: __import__("subprocess").check_call(
-        ["git", "-C", str(repo), *args], stdout=__import__("subprocess").DEVNULL
-    )
+    def run(*args: str) -> None:
+        subprocess.check_call(["git", "-C", str(repo), *args], stdout=subprocess.DEVNULL)
+
     run("checkout", "--orphan", "pr")
     run("rm", "-rf", ".")
     (repo / "b.txt").write_text("pr\n")

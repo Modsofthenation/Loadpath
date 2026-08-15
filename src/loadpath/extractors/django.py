@@ -906,7 +906,7 @@ class DjangoExtractor(ast.NodeVisitor):
         if include_mod:
             return f"include:{include_mod}", f"{self.app}:include:{include_mod}:{stamp}"
         if name:
-            return name, f"{self.app}:{name}"
+            return name, f"{self.app}:{name}:{stamp}"
         return "/", f"{self.app}:/:{stamp}"
 
     def _url_path(self, node: ast.Call) -> None:

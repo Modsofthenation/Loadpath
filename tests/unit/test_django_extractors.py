@@ -72,6 +72,21 @@ def test_empty_include_route_gets_a_readable_name():
     assert len(routes) == 3
 
 
+def test_empty_named_routes_keep_unique_ids():
+    source = (
+        "from django.urls import path\n"
+        "urlpatterns = [\n"
+        "    path('', Home.as_view(), name='index'),\n"
+        "    path('', Other.as_view(), name='index'),\n"
+        "]\n"
+    )
+    g = extract_django_file("api/custom_auth/urls.py", source, _cfg())
+    routes = [n for n in g.nodes if n.type is NodeType.ROUTE]
+    assert {n.name for n in routes} == {"index"}
+    assert len(routes) == 2
+    assert len({n.id for n in routes}) == 2
+
+
 def test_module_prefixed_view_links_to_app_view_node():
     source = (
         "from django.urls import re_path\n"

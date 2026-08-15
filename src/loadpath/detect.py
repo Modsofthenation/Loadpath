@@ -33,8 +33,15 @@ SKIP_DIRS = {
 TESTISH_PARTS = {"test", "tests", "testing"}
 
 
-def _skip(path: Path) -> bool:
-    return any(part in SKIP_DIRS or part.startswith(".") for part in path.parts)
+def _rel_parts(path: Path, repo_root: Path) -> tuple[str, ...]:
+    try:
+        return path.relative_to(repo_root).parts
+    except ValueError:
+        return path.parts
+
+
+def _skip(path: Path, repo_root: Path) -> bool:
+    return any(part in SKIP_DIRS or part.startswith(".") for part in _rel_parts(path, repo_root))
 
 
 def detect_layout(repo_root: Path) -> dict[str, Any]:
@@ -115,7 +122,7 @@ def ensure_config(repo_root: Path) -> LoadpathConfig:
 
 def _first(repo_root: Path, name: str) -> str | None:
     for path in repo_root.rglob(name):
-        if _skip(path):
+        if _skip(path, repo_root):
             continue
         try:
             return path.relative_to(repo_root).as_posix()
@@ -132,7 +139,7 @@ def _detect_django_root(repo_root: Path) -> str:
     """Prefer the package that holds real apps, not a nested test project's manage.py."""
     parents: list[tuple[str, ...]] = []
     for marker in repo_root.rglob("apps.py"):
-        if _skip(marker):
+        if _skip(marker, repo_root):
             continue
         app_dir = marker.parent
         if app_dir.name in {"migrations", "tests", "management"}:
@@ -150,7 +157,7 @@ def _detect_django_root(repo_root: Path) -> str:
                 break
         return "/".join(common) if common else "."
 
-    manages = [p for p in repo_root.rglob("manage.py") if not _skip(p)]
+    manages = [p for p in repo_root.rglob("manage.py") if not _skip(p, repo_root)]
     manages.sort(key=lambda p: (_is_testish(p.relative_to(repo_root)), len(p.relative_to(repo_root).parts)))
     if manages:
         rel = manages[0].parent.relative_to(repo_root)
@@ -199,9 +206,9 @@ def _detect_react_root(repo_root: Path) -> str:
 
     scored: list[tuple[int, str]] = []
     for pkg in repo_root.rglob("package.json"):
-        if _skip(pkg):
+        if _skip(pkg, repo_root):
             continue
-        if any(part in SKIP_REACT_PARTS for part in pkg.parts):
+        if any(part in SKIP_REACT_PARTS for part in _rel_parts(pkg, repo_root)):
             continue
         if not _package_has_react(pkg):
             continue
@@ -226,7 +233,7 @@ def _django_apps(repo_root: Path, django_root: str) -> list[str]:
         root = repo_root
     apps: list[str] = []
     for marker in root.rglob("apps.py"):
-        if _skip(marker):
+        if _skip(marker, repo_root):
             continue
         rel = marker.relative_to(repo_root)
         if _is_testish(rel) or marker.parent.name in {"migrations", "tests", "management"}:
@@ -236,7 +243,7 @@ def _django_apps(repo_root: Path, django_root: str) -> list[str]:
             apps.append(name)
     if not apps:
         for marker in root.rglob("models.py"):
-            if _skip(marker) or _is_testish(marker.relative_to(repo_root)):
+            if _skip(marker, repo_root) or _is_testish(marker.relative_to(repo_root)):
                 continue
             name = marker.parent.name
             if name not in apps and name not in {"migrations", "config"}:
