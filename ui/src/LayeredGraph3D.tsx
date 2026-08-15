@@ -49,6 +49,7 @@ function makeLayerLabel(text: string, color: string): THREE.Sprite {
 export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<{ node: GraphNode; x: number; y: number } | null>(null);
+  const [webglError, setWebglError] = useState<string | null>(null);
   const selectRef = useRef(onSelect);
   selectRef.current = onSelect;
   const focusRef = useRef({ selectedId, neighborIds });
@@ -63,7 +64,18 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
     scene.background = new THREE.Color(cssColor("--graph-bg", "#0b0f14"));
 
     const camera = new THREE.PerspectiveCamera(50, 1, 1, 8000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        failIfMajorPerformanceCaveat: false,
+        powerPreference: "low-power",
+      });
+    } catch {
+      setWebglError("WebGL is unavailable in this browser, so the 3D view cannot start. Switch back to 2D map.");
+      return;
+    }
+    setWebglError(null);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.domElement.dataset.testid = "graph-3d-canvas";
     host.appendChild(renderer.domElement);
@@ -266,6 +278,11 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
 
   return (
     <div className="graph-3d-host" ref={hostRef}>
+      {webglError ? (
+        <p className="muted graph-3d-hint" data-testid="graph-3d-fallback">
+          {webglError}
+        </p>
+      ) : null}
       {hover ? (
         <div className="graph-3d-tip" style={{ left: hover.x + 12, top: hover.y + 12 }}>
           <div className="t">{typeLabel(hover.node.type)}</div>

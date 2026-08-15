@@ -56,7 +56,10 @@ def browser_page():
 
     try:
         pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=True)
+        browser = pw.chromium.launch(
+            headless=True,
+            args=["--use-gl=angle", "--use-angle=swiftshader", "--ignore-gpu-blocklist"],
+        )
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"Chromium not available: {exc}")
     context = browser.new_context(viewport={"width": 1440, "height": 900})
