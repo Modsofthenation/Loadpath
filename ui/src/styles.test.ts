@@ -26,8 +26,20 @@ describe("graph selected-node overflow", () => {
     const name = document.querySelector(".inspector .n") as HTMLElement;
     expect(getComputedStyle(inspector).overflowWrap).toBe("break-word");
     expect(getComputedStyle(inspector).overflowX).toBe("hidden");
+    expect(getComputedStyle(inspector).overflowY).toBe("auto");
     expect(getComputedStyle(inspector).maxWidth).not.toBe("none");
+    expect(getComputedStyle(inspector).maxHeight).not.toBe("none");
     expect(getComputedStyle(name).overflowWrap).toBe("break-word");
+  });
+
+  it("lets inspector fact values shrink and wrap", () => {
+    mount(
+      `<aside class="inspector"><div class="inspector-fact"><dt>Type</dt><dd>VeryLongDecimalFieldNameThatShouldWrap</dd></div></aside>`,
+    );
+    const fact = document.querySelector(".inspector-fact") as HTMLElement;
+    const dd = document.querySelector(".inspector-fact dd") as HTMLElement;
+    expect(getComputedStyle(fact).display).toBe("grid");
+    expect(getComputedStyle(dd).overflowWrap).toBe("break-word");
   });
 
   it("ellipsizes long titles inside graph nodes", () => {

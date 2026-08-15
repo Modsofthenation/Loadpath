@@ -23,6 +23,7 @@ import {
   type GraphFamily,
   type GraphProjection,
 } from "./graphView";
+import { inspectNode, type InspectorLink } from "./nodeInspector";
 import { layoutNodes, type GraphEdge, type GraphNode } from "./types";
 
 const LayeredGraph3D = lazy(() =>
@@ -100,19 +101,103 @@ export function toReactFlowElements(
   return { rfNodes, rfEdges };
 }
 
-function GraphInspector({ node }: { node: GraphNode }) {
+function GraphInspector({
+  node,
+  nodes,
+  edges,
+}: {
+  node: GraphNode;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}) {
+  const info = inspectNode(node, nodes, edges);
   return (
     <aside className="inspector" data-testid="graph-inspector">
-      <div className="t">{typeLabel(node.type)}</div>
-      <div className="n">{wrapHint(node.name)}</div>
-      {node.context ? <div className="muted">{wrapHint(node.context)}</div> : null}
-      {node.file_path ? (
-        <div className="file">
-          {wrapHint(`${node.file_path}${node.start_line ? `:${node.start_line}` : ""}`)}
+      <div className="inspector-head">
+        <div className="t">{info.typeLabel}</div>
+        <div className="inspector-roles">
+          {info.roles.map((role) => (
+            <span key={role} className="inspector-chip">
+              {role}
+            </span>
+          ))}
         </div>
+      </div>
+      <div className="n">{wrapHint(info.name)}</div>
+      <p className="inspector-purpose" data-testid="graph-inspector-purpose">
+        {info.purpose}
+      </p>
+      {info.context ? <div className="muted">{wrapHint(info.context)}</div> : null}
+      {info.file ? <div className="file">{wrapHint(info.file)}</div> : null}
+      <div className="muted">{wrapHint(info.qualifiedName)}</div>
+      <div className="muted inspector-layer">layer · {info.layer}</div>
+      {info.facts.length ? (
+        <dl className="inspector-facts" data-testid="graph-inspector-facts">
+          {info.facts.map((fact) => (
+            <div key={fact.key} className="inspector-fact">
+              <dt>{fact.label}</dt>
+              <dd>{wrapHint(fact.value)}</dd>
+            </div>
+          ))}
+        </dl>
       ) : null}
-      <div className="muted">{wrapHint(node.qualified_name)}</div>
+      <InspectorLinks
+        title="Inputs"
+        testId="graph-inspector-inputs"
+        links={info.inputs}
+        extra={info.extraInputs}
+        empty="Nothing in this graph points here."
+      />
+      <InspectorLinks
+        title="Outputs"
+        testId="graph-inspector-outputs"
+        links={info.outputs}
+        extra={info.extraOutputs}
+        empty="This node does not point at anything in this graph."
+      />
     </aside>
+  );
+}
+
+function InspectorLinks({
+  title,
+  testId,
+  links,
+  extra,
+  empty,
+}: {
+  title: string;
+  testId: string;
+  links: InspectorLink[];
+  extra: number;
+  empty: string;
+}) {
+  return (
+    <section className="inspector-section" data-testid={testId}>
+      <h3>
+        {title}
+        <span className="count">{links.length + extra}</span>
+      </h3>
+      {links.length ? (
+        <ul>
+          {links.map((link, i) => (
+            <li key={`${link.edgeType}:${link.id}:${i}`}>
+              <span className="inspector-link-name" title={link.name}>
+                {wrapHint(link.name)}
+              </span>
+              <span className="inspector-link-meta">
+                {link.typeLabel ? `${link.typeLabel} · ` : ""}
+                {link.edgeLabel}
+                {link.inferred ? " · inferred" : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">{empty}</p>
+      )}
+      {extra ? <p className="muted">+{extra} more</p> : null}
+    </section>
   );
 }
 
@@ -270,7 +355,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
                 }}
               />
             </Suspense>
-            {selected ? <GraphInspector node={selected} /> : null}
+            {selected ? <GraphInspector node={selected} nodes={nodes} edges={edges} /> : null}
           </div>
         ) : (
           <ReactFlowProvider>
@@ -306,7 +391,7 @@ export function ImpactGraph({ nodes, edges }: { nodes: GraphNode[]; edges: Graph
               />
               <Controls />
             </ReactFlow>
-            {selected ? <GraphInspector node={selected} /> : null}
+            {selected ? <GraphInspector node={selected} nodes={nodes} edges={edges} /> : null}
           </ReactFlowProvider>
         )}
       </div>
