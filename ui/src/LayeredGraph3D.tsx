@@ -97,7 +97,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
     const group = new THREE.Group();
     scene.add(group);
 
-    const sphere = new THREE.SphereGeometry(8, 18, 14);
+    const sphere = new THREE.SphereGeometry(11, 18, 14);
     for (const node of nodes) {
       const p = pos.get(node.id) ?? { x: 0, y: 0, z: 0 };
       const material = new THREE.MeshStandardMaterial({
@@ -168,9 +168,9 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
     camera.lookAt(center);
 
     const raycaster = new THREE.Raycaster();
+    raycaster.params.Mesh = { ...raycaster.params.Mesh, threshold: 2 };
     const pointer = new THREE.Vector2();
     const meshes = [...meshById.values()];
-    let drag = { x: 0, y: 0, moved: false };
 
     const paint = (focus: string | null, neighbors: Set<string>) => {
       const isolating = Boolean(focus && neighbors.size);
@@ -186,7 +186,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
       (lines.material as THREE.LineBasicMaterial).opacity = isolating ? 0.85 : 0.5;
     };
 
-    const setPointer = (event: PointerEvent) => {
+    const setPointer = (event: { clientX: number; clientY: number }) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -199,7 +199,6 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
     };
 
     const onMove = (event: PointerEvent) => {
-      if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > 4) drag.moved = true;
       setPointer(event);
       const node = hit();
       if (!node) {
@@ -211,11 +210,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
       const rect = host.getBoundingClientRect();
       setHover({ node, x: event.clientX - rect.left, y: event.clientY - rect.top });
     };
-    const onDown = (event: PointerEvent) => {
-      drag = { x: event.clientX, y: event.clientY, moved: false };
-    };
-    const onUp = (event: PointerEvent) => {
-      if (drag.moved) return;
+    const onClick = (event: MouseEvent) => {
       setPointer(event);
       const node = hit();
       selectRef.current(node ? node.id : null);
@@ -241,8 +236,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
     tick();
 
     renderer.domElement.addEventListener("pointermove", onMove);
-    renderer.domElement.addEventListener("pointerdown", onDown);
-    renderer.domElement.addEventListener("pointerup", onUp);
+    renderer.domElement.addEventListener("click", onClick);
     (host as HostEl).__paint = paint;
     paint(focusRef.current.selectedId, focusRef.current.neighborIds);
 
@@ -250,8 +244,7 @@ export function LayeredGraph3D({ nodes, edges, selectedId, neighborIds, onSelect
       cancelAnimationFrame(frame);
       ro.disconnect();
       renderer.domElement.removeEventListener("pointermove", onMove);
-      renderer.domElement.removeEventListener("pointerdown", onDown);
-      renderer.domElement.removeEventListener("pointerup", onUp);
+      renderer.domElement.removeEventListener("click", onClick);
       delete (host as HostEl).__paint;
       controls.dispose();
       sphere.dispose();
