@@ -31,6 +31,7 @@ from loadpath.providers.scm import provider_for
 from loadpath.review.engine import run_review
 from loadpath.review.render import render_html, render_markdown
 from loadpath.settings import AppSettings, public_settings, register_workspace, settings_path, _should_update_secret
+from loadpath.workspace import DEFAULT_COMMIT_LIMIT, list_directory, list_git_refs
 
 
 class IndexRequest(BaseModel):
@@ -205,6 +206,15 @@ def create_app(
         report.pop("nodes", None)
         report.pop("edges", None)
         return report
+
+    @app.get("/api/fs")
+    def api_fs(path: str | None = None) -> dict[str, Any]:
+        return list_directory(path)
+
+    @app.get("/api/git/refs")
+    def api_git_refs(repo_path: str, limit: int = DEFAULT_COMMIT_LIMIT) -> dict[str, Any]:
+        root = require_repo_path(repo_path)
+        return list_git_refs(root, commit_limit=limit)
 
     @app.get("/api/repos")
     def api_repos() -> dict[str, Any]:

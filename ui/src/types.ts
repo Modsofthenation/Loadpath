@@ -162,6 +162,50 @@ export type PullRequest = {
   base_sha?: string;
 };
 
+export type FsEntry = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  is_git: boolean;
+};
+
+export type FsListing = {
+  path: string;
+  name: string;
+  parent: string | null;
+  home: string;
+  is_git: boolean;
+  truncated: boolean;
+  entries: FsEntry[];
+};
+
+export type GitRefItem = {
+  name: string;
+  sha: string;
+  short: string;
+  subject: string;
+  current: boolean;
+};
+
+export type GitCommit = {
+  sha: string;
+  short: string;
+  subject: string;
+  author: string;
+  date: string;
+};
+
+export type GitRefs = {
+  git: boolean;
+  repo_path: string;
+  head: string | null;
+  head_short: string | null;
+  branches: GitRefItem[];
+  tags: GitRefItem[];
+  commits: GitCommit[];
+  presets: string[];
+};
+
 export const LAYER_ORDER: Record<string, number> = {
   "arch.context": 0,
   "django.app": 0,

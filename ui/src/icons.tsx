@@ -72,3 +72,19 @@ export function IconSettings({ className }: IconProps) {
     </Svg>
   );
 }
+
+export function IconFolder({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path d="M2.5 4.5h4L8 6h5.5v6.5h-11z" />
+    </Svg>
+  );
+}
+
+export function IconChevron({ className }: IconProps) {
+  return (
+    <Svg className={className}>
+      <path d="M4 6.5 8 10.5 12 6.5" />
+    </Svg>
+  );
+}

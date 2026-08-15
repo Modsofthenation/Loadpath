@@ -220,3 +220,56 @@ def test_ui_pr_review_this_range_fills_refs(live_app, browser_page):
     page.get_by_test_id("review-layout").wait_for()
     assert page.get_by_test_id("base-ref").input_value() == "abc111base"
     assert page.get_by_test_id("head-ref").input_value() == "def222head"
+
+
+@pytest.mark.playwright
+def test_ui_browse_repo_and_pick_git_refs(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+
+    page.get_by_test_id("repo-path").fill(str(repo))
+    page.get_by_test_id("btn-browse-repo").click()
+    explorer = page.get_by_test_id("repo-explorer")
+    explorer.wait_for()
+    page.get_by_test_id("explorer-path").wait_for()
+    page.wait_for_function(
+        "path => document.querySelector('[data-testid=\"explorer-path\"]')?.value.includes(path)",
+        arg=repo.name,
+    )
+    page.get_by_test_id("explorer-use").click()
+    explorer.wait_for(state="hidden")
+    first = page.get_by_test_id("repo-path").input_value()
+    assert repo.name in first
+
+    page.get_by_test_id("btn-browse-repo").click()
+    explorer.wait_for()
+    page.get_by_test_id("explorer-path").fill(str(repo.parent))
+    page.get_by_role("button", name="Go").click()
+    page.get_by_test_id("explorer-entry").filter(has_text=repo.name).wait_for()
+    page.get_by_test_id("explorer-entry").filter(has_text=repo.name).click()
+    page.get_by_test_id("explorer-use").click()
+    explorer.wait_for(state="hidden")
+    chosen = page.get_by_test_id("repo-path").input_value()
+    assert repo.name in chosen
+
+    page.get_by_test_id("base-ref").fill("custom-base")
+    assert page.get_by_test_id("base-ref").input_value() == "custom-base"
+
+    with page.expect_response(lambda r: "/api/git/refs" in r.url, timeout=15_000):
+        page.get_by_test_id("base-ref-toggle").click()
+    menu = page.get_by_test_id("base-ref-menu")
+    menu.wait_for()
+    menu.get_by_text("HEAD~1", exact=True).wait_for()
+    menu.get_by_test_id("ref-option-commit").filter(has_text="tighten Invoice.total contract").wait_for()
+    menu.get_by_test_id("ref-option-commit").filter(has_text="baseline").click()
+    selected = page.get_by_test_id("base-ref").input_value()
+    assert selected != "custom-base"
+    assert len(selected) >= 7
+
+    page.get_by_test_id("head-ref-toggle").click()
+    heads = page.get_by_test_id("head-ref-menu")
+    heads.wait_for()
+    heads.get_by_test_id("ref-option-branch").filter(has_text="main").click()
+    assert page.get_by_test_id("head-ref").input_value() == "main"

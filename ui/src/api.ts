@@ -1,4 +1,4 @@
-import type { ArchitectureReport, IndexedRepo, PullRequest, Review } from "./types";
+import type { ArchitectureReport, FsListing, GitRefs, IndexedRepo, PullRequest, Review } from "./types";
 
 export function formatApiError(text: string, fallback = "Request failed"): string {
   const trimmed = (text || "").trim();
@@ -50,6 +50,10 @@ export const api = {
     return req<Record<string, unknown>>("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
   },
   repos: () => req<{ repos: IndexedRepo[] }>("/api/repos"),
+  browse: (path?: string) =>
+    req<FsListing>(`/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  gitRefs: (repo_path: string, limit = 50) =>
+    req<GitRefs>(`/api/git/refs?repo_path=${encodeURIComponent(repo_path)}&limit=${limit}`),
   index: (repo_path: string, incremental = true) =>
     req<ArchitectureReport>("/api/index", {
       method: "POST",
