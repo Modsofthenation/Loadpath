@@ -39,6 +39,8 @@ def parse_remote_url(url: str) -> tuple[str, str] | None:
     if not match:
         return None
     slug = match.group("slug").strip("/")
+    if slug.endswith(".git"):
+        slug = slug[:-4]
     parts = slug.split("/")
     if len(parts) >= 2:
         slug = "/".join(parts[:2])

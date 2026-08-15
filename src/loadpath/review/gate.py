@@ -18,15 +18,15 @@ def gate_result(review: dict, fail_on: str = "blocker") -> dict:
     if fail_on != "never" and blockers:
         code = 2
         reasons.append(f"{len(blockers)} architecture blocker(s)")
+    if fail_on in {"low", "medium"} and contract == "breaking" and code == 0:
+        code = 4
+        reasons.append("breaking public contract")
     if fail_on in {"low", "medium"} and level == "low" and code == 0:
         code = 3
         reasons.append("confidence is low")
     if fail_on == "medium" and level == "medium" and code == 0:
         code = 3
         reasons.append("confidence is medium")
-    if fail_on in {"low", "medium"} and contract == "breaking" and code == 0:
-        code = 4
-        reasons.append("breaking public contract")
     passed = code == 0
     summary = "pass" if passed else "fail"
     title = (review.get("title") or "change").strip()
