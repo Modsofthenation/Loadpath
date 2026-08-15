@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.conftest import wait_visible_graph
+
 THEME_SHOTS = (
     "obsidian",
     "nord",
@@ -43,8 +45,7 @@ def _shot(page, dest: Path, name: str) -> None:
 
 
 def _wait_graph(page) -> None:
-    page.locator(".react-flow__node").first.wait_for(timeout=15_000)
-    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
+    wait_visible_graph(page)
 
 
 @pytest.mark.playwright

@@ -4,6 +4,8 @@ import shutil
 
 import pytest
 
+from tests.e2e.conftest import wait_visible_graph
+
 
 def _wait_fonts(page) -> None:
     try:
@@ -105,13 +107,12 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert "billing-team" in brief
     assert "MePage" not in brief
     page.locator(".react-flow__node").filter(has_text="InvoicePage").first.wait_for(timeout=15_000)
-    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
+    page.locator(".react-flow__edge").filter(visible=True).first.wait_for(timeout=15_000)
     assert page.locator(".react-flow__node").filter(has_text="MePage").count() == 0
 
     page.get_by_test_id("tab-graph").click()
     page.get_by_test_id("graph-full").wait_for()
-    page.locator(".react-flow__node").first.wait_for(timeout=15_000)
-    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
+    wait_visible_graph(page)
     page.locator(".react-flow__minimap-node").first.wait_for(timeout=10_000)
     page.locator(".react-flow__node").first.click()
     inspector = page.get_by_test_id("graph-inspector")
@@ -148,8 +149,7 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
 
     page.get_by_test_id("graph-mode-architecture").click()
     assert page.get_by_test_id("graph-mode-architecture").get_attribute("aria-pressed") == "true"
-    page.locator(".react-flow__node").first.wait_for(timeout=15_000)
-    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
+    wait_visible_graph(page)
 
     page.get_by_test_id("tab-review").click()
     page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=base_url)
