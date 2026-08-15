@@ -192,7 +192,10 @@ SKIP_REACT_PARTS = {
     "demo",
     "example",
     "examples",
+    "legacy",
+    "legacy-ui",
 }
+SKIP_REACT_SUBSTRINGS = ("graphiql", "storybook", "docusaurus", "demo-app")
 
 
 def _package_has_react(pkg: Path) -> bool:
@@ -202,6 +205,14 @@ def _package_has_react(pkg: Path) -> bool:
         return False
     deps = {**(data.get("dependencies") or {}), **(data.get("devDependencies") or {})}
     return "react" in deps or "react-dom" in deps
+
+
+def _skip_react_tree(path: Path, repo_root: Path) -> bool:
+    parts = _rel_parts(path, repo_root)
+    if any(part in SKIP_REACT_PARTS for part in parts):
+        return True
+    joined = "/".join(parts).lower()
+    return any(token in joined for token in SKIP_REACT_SUBSTRINGS)
 
 
 def _detect_react_root(repo_root: Path) -> str:
@@ -214,7 +225,7 @@ def _detect_react_root(repo_root: Path) -> str:
     for pkg in repo_root.rglob("package.json"):
         if _skip(pkg, repo_root):
             continue
-        if any(part in SKIP_REACT_PARTS for part in _rel_parts(pkg, repo_root)):
+        if _skip_react_tree(pkg, repo_root):
             continue
         if not _package_has_react(pkg):
             continue

@@ -81,11 +81,15 @@ def test_detect_skips_graphiql_and_demo_app(tmp_path: Path):
     demo = tmp_path / "demo-app" / "frontend" / "src"
     demo.mkdir(parents=True)
     (tmp_path / "demo-app" / "frontend" / "package.json").write_text('{"dependencies":{"react":"18.0.0"}}\n')
+    legacy = tmp_path / "legacy-ui" / "core"
+    legacy.mkdir(parents=True)
+    (legacy / "package.json").write_text('{"dependencies":{"react":"18.0.0"}}\n')
     (tmp_path / "ui").mkdir()
     (tmp_path / "ui" / "App.jsx").write_text("export default function App() { return null }\n")
     layout = detect_layout(tmp_path)
     assert "graphiql" not in layout["react_root"]
     assert "demo-app" not in layout["react_root"]
+    assert "legacy" not in layout["react_root"]
     assert layout["react_root"] == "ui"
 
 
