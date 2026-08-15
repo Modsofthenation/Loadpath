@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from loadpath.graph.store import GraphStore
+from loadpath.graph.store import GraphStore, linked_edges
 from loadpath.review.diff import DiffSet
 from loadpath.types import NodeType, SINK_TYPES
 
 CLUSTER_SEED_PRIORITY = [
     NodeType.SERIALIZER,
     NodeType.SERIALIZER_FIELD,
+    NodeType.FORM,
     NodeType.MODEL,
     NodeType.FIELD,
     NodeType.ROUTE,
@@ -113,6 +114,8 @@ def impact_walk(store: GraphStore, seed_ids: set[str], hops: int = 8) -> tuple[l
                 if e["type"] not in FORWARD_TYPES:
                     continue
                 other = e["dst"]
+                if other not in by_id:
+                    continue
                 other_node = by_id.get(other) or {}
                 expand = other_node.get("type") not in BRIDGE_TYPES
                 if (
@@ -143,6 +146,8 @@ def impact_walk(store: GraphStore, seed_ids: set[str], hops: int = 8) -> tuple[l
                 if e["type"] == "belongs_to" and node.get("type") != NodeType.FEATURE_MODULE.value:
                     continue
                 other = e["src"]
+                if other not in by_id:
+                    continue
                 other_node = by_id.get(other) or {}
                 if other_node.get("type") in BRIDGE_TYPES:
                     kept_edges[e["id"]] = e
@@ -155,7 +160,7 @@ def impact_walk(store: GraphStore, seed_ids: set[str], hops: int = 8) -> tuple[l
         frontier = {i for i in nxt if i not in working}
 
     nodes = [by_id[i] for i in seen if i in by_id]
-    return nodes, list(kept_edges.values())
+    return nodes, linked_edges(nodes, list(kept_edges.values()))
 
 
 def cluster_diff(

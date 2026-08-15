@@ -89,8 +89,9 @@
       title: n.qualified_name + "\\n" + (n.file_path || ""),
       shape: n.type && n.type.startsWith("react.") ? "box" : "dot",
     })));
+    const nodeIds = new Set(nodes.map(n => n.id));
     const weightColor = { cheap: "#4a5568", expensive: "#f4a261", critical: "#e85d04" };
-    const dataEdges = new vis.DataSet(edges.map(e => ({
+    const dataEdges = new vis.DataSet(edges.filter(e => nodeIds.has(e.src) && nodeIds.has(e.dst)).map(e => ({
       id: e.id,
       from: e.src,
       to: e.dst,

@@ -914,7 +914,8 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
   height: 56px;
   box-sizing: border-box;
   box-shadow: 0 0 0 1px var(--shadow);
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
 }
 .lp-node .t { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
 .lp-node .n {
@@ -925,6 +926,13 @@ h2 { font-size: 13px; margin: 0; font-weight: 600; }
   white-space: nowrap;
 }
 .lp-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.react-flow__node-load .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  border: none;
+  background: transparent;
+  opacity: 0;
+}
 .type-table {
   width: 100%;
   border-collapse: collapse;

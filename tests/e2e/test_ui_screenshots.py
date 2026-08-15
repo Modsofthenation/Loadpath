@@ -41,6 +41,7 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path, browser_page):
     page.get_by_test_id("architecture-brief").wait_for(timeout=15_000)
     page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=15_000)
     page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
     page.wait_for_timeout(800)
     page.screenshot(path=str(dest / "architecture.png"), full_page=False)
 
@@ -59,14 +60,17 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path, browser_page):
     brief = page.get_by_test_id("brief").inner_text()
     assert "MEDIUM" in brief or "LOW" in brief or "HIGH" in brief
     page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
     page.wait_for_timeout(800)
     page.screenshot(path=str(dest / "review.png"), full_page=False)
 
     page.get_by_test_id("tab-graph").click()
     page.get_by_test_id("graph-full").wait_for()
     page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+    page.locator(".react-flow__edge").first.wait_for(timeout=15_000)
     page.locator(".react-flow__minimap-node").first.wait_for(timeout=10_000)
     assert page.locator(".react-flow__minimap-node").count() > 3
+    assert page.locator(".react-flow__edge").count() > 0
     page.wait_for_timeout(600)
     page.screenshot(path=str(dest / "graph.png"), full_page=False)
 
