@@ -1,5 +1,7 @@
 # Security
 
-Please report vulnerabilities via [GitHub Security Advisories](https://github.com/Modsofthenation/PR-Reviewer/security/advisories/new) on this repository.
+Please report vulnerabilities privately to the repository owner (`Modsofthenation` on GitHub). Do not open a public issue for unreleased security problems.
 
-Do not open a public issue for unreleased security problems. Tokens and OAuth state live on the machine that runs Loadpath (`~/.loadpath/`); treat that host as trusted.
+Once this repository is public, enable [GitHub private vulnerability reporting](https://docs.github.com/code-security/security-advisories/working-with-repository-security-advisories/configuring-private-vulnerability-reporting-for-a-repository) so researchers can use Security Advisories. The `/security/advisories/new` form 404s until that setting is on.
+
+Tokens and OAuth state live on the machine that runs Loadpath (`~/.loadpath/`); treat that host as trusted.
