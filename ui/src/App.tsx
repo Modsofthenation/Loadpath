@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { formatWhen, kindLabel, repoName, typeLabel } from "./format";
+import { formatWhen, kindLabel, typeLabel } from "./format";
 import { IconArchitecture, IconGraph, IconPrs, IconReview, IconSettings } from "./icons";
 import { ImpactGraph } from "./ImpactGraph";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
@@ -36,6 +36,7 @@ export function App() {
   const [prNumber, setPrNumber] = useState(localStorage.getItem("loadpath.prNumber") || "");
   const [aiNote, setAiNote] = useState("");
   const [theme, setTheme] = useState<ThemeId>(readTheme);
+  const [settingsReady, setSettingsReady] = useState(false);
   const repoRef = useRef(repo);
   repoRef.current = repo;
 
@@ -51,12 +52,24 @@ export function App() {
   };
 
   useEffect(() => {
-    api.settings().then(setSettings).catch(() => undefined);
+    api
+      .settings()
+      .then(setSettings)
+      .catch(() => undefined)
+      .finally(() => setSettingsReady(true));
     api.repos().then((r) => setRepos(r.repos)).catch(() => undefined);
   }, []);
 
+  const requireRepo = () => {
+    if (!repo.trim()) {
+      setError("Point at a local repository path first.");
+      return false;
+    }
+    return true;
+  };
+
   useEffect(() => {
-    if (tab !== "architecture" || !repo) return;
+    if (tab !== "architecture" || !repo.trim()) return;
     const requested = repo;
     let cancelled = false;
     api
@@ -94,7 +107,7 @@ export function App() {
   };
 
   const loadArchitecture = async (path = repo) => {
-    if (!path) return null;
+    if (!path.trim()) return null;
     const report = await api.architecture(path);
     if (repoRef.current === path) setArchitecture(report);
     return report;
@@ -102,6 +115,7 @@ export function App() {
 
   const runReview = async () => {
     if (busyRef.current) return;
+    if (!requireRepo()) return;
     setError("");
     setCopied("");
     markBusy("Tracing load path…");
@@ -123,6 +137,7 @@ export function App() {
 
   const runIndex = async (incremental = true) => {
     if (busyRef.current) return;
+    if (!requireRepo()) return;
     setError("");
     setCopied("");
     markBusy(incremental ? "Indexing…" : "Full reindex…");
@@ -144,6 +159,7 @@ export function App() {
 
   const draftConfig = async () => {
     if (busyRef.current) return;
+    if (!requireRepo()) return;
     setError("");
     setCopied("");
     markBusy("Detecting layout…");
@@ -211,14 +227,12 @@ export function App() {
       ai_api_key: String(fd.get("ai_api_key") || ""),
       ai_model: String(fd.get("ai_model") || ""),
       ai_base_url: String(fd.get("ai_base_url") || ""),
-      workspaces: repos.length
-        ? repos.map((r) => ({ path: r.path, name: r.name }))
-        : repo
-          ? [{ path: repo, name: repoName(repo) }]
-          : [],
     };
+    const payload = repos.length
+      ? { ...body, workspaces: repos.map((r) => ({ path: r.path, name: r.name })) }
+      : body;
     try {
-      setSettings(await api.saveSettings(body));
+      setSettings(await api.saveSettings(payload));
       setCopied("Settings saved on this machine");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -415,7 +429,7 @@ export function App() {
         </header>
         <div className="alerts">
           {error ? (
-            <div className="error">
+            <div className="error" data-testid="error" role="alert">
               <span>{error}</span>
               <button type="button" className="dismiss" onClick={() => setError("")} aria-label="Dismiss error">
                 ×
@@ -543,7 +557,9 @@ export function App() {
               {graphNodes.length ? (
                 <ImpactGraph nodes={graphNodes} edges={graphEdges} />
               ) : (
-                <p className="empty">Index the repo or run a review first. Click a node to inspect it.</p>
+                <p className="empty" data-testid="graph-empty">
+                  Index the repo or run a review first. Click a node to inspect it.
+                </p>
               )}
             </div>
           )}
@@ -577,7 +593,7 @@ export function App() {
                 </button>
               </div>
               {prs.length === 0 ? (
-                <div className="empty">
+                <div className="empty" data-testid="pr-empty">
                   <h2>No pull requests loaded</h2>
                   <p>Enter an owner/repo, then list open PRs. Reviewing a PR fills base and head from its SHAs.</p>
                 </div>
@@ -601,6 +617,7 @@ export function App() {
                       <button
                         type="button"
                         className="btn primary"
+                        data-testid={`pr-review-${p.number}`}
                         onClick={() => {
                           persistRefs(p.base_sha || p.target_branch, p.head_sha || p.source_branch);
                           persistPr(p.provider, p.repo, String(p.number));
@@ -616,7 +633,7 @@ export function App() {
             </div>
           )}
 
-          {tab === "settings" && (
+          {tab === "settings" && settingsReady && (
             <form className="settings" data-testid="settings-form" onSubmit={saveSettings}>
               <div>
                 <h1>Settings</h1>
@@ -675,10 +692,22 @@ export function App() {
                 <label htmlFor="ai_api_key">API key</label>
                 <input id="ai_api_key" name="ai_api_key" type="password" autoComplete="off" />
                 <label htmlFor="ai_model">Model</label>
-                <input id="ai_model" name="ai_model" placeholder="optional override" />
+                <input
+                  id="ai_model"
+                  name="ai_model"
+                  data-testid="ai-model"
+                  placeholder="optional override"
+                  defaultValue={String((settings.ai as { model?: string } | undefined)?.model || "")}
+                />
                 <label htmlFor="ai_base_url">Base URL</label>
-                <input id="ai_base_url" name="ai_base_url" placeholder="optional, OpenAI-compatible" />
-                <button className="btn primary" type="submit">
+                <input
+                  id="ai_base_url"
+                  name="ai_base_url"
+                  data-testid="ai-base-url"
+                  placeholder="optional, OpenAI-compatible"
+                  defaultValue={String((settings.ai as { base_url?: string } | undefined)?.base_url || "")}
+                />
+                <button className="btn primary" type="submit" data-testid="btn-save-settings">
                   Save
                 </button>
               </section>
