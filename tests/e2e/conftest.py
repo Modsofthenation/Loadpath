@@ -36,7 +36,7 @@ def live_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
-    for _ in range(50):
+    for _ in range(200):
         if server.started:
             break
         thread.join(0.05)

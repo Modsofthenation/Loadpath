@@ -39,6 +39,9 @@ def test_ui_empty_path_keys_and_readable_errors(live_app, browser_page):
     page.get_by_test_id("btn-index").click()
     missing = _assert_readable_error(page)
     assert "not found" in missing.lower()
+    page.locator(".brand").click()
+    page.keyboard.press("Escape")
+    page.get_by_test_id("error").wait_for(state="hidden")
 
     page.get_by_test_id("tab-prs").click()
     page.get_by_test_id("pr-empty").wait_for()
@@ -83,6 +86,7 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
         pytest.fail(f"index API {pending_index.value.status}: {pending_index.value.text()}")
 
     page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=15_000)
+    page.wait_for_function("() => !document.querySelector('[data-testid=\"btn-index\"]')?.disabled")
     page.get_by_test_id("workspace-select").wait_for()
     options = page.get_by_test_id("workspace-select").locator("option").all_inner_texts()
     assert any("acme-billing" in opt for opt in options), options

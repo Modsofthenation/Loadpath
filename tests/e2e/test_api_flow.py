@@ -216,3 +216,18 @@ def test_settings_empty_model_does_not_wipe(tmp_path, monkeypatch):
     assert body["ai"]["model"] == "grok-keep"
     assert body["ai"]["base_url"] == "https://example.invalid"
 
+
+def test_settings_empty_workspaces_do_not_wipe(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+    client = TestClient(create_app())
+    seeded = client.put(
+        "/api/settings",
+        json={"workspaces": [{"path": str(tmp_path / "acme-billing"), "name": "acme-billing"}]},
+    )
+    assert seeded.json()["workspaces"][0]["name"] == "acme-billing"
+    omitted = client.put("/api/settings", json={"ai_provider": "grok"})
+    assert omitted.json()["workspaces"][0]["name"] == "acme-billing"
+    emptied = client.put("/api/settings", json={"ai_provider": "none", "workspaces": []})
+    assert emptied.json()["workspaces"][0]["name"] == "acme-billing"
+

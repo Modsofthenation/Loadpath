@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { formatWhen, kindLabel, repoName, typeLabel } from "./format";
+import { formatWhen, kindLabel, typeLabel } from "./format";
 import { IconArchitecture, IconGraph, IconPrs, IconReview, IconSettings } from "./icons";
 import { ImpactGraph } from "./ImpactGraph";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
@@ -69,7 +69,7 @@ export function App() {
   };
 
   useEffect(() => {
-    if (tab !== "architecture" || !repo) return;
+    if (tab !== "architecture" || !repo.trim()) return;
     const requested = repo;
     let cancelled = false;
     api
@@ -107,7 +107,7 @@ export function App() {
   };
 
   const loadArchitecture = async (path = repo) => {
-    if (!path) return null;
+    if (!path.trim()) return null;
     const report = await api.architecture(path);
     if (repoRef.current === path) setArchitecture(report);
     return report;
@@ -227,14 +227,12 @@ export function App() {
       ai_api_key: String(fd.get("ai_api_key") || ""),
       ai_model: String(fd.get("ai_model") || ""),
       ai_base_url: String(fd.get("ai_base_url") || ""),
-      workspaces: repos.length
-        ? repos.map((r) => ({ path: r.path, name: r.name }))
-        : repo
-          ? [{ path: repo, name: repoName(repo) }]
-          : [],
     };
+    const payload = repos.length
+      ? { ...body, workspaces: repos.map((r) => ({ path: r.path, name: r.name })) }
+      : body;
     try {
-      setSettings(await api.saveSettings(body));
+      setSettings(await api.saveSettings(payload));
       setCopied("Settings saved on this machine");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

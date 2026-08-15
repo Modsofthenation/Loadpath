@@ -181,7 +181,7 @@ def create_app(
             current.ai.model = body.ai_model or ""
         if _should_update_secret(body.ai_base_url, current.ai.base_url):
             current.ai.base_url = body.ai_base_url or ""
-        if body.workspaces is not None:
+        if body.workspaces:
             from loadpath.settings import Workspace
 
             current.workspaces = [Workspace.model_validate(w) for w in body.workspaces]
