@@ -46,8 +46,13 @@ export function readTheme(): ThemeId {
   return DEFAULT_THEME;
 }
 
+export function colorSchemeFor(id: ThemeId): "light" | "dark" {
+  return THEMES.find((t) => t.id === id)?.group === "light" ? "light" : "dark";
+}
+
 export function applyTheme(id: ThemeId) {
   document.documentElement.dataset.theme = id;
+  document.documentElement.style.colorScheme = colorSchemeFor(id);
   try {
     localStorage.setItem(STORAGE_KEY, id);
   } catch {

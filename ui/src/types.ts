@@ -192,7 +192,7 @@ export function layoutNodes(nodes: GraphNode[]): Map<string, { x: number; y: num
   for (const [layer, list] of columns) {
     list.sort((a, b) => a.name.localeCompare(b.name));
     list.forEach((n, i) => {
-      pos.set(n.id, { x: layer * 240, y: i * 92 });
+      pos.set(n.id, { x: layer * 260, y: i * 108 });
     });
   }
   return pos;

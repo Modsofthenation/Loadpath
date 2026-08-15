@@ -1,11 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
+import { formatWhen, kindLabel, repoName, typeLabel } from "./format";
+import { IconArchitecture, IconGraph, IconPrs, IconReview, IconSettings } from "./icons";
 import { ImpactGraph } from "./ImpactGraph";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
 import type { ArchitectureReport, IndexedRepo, PullRequest, Review } from "./types";
 
 type Tab = "review" | "architecture" | "graph" | "prs" | "settings";
 type GraphMode = "review" | "architecture";
+
+const TABS: { id: Tab; label: string; testId: string; shortcut: string; icon: typeof IconReview }[] = [
+  { id: "review", label: "Review", testId: "tab-review", shortcut: "1", icon: IconReview },
+  { id: "architecture", label: "Architecture", testId: "tab-architecture", shortcut: "2", icon: IconArchitecture },
+  { id: "graph", label: "Impact graph", testId: "tab-graph", shortcut: "3", icon: IconGraph },
+  { id: "prs", label: "Pull requests", testId: "tab-prs", shortcut: "4", icon: IconPrs },
+  { id: "settings", label: "Settings", testId: "tab-settings", shortcut: "5", icon: IconSettings },
+];
 
 export function App() {
   const [tab, setTab] = useState<Tab>("review");
@@ -179,7 +189,7 @@ export function App() {
     }
   };
 
-  const saveSettings = async (evt: React.FormEvent<HTMLFormElement>) => {
+  const saveSettings = async (evt: FormEvent<HTMLFormElement>) => {
     evt.preventDefault();
     const fd = new FormData(evt.currentTarget);
     const body = {
@@ -193,10 +203,11 @@ export function App() {
       workspaces: repos.length
         ? repos.map((r) => ({ path: r.path, name: r.name }))
         : repo
-          ? [{ path: repo, name: repo.split(/[\\/]/).pop() }]
+          ? [{ path: repo, name: repoName(repo) }]
           : [],
     };
     setSettings(await api.saveSettings(body));
+    setCopied("Settings saved on this machine");
   };
 
   const askAi = async () => {
@@ -212,6 +223,35 @@ export function App() {
     }
   };
 
+  const runReviewRef = useRef(runReview);
+  runReviewRef.current = runReview;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const el = event.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+        if (event.key === "Escape") (el as HTMLInputElement).blur();
+        return;
+      }
+      if (event.key === "Escape") {
+        setError("");
+        setCopied("");
+        return;
+      }
+      const hit = TABS.find((item) => item.shortcut === event.key);
+      if (hit) setTab(hit.id);
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        if (tabRef.current === "settings" || tabRef.current === "prs") return;
+        event.preventDefault();
+        void runReviewRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const graphNodes = useMemo(() => {
     if (graphMode === "architecture") return architecture?.nodes ?? [];
     return review?.nodes ?? [];
@@ -222,34 +262,40 @@ export function App() {
   }, [graphMode, architecture, review]);
 
   const indexLine = review?.index
-    ? `${review.index.counts.nodes} nodes / ${review.index.counts.edges} edges · ${review.index.incremental ? "incremental" : "full"}${review.index.stale ? " · STALE" : ""}${review.index.django_boot && review.index.django_boot !== "off" ? ` · boot ${review.index.django_boot}` : ""}`
+    ? `${review.index.counts.nodes} nodes · ${review.index.counts.edges} edges`
     : architecture?.indexed
-      ? `${architecture.counts.nodes} nodes / ${architecture.counts.edges} edges indexed${architecture.stale ? " · STALE" : ""}`
+      ? `${architecture.counts.nodes} nodes · ${architecture.counts.edges} edges`
       : "Not indexed";
+
+  const findings = (review?.findings || []).filter((f) => !f.waived);
 
   return (
     <div className="app">
-      <nav className="rail" data-testid="rail">
-        <div className="brand">Loadpath</div>
-        <button data-testid="tab-review" className={tab === "review" ? "active" : ""} onClick={() => setTab("review")}>
-          Review
-        </button>
-        <button
-          data-testid="tab-architecture"
-          className={tab === "architecture" ? "active" : ""}
-          onClick={() => setTab("architecture")}
-        >
-          Architecture
-        </button>
-        <button data-testid="tab-graph" className={tab === "graph" ? "active" : ""} onClick={() => setTab("graph")}>
-          Impact graph
-        </button>
-        <button data-testid="tab-prs" className={tab === "prs" ? "active" : ""} onClick={() => setTab("prs")}>
-          Pull requests
-        </button>
-        <button data-testid="tab-settings" className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
-          Settings
-        </button>
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
+      <nav className="rail" data-testid="rail" aria-label="Primary">
+        <div className="brand">
+          <div className="brand-mark">Loadpath</div>
+          <div className="brand-sub">Load-path review</div>
+        </div>
+        {TABS.map((item) => {
+          const Icon = item.icon;
+          const active = tab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              data-testid={item.testId}
+              className={active ? "nav-item active" : "nav-item"}
+              aria-current={active ? "page" : undefined}
+              onClick={() => setTab(item.id)}
+            >
+              <Icon />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
         <div className="theme-pick">
           <label htmlFor="theme-select">Theme</label>
           <select
@@ -265,400 +311,618 @@ export function App() {
             ))}
           </select>
         </div>
-        <div style={{ flex: 1 }} />
-        <div className="muted">{busy || indexLine}</div>
-      </nav>
-      <div className="main">
-        <div className="topbar" data-testid="topbar">
-          {repos.length > 0 ? (
-            <select
-              data-testid="workspace-select"
-              value={repos.some((r) => r.path === repo) ? repo : ""}
-              onChange={(e) => {
-                if (e.target.value) persistRepo(e.target.value);
-              }}
-            >
-              <option value="">Indexed repos…</option>
-              {repos.map((r) => (
-                <option key={r.path} value={r.path}>
-                  {r.name}
-                  {r.indexed ? ` (${r.counts.nodes})` : ""}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          <input
-            data-testid="repo-path"
-            className="path"
-            placeholder="Local monorepo path"
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-          />
-          <input
-            data-testid="base-ref"
-            value={base}
-            onChange={(e) => persistRefs(e.target.value, head)}
-            placeholder="base"
-          />
-          <input
-            data-testid="head-ref"
-            value={head}
-            onChange={(e) => persistRefs(base, e.target.value)}
-            placeholder="head"
-          />
-          <button data-testid="btn-init" onClick={draftConfig}>
-            Draft config
-          </button>
-          <button data-testid="btn-index" onClick={() => runIndex(true)}>
-            Index
-          </button>
-          <button data-testid="btn-review" className="btn primary" onClick={runReview}>
-            Review
-          </button>
+        <div className="rail-foot">
+          <div className="muted" role="status">
+            {busy || indexLine}
+          </div>
+          <div className="kbd-hint">
+            <kbd>1</kbd>–<kbd>5</kbd> tabs · <kbd>⌘</kbd>
+            <kbd>Enter</kbd> review
+          </div>
         </div>
-        {error ? <div className="error">{error}</div> : null}
-        {copied ? <div className="banner" data-testid="status-note">{copied}</div> : null}
-        {(review?.index?.stale || architecture?.stale) && (tab === "review" || tab === "architecture") ? (
-          <div className="banner stale" data-testid="index-stale">
-            Index is stale — files changed since the last extract. Index again before trusting this walk.
+      </nav>
+      <div className="main" id="main">
+        {busy ? (
+          <div className="progress" role="status" aria-live="polite" aria-busy="true">
+            <i />
+            <span className="sr-only">{busy}</span>
           </div>
         ) : null}
-        {(review?.index?.django_boot === "failed" || architecture?.django_boot === "failed") ? (
-          <div className="banner warn" data-testid="django-boot-failed">
-            {review?.index?.django_boot_detail || architecture?.django_boot_detail || "django.setup() failed"}
-          </div>
-        ) : null}
-        {review?.workspace?.dirty_overlaps_review && tab === "review" ? (
-          <div className="banner warn" data-testid="dirty-tree">
-            Uncommitted files overlap this review: {(review.workspace.dirty_overlap || []).slice(0, 6).join(", ")}
-          </div>
-        ) : null}
-
-        {tab === "review" && (
-          <div className="content" data-testid="review-layout">
-            <aside className="brief" data-testid="brief">
-              {review ? (
-                <>
-                  <div className={`level ${review.confidence.level}`}>
-                    {review.confidence.level.toUpperCase()} — {review.title}
-                  </div>
-                  {review.low_risk ? <span className="chip">loadpath:low-risk</span> : null}
-                  {review.change_kinds.map((k) => (
-                    <span className="chip" key={k}>
-                      {k.replaceAll("_", " ")}
-                    </span>
-                  ))}
-                  <pre className="headline">{review.headline}</pre>
-                  {review.index ? (
-                    <>
-                      <div className="kicker">Index</div>
-                      <div className="muted">
-                        Walked {review.index.counts.nodes} nodes / {review.index.counts.edges} edges
-                        {review.index.reindex_skipped
-                          ? " from an unchanged index"
-                          : review.index.reindexed
-                            ? " after an incremental refresh"
-                            : " from the existing index"}
-                        {review.index.django_boot && review.index.django_boot !== "off"
-                          ? ` · Django boot ${review.index.django_boot}`
-                          : ""}
-                        {review.workspace?.three_dot ? " · three-dot range" : ""}
-                      </div>
-                    </>
-                  ) : null}
-                  <div className="kicker">Read this</div>
-                  {review.read_order.map((f) => (
-                    <div key={f.path}>
-                      <span className="file">{f.path}</span>
-                      <div className="muted">{f.why}</div>
-                    </div>
-                  ))}
-                  <div className="kicker">Clusters</div>
-                  {review.clusters.map((c) => (
-                    <div key={c.id} className="muted">
-                      <strong>{c.title}</strong> — {c.files.join(", ")}
-                    </div>
-                  ))}
-                  <div className="kicker">Architecture</div>
-                  {review.findings.filter((f) => !f.waived).length === 0 ? (
-                    <div className="muted">{review.architecture_note}</div>
-                  ) : (
-                    review.findings
-                      .filter((f) => !f.waived)
-                      .map((f) => (
-                        <div key={f.rule + f.message} className="muted">
-                          <span className={`chip ${f.severity}`}>{f.severity}</span>
-                          {f.message}
-                        </div>
-                      ))
-                  )}
-                  <div className="kicker">Residual (AI only here)</div>
-                  {review.residuals.map((r) => (
-                    <div key={r} className="muted">
-                      {r}
-                    </div>
-                  ))}
-                  {(review.evolution?.notes?.length || review.evolution?.hotspots?.some((h) => h.commits)) ? (
-                    <>
-                      <div className="kicker">Churn & coupling</div>
-                      {(review.evolution?.notes || []).map((note) => (
-                        <div key={note} className="muted">
-                          {note}
-                        </div>
-                      ))}
-                      {(review.evolution?.hotspots || [])
-                        .filter((h) => h.commits)
-                        .slice(0, 6)
-                        .map((h) => (
-                          <div key={h.path} className="muted">
-                            <span className="file">{h.path}</span> — {h.commits} commits, bus factor {h.bus_factor}
-                          </div>
-                        ))}
-                    </>
-                  ) : null}
-                  <div className="btn-row">
-                    <button className="btn" onClick={askAi}>
-                      Ask configured model
-                    </button>
-                    <button className="btn" data-testid="btn-copy-markdown" onClick={copyMarkdown}>
-                      Copy markdown
-                    </button>
-                    <button className="btn" data-testid="btn-post-comment" onClick={postComment}>
-                      Post to PR
-                    </button>
-                  </div>
-                  {aiNote ? <pre className="headline">{aiNote}</pre> : null}
-                  <div className="kicker">Reviewers</div>
-                  <div className="muted">{review.suggested_reviewers.join(", ") || "—"}</div>
-                  {review.knowledge_owners?.length ? (
-                    <div className="muted">Knowledge: {review.knowledge_owners.join(", ")}</div>
-                  ) : null}
-                </>
-              ) : (
-                <div className="empty" data-testid="review-empty">
-                  <p>
-                    The graph is the architecture. The brief is the force of this diff — not a hunk list.
-                  </p>
-                  <ol>
-                    <li>Point at a Django + React monorepo (or pick an indexed workspace).</li>
-                    <li>
-                      Index it. Missing <code>loadpath.yml</code> is drafted from <code>manage.py</code> and{" "}
-                      <code>src/features</code>.
-                    </li>
-                    <li>Review a git range, or pick a pull request so base/head become a three-dot merge-base.</li>
-                  </ol>
-                </div>
-              )}
-            </aside>
-            <div className="graph-wrap" data-testid="review-graph">
-              {review ? <ImpactGraph nodes={review.nodes} edges={review.edges} /> : null}
-            </div>
-          </div>
-        )}
-
-        {tab === "architecture" && (
-          <div className="content" data-testid="architecture-panel">
-            <aside className="brief" data-testid="architecture-brief">
-              {architecture?.indexed ? (
-                <>
-                  <div className="level high">INDEXED — {architecture.counts.nodes} nodes</div>
-                  <span className="chip">
-                    {architecture.counts.edges} edges
-                  </span>
-                  {architecture.has_config ? <span className="chip">loadpath.yml</span> : null}
-                  <div className="muted" style={{ marginTop: 8 }}>
-                    {architecture.indexed_at ? `Last index ${architecture.indexed_at}` : "Indexed"}
-                    {architecture.incremental ? " · incremental" : " · full"}
-                    {architecture.stale ? " · stale" : ""}
-                    {architecture.django_boot && architecture.django_boot !== "off"
-                      ? ` · Django boot ${architecture.django_boot}`
-                      : ""}
-                  </div>
-                  <div className="kicker">Bounded contexts</div>
-                  {Object.values(architecture.contexts).map((ctx) => (
-                    <div key={ctx.name} className="muted">
-                      <strong>{ctx.name}</strong> — {(ctx.django_apps || []).join(", ") || "no apps"} ·{" "}
-                      {(ctx.owners || []).join(", ") || "unowned"}
-                    </div>
-                  ))}
-                  <div className="kicker">Rules</div>
-                  {(architecture.rules || []).map((rule) => (
-                    <div key={rule} className="muted">
-                      {rule}
-                    </div>
-                  ))}
-                  <div className="kicker">Findings on the indexed graph</div>
-                  {architecture.findings.filter((f) => !f.waived).length === 0 ? (
-                    <div className="muted">No architecture rule hits on the full graph.</div>
-                  ) : (
-                    architecture.findings
-                      .filter((f) => !f.waived)
-                      .map((f) => (
-                        <div key={f.rule + f.message} className="muted">
-                          <span className={`chip ${f.severity}`}>{f.severity}</span>
-                          {f.message}
-                        </div>
-                      ))
-                  )}
-                  <div className="kicker">Types</div>
-                  <div className="muted">
-                    {Object.entries(architecture.type_counts || {})
-                      .sort((a, b) => b[1] - a[1])
-                      .slice(0, 12)
-                      .map(([t, n]) => `${t.split(".").pop()} ${n}`)
-                      .join(" · ")}
-                  </div>
-                  <button className="btn" style={{ marginTop: 12 }} onClick={() => runIndex(false)} data-testid="btn-full-reindex">
-                    Full reindex
-                  </button>
-                  <button className="btn primary" style={{ marginTop: 8 }} onClick={runReview}>
-                    Review against this index
-                  </button>
-                </>
-              ) : (
-                <p className="muted" data-testid="architecture-empty">
-                  Index this repo to build the architecture graph. Review then walks that same graph for a git range —
-                  it does not start from a hunk list.
-                </p>
-              )}
-            </aside>
-            <div className="graph-wrap" data-testid="architecture-graph">
-              {architecture?.indexed ? (
-                <ImpactGraph nodes={architecture.nodes} edges={architecture.edges} />
-              ) : null}
-            </div>
-          </div>
-        )}
-
-        {tab === "graph" && (
-          <div className="graph-wrap" data-testid="graph-full" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-            <div className="graph-modes">
-              <button
-                data-testid="graph-mode-review"
-                className={graphMode === "review" ? "active" : ""}
-                onClick={() => setGraphMode("review")}
-              >
-                This review
-              </button>
-              <button
-                data-testid="graph-mode-architecture"
-                className={graphMode === "architecture" ? "active" : ""}
-                onClick={() => setGraphMode("architecture")}
-              >
-                Indexed architecture
-              </button>
-            </div>
-            {graphNodes.length ? (
-              <div style={{ flex: 1, minHeight: 0 }}>
-                <ImpactGraph nodes={graphNodes} edges={graphEdges} />
-              </div>
-            ) : (
-              <p className="muted">Index the repo or run a review first.</p>
-            )}
-          </div>
-        )}
-
-        {tab === "prs" && (
-          <div className="pr-list" data-testid="pr-list">
-            <div className="topbar" style={{ border: 0, padding: 0, marginBottom: 12 }}>
+        <header className="topbar" data-testid="topbar">
+          {repos.length > 0 ? (
+            <label className="field workspace">
+              <span>Workspace</span>
               <select
-                data-testid="pr-provider"
-                value={provider}
-                onChange={(e) => persistPr(e.target.value, scmRepo, prNumber)}
+                data-testid="workspace-select"
+                value={repos.some((r) => r.path === repo) ? repo : ""}
+                onChange={(e) => {
+                  if (e.target.value) persistRepo(e.target.value);
+                }}
               >
-                <option value="github">GitHub</option>
-                <option value="bitbucket">Bitbucket</option>
+                <option value="">Indexed repos…</option>
+                {repos.map((r) => (
+                  <option key={r.path} value={r.path}>
+                    {r.name}
+                    {r.indexed ? ` (${r.counts.nodes})` : ""}
+                  </option>
+                ))}
               </select>
-              <input
-                data-testid="pr-repo"
-                className="path"
-                placeholder="owner/repo"
-                value={scmRepo}
-                onChange={(e) => persistPr(provider, e.target.value, prNumber)}
-              />
-              <button data-testid="btn-list-prs" onClick={loadPrs}>
-                List PRs
+            </label>
+          ) : null}
+          <label className="field path">
+            <span>Repository</span>
+            <input
+              data-testid="repo-path"
+              placeholder="Local monorepo path"
+              value={repo}
+              onChange={(e) => setRepo(e.target.value)}
+              spellCheck={false}
+            />
+          </label>
+          <label className="field ref">
+            <span>Base</span>
+            <input
+              data-testid="base-ref"
+              value={base}
+              onChange={(e) => persistRefs(e.target.value, head)}
+              placeholder="base"
+              spellCheck={false}
+            />
+          </label>
+          <label className="field ref">
+            <span>Head</span>
+            <input
+              data-testid="head-ref"
+              value={head}
+              onChange={(e) => persistRefs(base, e.target.value)}
+              placeholder="head"
+              spellCheck={false}
+            />
+          </label>
+          <div className="topbar-actions">
+            <button type="button" data-testid="btn-init" disabled={!!busy} onClick={draftConfig}>
+              Draft config
+            </button>
+            <button type="button" data-testid="btn-index" disabled={!!busy} onClick={() => runIndex(true)}>
+              Index
+            </button>
+            <button
+              type="button"
+              data-testid="btn-review"
+              className="btn primary"
+              disabled={!!busy}
+              onClick={runReview}
+            >
+              Review
+            </button>
+          </div>
+        </header>
+        <div className="alerts">
+          {error ? (
+            <div className="error">
+              <span>{error}</span>
+              <button type="button" className="dismiss" onClick={() => setError("")} aria-label="Dismiss error">
+                ×
               </button>
             </div>
-            {prs.map((p) => (
-              <article className="pr" data-testid={`pr-${p.number}`} key={`${p.provider}-${p.number}`}>
-                <h3>
-                  #{p.number} {p.title}
-                </h3>
-                <div className="muted">
-                  {p.author} · {p.source_branch} → {p.target_branch} · {p.provider}
-                </div>
-                <a href={p.url} target="_blank" rel="noreferrer">
-                  Open on {p.provider}
-                </a>
-                <div>
+          ) : null}
+          {copied ? (
+            <div className="banner" data-testid="status-note">
+              <span>{copied}</span>
+              <button type="button" className="dismiss" onClick={() => setCopied("")} aria-label="Dismiss">
+                ×
+              </button>
+            </div>
+          ) : null}
+          {(review?.index?.stale || architecture?.stale) && (tab === "review" || tab === "architecture") ? (
+            <div className="banner stale" data-testid="index-stale">
+              Index is stale — files changed since the last extract. Index again before trusting this walk.
+            </div>
+          ) : null}
+          {(review?.index?.django_boot === "failed" || architecture?.django_boot === "failed") ? (
+            <div className="banner warn" data-testid="django-boot-failed">
+              {review?.index?.django_boot_detail || architecture?.django_boot_detail || "django.setup() failed"}
+            </div>
+          ) : null}
+          {review?.workspace?.dirty_overlaps_review && tab === "review" ? (
+            <div className="banner warn" data-testid="dirty-tree">
+              Uncommitted files overlap this review: {(review.workspace.dirty_overlap || []).slice(0, 6).join(", ")}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="stage">
+          {tab === "review" && (
+            <div className="content" data-testid="review-layout">
+              <aside className="brief" data-testid="brief">
+                {review ? (
+                  <ReviewBrief
+                    review={review}
+                    findings={findings}
+                    aiNote={aiNote}
+                    busy={!!busy}
+                    onAskAi={askAi}
+                    onCopy={copyMarkdown}
+                    onPost={postComment}
+                  />
+                ) : (
+                  <div className="empty" data-testid="review-empty">
+                    <h2>Trace the force of this diff</h2>
+                    <p>The graph is the architecture. The brief is where this change travels — not a hunk list.</p>
+                    <ol>
+                      <li>Point at a Django + React monorepo, or pick an indexed workspace.</li>
+                      <li>
+                        Index it. Missing <code>loadpath.yml</code> is drafted from <code>manage.py</code> and{" "}
+                        <code>src/features</code>.
+                      </li>
+                      <li>Review a git range, or open a pull request so base/head become a three-dot merge-base.</li>
+                    </ol>
+                  </div>
+                )}
+              </aside>
+              <div className="graph-wrap" data-testid="review-graph">
+                {review ? <ImpactGraph nodes={review.nodes} edges={review.edges} /> : null}
+              </div>
+            </div>
+          )}
+
+          {tab === "architecture" && (
+            <div className="content" data-testid="architecture-panel">
+              <aside className="brief" data-testid="architecture-brief">
+                {architecture?.indexed ? (
+                  <ArchitectureBrief architecture={architecture} busy={!!busy} onReindex={() => runIndex(false)} onReview={runReview} />
+                ) : (
+                  <p className="muted" data-testid="architecture-empty">
+                    Index this repo to build the architecture graph. Review then walks that same graph for a git range —
+                    it does not start from a hunk list.
+                  </p>
+                )}
+              </aside>
+              <div className="graph-wrap" data-testid="architecture-graph">
+                {architecture?.indexed ? (
+                  <ImpactGraph nodes={architecture.nodes} edges={architecture.edges} />
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {tab === "graph" && (
+            <div className="graph-wrap" data-testid="graph-full" style={{ height: "100%" }}>
+              <div className="graph-modes">
+                <div className="seg" role="tablist" aria-label="Graph scope">
                   <button
-                    className="btn"
-                    onClick={() => {
-                      persistRefs(p.base_sha || p.target_branch, p.head_sha || p.source_branch);
-                      persistPr(p.provider, p.repo, String(p.number));
-                      setTab("review");
-                    }}
+                    type="button"
+                    role="tab"
+                    aria-selected={graphMode === "review"}
+                    data-testid="graph-mode-review"
+                    className={graphMode === "review" ? "active" : ""}
+                    onClick={() => setGraphMode("review")}
                   >
-                    Review this branch range
+                    This review
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={graphMode === "architecture"}
+                    data-testid="graph-mode-architecture"
+                    className={graphMode === "architecture" ? "active" : ""}
+                    onClick={() => setGraphMode("architecture")}
+                  >
+                    Indexed architecture
                   </button>
                 </div>
-              </article>
-            ))}
-          </div>
-        )}
-
-        {tab === "settings" && (
-          <form className="settings" data-testid="settings-form" onSubmit={saveSettings}>
-            <h1>Keys & providers</h1>
-            <p className="muted">
-              Tokens stay on this machine in ~/.loadpath/settings.json. GitHub and Bitbucket power the PR list. Indexed
-              repos are remembered as workspaces. AI is used only for residual uncertainty the graph could not close.
-            </p>
-            <h1>Theme</h1>
-            <p className="muted">Appearance is local to this browser. Pick a palette that matches how you review.</p>
-            <div className="theme-grid" data-testid="theme-grid">
-              {THEMES.map((t) => (
-                <button
-                  type="button"
-                  key={t.id}
-                  className={theme === t.id ? "theme-swatch active" : "theme-swatch"}
-                  data-testid={`theme-${t.id}`}
-                  onClick={() => persistTheme(t.id)}
-                >
-                  <div className="name">{t.label}</div>
-                  <div className="group">{t.group}</div>
-                </button>
-              ))}
+                <div className="legend" aria-hidden="true">
+                  <span>
+                    <i /> cheap
+                  </span>
+                  <span>
+                    <i className="exp" /> expensive
+                  </span>
+                  <span>
+                    <i className="crit" /> critical
+                  </span>
+                  <span>
+                    <i className="dash" /> inferred
+                  </span>
+                </div>
+              </div>
+              {graphNodes.length ? (
+                <ImpactGraph nodes={graphNodes} edges={graphEdges} />
+              ) : (
+                <p className="empty">Index the repo or run a review first. Click a node to inspect it.</p>
+              )}
             </div>
-            <label>GitHub token</label>
-            <input name="github_token" type="password" placeholder="ghp_…" />
-            <label>Bitbucket token</label>
-            <input name="bitbucket_token" type="password" />
-            <label>Bitbucket username (app passwords)</label>
-            <input name="bitbucket_username" defaultValue={String(settings.bitbucket_username || "")} />
-            <label>AI provider</label>
-            <select name="ai_provider" defaultValue={String((settings.ai as { provider?: string } | undefined)?.provider || "none")}>
-              <option value="none">none (graph only)</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="grok">Grok / xAI</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="cursor">Cursor-compatible (OpenAI protocol)</option>
-              <option value="ollama">Ollama local</option>
-            </select>
-            <label>AI API key</label>
-            <input name="ai_api_key" type="password" />
-            <label>Model</label>
-            <input name="ai_model" placeholder="optional override" />
-            <label>Base URL</label>
-            <input name="ai_base_url" placeholder="optional, OpenAI-compatible" />
-            <button className="btn primary" type="submit">
-              Save
-            </button>
-          </form>
-        )}
+          )}
+
+          {tab === "prs" && (
+            <div className="pr-list" data-testid="pr-list">
+              <div className="pr-toolbar">
+                <label className="field provider">
+                  <span>Provider</span>
+                  <select
+                    data-testid="pr-provider"
+                    value={provider}
+                    onChange={(e) => persistPr(e.target.value, scmRepo, prNumber)}
+                  >
+                    <option value="github">GitHub</option>
+                    <option value="bitbucket">Bitbucket</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Repository</span>
+                  <input
+                    data-testid="pr-repo"
+                    placeholder="owner/repo"
+                    value={scmRepo}
+                    onChange={(e) => persistPr(provider, e.target.value, prNumber)}
+                    spellCheck={false}
+                  />
+                </label>
+                <button type="button" data-testid="btn-list-prs" className="btn" disabled={!!busy} onClick={loadPrs}>
+                  List PRs
+                </button>
+              </div>
+              {prs.length === 0 ? (
+                <div className="empty">
+                  <h2>No pull requests loaded</h2>
+                  <p>Enter an owner/repo, then list open PRs. Reviewing a PR fills base and head from its SHAs.</p>
+                </div>
+              ) : (
+                prs.map((p) => (
+                  <article className="pr" data-testid={`pr-${p.number}`} key={`${p.provider}-${p.number}`}>
+                    <h3>
+                      #{p.number} {p.title}
+                    </h3>
+                    <div className="pr-meta muted">
+                      <span className={`chip ${p.draft ? "" : "open"}`}>{p.draft ? "draft" : p.state}</span>
+                      <span>{p.author}</span>
+                      <span>
+                        {p.source_branch} → {p.target_branch}
+                      </span>
+                    </div>
+                    <div className="pr-actions">
+                      <a href={p.url} target="_blank" rel="noreferrer">
+                        Open on {p.provider}
+                      </a>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        onClick={() => {
+                          persistRefs(p.base_sha || p.target_branch, p.head_sha || p.source_branch);
+                          persistPr(p.provider, p.repo, String(p.number));
+                          setTab("review");
+                        }}
+                      >
+                        Review this range
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          )}
+
+          {tab === "settings" && (
+            <form className="settings" data-testid="settings-form" onSubmit={saveSettings}>
+              <div>
+                <h1>Settings</h1>
+                <p className="muted">
+                  Tokens stay on this machine in ~/.loadpath/settings.json. AI runs only on residual uncertainty the
+                  graph could not close.
+                </p>
+              </div>
+              <section className="settings-card">
+                <h2>Appearance</h2>
+                <p className="muted">Local to this browser. High contrast is a first-class theme, not an afterthought.</p>
+                <div className="theme-grid" data-testid="theme-grid">
+                  {THEMES.map((t) => (
+                    <button
+                      type="button"
+                      key={t.id}
+                      className={theme === t.id ? "theme-swatch active" : "theme-swatch"}
+                      data-testid={`theme-${t.id}`}
+                      onClick={() => persistTheme(t.id)}
+                    >
+                      <div className="name">{t.label}</div>
+                      <div className="group">{t.group}</div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+              <section className="settings-card">
+                <h2>Source control</h2>
+                <label htmlFor="github_token">GitHub token</label>
+                <input id="github_token" name="github_token" type="password" placeholder="ghp_…" autoComplete="off" />
+                <label htmlFor="bitbucket_token">Bitbucket token</label>
+                <input id="bitbucket_token" name="bitbucket_token" type="password" autoComplete="off" />
+                <label htmlFor="bitbucket_username">Bitbucket username (app passwords)</label>
+                <input
+                  id="bitbucket_username"
+                  name="bitbucket_username"
+                  defaultValue={String(settings.bitbucket_username || "")}
+                />
+              </section>
+              <section className="settings-card">
+                <h2>Residual AI</h2>
+                <label htmlFor="ai_provider">Provider</label>
+                <select
+                  id="ai_provider"
+                  name="ai_provider"
+                  defaultValue={String((settings.ai as { provider?: string } | undefined)?.provider || "none")}
+                >
+                  <option value="none">none (graph only)</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="grok">Grok / xAI</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="cursor">Cursor-compatible (OpenAI protocol)</option>
+                  <option value="ollama">Ollama local</option>
+                </select>
+                <label htmlFor="ai_api_key">API key</label>
+                <input id="ai_api_key" name="ai_api_key" type="password" autoComplete="off" />
+                <label htmlFor="ai_model">Model</label>
+                <input id="ai_model" name="ai_model" placeholder="optional override" />
+                <label htmlFor="ai_base_url">Base URL</label>
+                <input id="ai_base_url" name="ai_base_url" placeholder="optional, OpenAI-compatible" />
+                <button className="btn primary" type="submit">
+                  Save
+                </button>
+              </section>
+            </form>
+          )}
+        </div>
       </div>
     </div>
+  );
+}
+
+function ReviewBrief({
+  review,
+  findings,
+  aiNote,
+  busy,
+  onAskAi,
+  onCopy,
+  onPost,
+}: {
+  review: Review;
+  findings: Review["findings"];
+  aiNote: string;
+  busy: boolean;
+  onAskAi: () => void;
+  onCopy: () => void;
+  onPost: () => void;
+}) {
+  return (
+    <>
+      <div className={`merge-box ${review.confidence.level}`}>
+        <div className={`level ${review.confidence.level}`}>
+          {review.confidence.level.toUpperCase()} — {review.title}
+        </div>
+        <div className="merge-title">{review.headline.split("\n")[0]}</div>
+        {review.confidence.reasons?.length ? (
+          <ul className="reasons">
+            {review.confidence.reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        ) : null}
+        {review.low_risk ? <span className="chip">low-risk</span> : null}
+        {review.change_kinds.map((k) => (
+          <span className="chip" key={k}>
+            {kindLabel(k)}
+          </span>
+        ))}
+      </div>
+      <div className="metrics">
+        <div className="metric">
+          <div className="n">
+            {review.confidence.covered_sinks}/{review.confidence.sinks}
+          </div>
+          <div className="l">Sinks tested</div>
+        </div>
+        <div className="metric">
+          <div className="n">{findings.length}</div>
+          <div className="l">Findings</div>
+        </div>
+        <div className="metric">
+          <div className="n">{review.residuals.length}</div>
+          <div className="l">Residuals</div>
+        </div>
+      </div>
+      <pre className="headline">{review.headline}</pre>
+      {review.index ? (
+        <details className="section" open>
+          <summary>
+            Index <span className="count">{review.index.counts.nodes}</span>
+          </summary>
+          <div className="muted">
+            Walked {review.index.counts.nodes} nodes / {review.index.counts.edges} edges
+            {review.index.reindex_skipped
+              ? " from an unchanged index"
+              : review.index.reindexed
+                ? " after an incremental refresh"
+                : " from the existing index"}
+            {review.index.django_boot && review.index.django_boot !== "off"
+              ? ` · Django boot ${review.index.django_boot}`
+              : ""}
+            {review.workspace?.three_dot ? " · three-dot range" : ""}
+          </div>
+        </details>
+      ) : null}
+      <details className="section" open>
+        <summary>
+          Read this <span className="count">{review.read_order.length}</span>
+        </summary>
+        {review.read_order.map((f, i) => (
+          <div key={f.path} className="read-item">
+            <span className="file">
+              {i + 1}. {f.path}
+            </span>
+            <div className="why">{f.why}</div>
+          </div>
+        ))}
+      </details>
+      <details className="section">
+        <summary>
+          Clusters <span className="count">{review.clusters.length}</span>
+        </summary>
+        {review.clusters.map((c) => (
+          <div key={c.id} className="muted">
+            <strong>{c.title}</strong> — {c.files.join(", ")}
+          </div>
+        ))}
+      </details>
+      <details className="section" open>
+        <summary>
+          Architecture <span className="count">{findings.length}</span>
+        </summary>
+        {findings.length === 0 ? (
+          <div className="muted">{review.architecture_note}</div>
+        ) : (
+          findings.map((f) => (
+            <div key={f.rule + f.message} className="finding">
+              <span className={`chip ${f.severity}`}>{f.severity}</span>
+              {f.message}
+            </div>
+          ))
+        )}
+      </details>
+      <details className="section" open>
+        <summary>
+          Residual <span className="count">{review.residuals.length}</span>
+        </summary>
+        <p className="muted">AI is only used here, on what the graph could not close.</p>
+        {review.residuals.map((r) => (
+          <div key={r} className="residual muted">
+            {r}
+          </div>
+        ))}
+      </details>
+      {(review.evolution?.notes?.length || review.evolution?.hotspots?.some((h) => h.commits)) ? (
+        <details className="section">
+          <summary>Churn & coupling</summary>
+          {(review.evolution?.notes || []).map((note) => (
+            <div key={note} className="muted">
+              {note}
+            </div>
+          ))}
+          {(review.evolution?.hotspots || [])
+            .filter((h) => h.commits)
+            .slice(0, 6)
+            .map((h) => (
+              <div key={h.path} className="muted">
+                <span className="file">{h.path}</span> — {h.commits} commits, bus factor {h.bus_factor}
+              </div>
+            ))}
+        </details>
+      ) : null}
+      <div className="btn-row">
+        <button type="button" className="btn" disabled={busy} onClick={onAskAi}>
+          Ask configured model
+        </button>
+        <button type="button" className="btn" data-testid="btn-copy-markdown" onClick={onCopy}>
+          Copy markdown
+        </button>
+        <button type="button" className="btn" data-testid="btn-post-comment" onClick={onPost}>
+          Post to PR
+        </button>
+      </div>
+      {aiNote ? <pre className="headline">{aiNote}</pre> : null}
+      <div className="kicker">Reviewers</div>
+      <div className="muted">{review.suggested_reviewers.join(", ") || "—"}</div>
+      {review.knowledge_owners?.length ? (
+        <div className="muted">Knowledge: {review.knowledge_owners.join(", ")}</div>
+      ) : null}
+    </>
+  );
+}
+
+function ArchitectureBrief({
+  architecture,
+  busy,
+  onReindex,
+  onReview,
+}: {
+  architecture: ArchitectureReport;
+  busy: boolean;
+  onReindex: () => void;
+  onReview: () => void;
+}) {
+  const hits = architecture.findings.filter((f) => !f.waived);
+  return (
+    <>
+      <div className="merge-box high">
+        <div className="level high">INDEXED — {architecture.counts.nodes} nodes</div>
+        <div className="muted" style={{ marginTop: 8 }}>
+          {architecture.indexed_at ? `Last index ${formatWhen(architecture.indexed_at)}` : "Indexed"}
+          {architecture.incremental ? " · incremental" : " · full"}
+          {architecture.stale ? " · stale" : ""}
+          {architecture.django_boot && architecture.django_boot !== "off"
+            ? ` · Django boot ${architecture.django_boot}`
+            : ""}
+        </div>
+        <span className="chip">{architecture.counts.edges} edges</span>
+        {architecture.has_config ? <span className="chip">loadpath.yml</span> : null}
+      </div>
+      <details className="section" open>
+        <summary>Bounded contexts</summary>
+        {Object.values(architecture.contexts).map((ctx) => (
+          <div key={ctx.name} className="muted">
+            <strong>{ctx.name}</strong> — {(ctx.django_apps || []).join(", ") || "no apps"} ·{" "}
+            {(ctx.owners || []).join(", ") || "unowned"}
+          </div>
+        ))}
+      </details>
+      <details className="section">
+        <summary>
+          Rules <span className="count">{(architecture.rules || []).length}</span>
+        </summary>
+        {(architecture.rules || []).map((rule) => (
+          <div key={rule} className="muted">
+            {rule}
+          </div>
+        ))}
+      </details>
+      <details className="section" open>
+        <summary>
+          Findings <span className="count">{hits.length}</span>
+        </summary>
+        {hits.length === 0 ? (
+          <div className="muted">No architecture rule hits on the full graph.</div>
+        ) : (
+          hits.map((f) => (
+            <div key={f.rule + f.message} className="finding">
+              <span className={`chip ${f.severity}`}>{f.severity}</span>
+              {f.message}
+            </div>
+          ))
+        )}
+      </details>
+      <details className="section" open>
+        <summary>Types</summary>
+        <table className="type-table">
+          <tbody>
+            {Object.entries(architecture.type_counts || {})
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 12)
+              .map(([t, n]) => (
+                <tr key={t}>
+                  <td>{typeLabel(t)}</td>
+                  <td>{n}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </details>
+      <div className="btn-row">
+        <button type="button" className="btn" disabled={busy} onClick={onReindex} data-testid="btn-full-reindex">
+          Full reindex
+        </button>
+        <button type="button" className="btn primary" disabled={busy} onClick={onReview}>
+          Review against this index
+        </button>
+      </div>
+    </>
   );
 }
