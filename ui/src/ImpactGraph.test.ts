@@ -27,5 +27,24 @@ describe("toReactFlowElements", () => {
       type: "smoothstep",
     });
     expect(rfEdges[0].markerEnd).toMatchObject({ type: MarkerType.ArrowClosed });
+    expect(rfEdges[0].label).toBeUndefined();
+  });
+
+  it("labels only edges incident to the selected node", () => {
+    const extraNodes: GraphNode[] = [
+      ...nodes,
+      { id: "model", type: "django.model", name: "Invoice", qualified_name: "billing.Invoice" },
+    ];
+    const extra: GraphEdge = {
+      id: "other",
+      src: "ser",
+      dst: "model",
+      type: "serializes",
+      weight: "cheap",
+      confidence: 1,
+    };
+    const { rfEdges } = toReactFlowElements(extraNodes, [...edges, extra], "view");
+    expect(rfEdges.find((e) => e.id === "ok")?.label).toBe("uses serializer");
+    expect(rfEdges.find((e) => e.id === "other")?.label).toBeUndefined();
   });
 });

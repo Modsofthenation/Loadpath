@@ -49,11 +49,25 @@ describe("graph selected-node overflow", () => {
     expect(getComputedStyle(btn).height).toBe("24px");
   });
 
-  it("ellipsizes long titles inside graph nodes", () => {
+  it("clamps long titles inside graph nodes to two lines", () => {
     mount(`<div class="lp-node"><div class="n">test_index_summary_includes_contexts_and_more</div></div>`);
+    const box = document.querySelector(".lp-node") as HTMLElement;
     const name = document.querySelector(".lp-node .n") as HTMLElement;
-    expect(getComputedStyle(name).textOverflow).toBe("ellipsis");
-    expect(getComputedStyle(name).overflow).toBe("hidden");
-    expect(getComputedStyle(name).whiteSpace).toBe("nowrap");
+    const style = getComputedStyle(name);
+    expect(getComputedStyle(box).width).toBe("208px");
+    expect(getComputedStyle(box).height).toBe("64px");
+    expect(style.overflow).toBe("hidden");
+    expect(style.display).toBe("-webkit-box");
+    expect(style.webkitLineClamp).toBe("2");
+  });
+
+  it("centers the workspace loading placeholder in the stage", () => {
+    mount(`<div class="empty workspace-loading"><h2>Loading pretix…</h2></div>`);
+    const el = document.querySelector(".workspace-loading") as HTMLElement;
+    const style = getComputedStyle(el);
+    expect(style.display).toBe("flex");
+    expect(style.flexDirection).toBe("column");
+    expect(style.justifyContent).toBe("center");
+    expect(style.textAlign).toBe("center");
   });
 });

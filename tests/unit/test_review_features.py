@@ -35,6 +35,28 @@ def test_contract_break_required_field_is_breaking():
     assert "total" in result["fields"]
 
 
+def test_contract_break_ignores_removed_required_true():
+    diff = DiffSet(
+        files=[
+            FileDiff(
+                path="backend/billing/serializers.py",
+                status="M",
+                patch='-        extra_kwargs = {"total": {"required": True}}\n',
+            )
+        ]
+    )
+    nodes = [
+        {
+            "type": "django.serializer",
+            "name": "InvoiceSerializer",
+            "file_path": "backend/billing/serializers.py",
+        }
+    ]
+    result = classify_contract_break(nodes, diff)
+    assert result["kind"] == ContractBreakKind.ADDITIVE.value
+    assert "Required contract field" not in " ".join(result["reasons"])
+
+
 def test_contract_break_ignores_untouched_graphql():
     diff = DiffSet(
         files=[

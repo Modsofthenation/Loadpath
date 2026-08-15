@@ -63,6 +63,13 @@ def test_extracts_fastapi_next_to_django_not_ninja():
     )
     assert not any(n.type is NodeType.FASTAPI_ROUTE for n in ninja.nodes)
     assert any(n.type is NodeType.ROUTE and n.extra.get("ninja") for n in ninja.nodes)
+    mixed = extract_django_file(
+        "backend/billing/api.py",
+        "from fastapi import Depends\nfrom ninja import Router\napi = Router()\n@api.get('/ledger')\ndef ledger():\n    return {}\n",
+        _cfg(),
+    )
+    assert not any(n.type is NodeType.FASTAPI_ROUTE for n in mixed.nodes)
+    assert any(n.extra.get("ninja") for n in mixed.nodes)
 
 
 def test_extracts_templates_htmx_and_url_tags():

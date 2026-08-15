@@ -8,6 +8,7 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeMouseHandler,
@@ -24,7 +25,15 @@ import {
   type GraphProjection,
 } from "./graphView";
 import { inspectNode, type InspectorLink } from "./nodeInspector";
-import { layoutNodes, type GraphEdge, type GraphNode } from "./types";
+import {
+  GRAPH_NODE_HEIGHT,
+  GRAPH_NODE_WIDTH,
+  layoutNodes,
+  type GraphEdge,
+  type GraphNode,
+} from "./types";
+
+const NO_NEIGHBORS = new Set<string>();
 
 const LayeredGraph3D = lazy(() =>
   import("./LayeredGraph3D").then((mod) => ({ default: mod.LayeredGraph3D })),
@@ -42,7 +51,7 @@ function LoadNode({ data, selected }: { data: { name: string; type: string }; se
       <Handle type="target" position={Position.Left} isConnectable={false} />
       <div className="t">{typeLabel(data.type)}</div>
       <div className="n" title={data.name}>
-        {data.name}
+        {wrapHint(data.name)}
       </div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </div>
@@ -50,9 +59,24 @@ function LoadNode({ data, selected }: { data: { name: string; type: string }; se
 }
 
 const nodeTypes = { load: LoadNode };
-const NODE_WIDTH = 180;
-const NODE_HEIGHT = 56;
 const ALL_FAMILIES = new Set<GraphFamily>(["django", "react", "stitch", "arch"]);
+
+function FitViewOnTopology({ topologyKey }: { topologyKey: string }) {
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => {
+        fitView({ padding: 0.2, maxZoom: 1.15 });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, [fitView, topologyKey]);
+  return null;
+}
 
 export function toReactFlowElements(
   nodes: GraphNode[],
@@ -60,7 +84,7 @@ export function toReactFlowElements(
   selectedId: string | null = null,
 ): { rfNodes: Node[]; rfEdges: Edge[] } {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const pos = layoutNodes(nodes);
+  const pos = layoutNodes(nodes, edges);
   const rfNodes: Node[] = nodes.map((n) => ({
     id: n.id,
     type: "load",
@@ -69,14 +93,15 @@ export function toReactFlowElements(
     selected: selectedId === n.id,
     sourcePosition: Position.Right,
     targetPosition: Position.Left,
-    width: NODE_WIDTH,
-    height: NODE_HEIGHT,
-    style: { width: NODE_WIDTH, height: NODE_HEIGHT },
+    width: GRAPH_NODE_WIDTH,
+    height: GRAPH_NODE_HEIGHT,
+    style: { width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT },
   }));
   const rfEdges: Edge[] = edges
     .filter((e) => byId.has(e.src) && byId.has(e.dst))
     .map((e) => {
       const stroke = WEIGHT_COLOR[e.weight] || "var(--edge-cheap)";
+      const labeled = Boolean(selectedId && (e.src === selectedId || e.dst === selectedId));
       return {
         id: e.id,
         source: e.src,
@@ -94,8 +119,11 @@ export function toReactFlowElements(
           height: 14,
           color: stroke,
         },
-        label: e.type.replaceAll("_", " "),
-        labelStyle: { fill: "var(--muted)", fontSize: 10 },
+        label: labeled ? e.type.replaceAll("_", " ") : undefined,
+        labelStyle: labeled ? { fill: "var(--ink)", fontSize: 10, fontWeight: 600 } : undefined,
+        labelBgStyle: labeled ? { fill: "var(--graph-bg)", fillOpacity: 0.92 } : undefined,
+        labelBgPadding: labeled ? ([3, 5] as [number, number]) : undefined,
+        labelBgBorderRadius: labeled ? 4 : undefined,
       };
     });
   return { rfNodes, rfEdges };
@@ -247,15 +275,20 @@ export function ImpactGraph({
 
   const view = projection ?? defaultProjection(nodes.length);
   const level = detail ?? defaultDetail(nodes.length);
+  const neighborhoodFocus = neighborhoodOnly && view === "3d" ? selectedId : null;
   const visible = useMemo(
     () =>
       visibleGraph(nodes, edges, {
         detail: level,
         families,
-        focusId: selectedId,
-        neighborhoodOnly: neighborhoodOnly && view === "3d",
+        focusId: neighborhoodFocus,
+        neighborhoodOnly: Boolean(neighborhoodFocus),
       }),
-    [nodes, edges, level, families, selectedId, neighborhoodOnly, view],
+    [nodes, edges, level, families, neighborhoodFocus],
+  );
+  const topologyKey = useMemo(
+    () => `${visible.nodes.map((n) => n.id).join("\0")}|${visible.edges.map((e) => e.id).join("\0")}`,
+    [visible.nodes, visible.edges],
   );
   const byId = useMemo(() => new Map(visible.nodes.map((n) => [n.id, n])), [visible.nodes]);
   const selected = selectedId ? byId.get(selectedId) ?? null : null;
@@ -394,7 +427,7 @@ export function ImpactGraph({
                 nodes={visible.nodes}
                 edges={visible.edges}
                 selectedId={selectedId}
-                neighborIds={visible.neighborIds}
+                neighborIds={neighborhoodFocus ? visible.neighborIds : NO_NEIGHBORS}
                 onSelect={(id) => {
                   setSelectedId(id);
                   if (!id) setNeighborhoodOnly(false);
@@ -411,8 +444,7 @@ export function ImpactGraph({
               nodes={rfNodes}
               edges={rfEdges}
               nodeTypes={nodeTypes}
-              fitView
-              fitViewOptions={{ padding: 0.2, maxZoom: 1.15 }}
+              fitView={false}
               minZoom={0.25}
               nodesDraggable={false}
               nodesConnectable={false}
@@ -423,6 +455,7 @@ export function ImpactGraph({
               proOptions={{ hideAttribution: false }}
               data-testid="impact-graph"
             >
+              <FitViewOnTopology topologyKey={topologyKey} />
               <Background />
               <MiniMap
                 pannable

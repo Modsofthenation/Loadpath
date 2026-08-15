@@ -517,4 +517,106 @@ class TestNewQuestionForm(TestCase):
     g = extract_django_file("kitsune/questions/tests/test_forms.py", src, _cfg())
     assert not any(n.type is NodeType.FORM for n in g.nodes)
     assert any(n.type is NodeType.TEST and n.name == "test_ok" for n in g.nodes)
+    tests = [n for n in g.nodes if n.type is NodeType.TEST]
+    assert tests[0].qualified_name.startswith("questions.")
+
+
+def test_views_package_uses_django_app_not_views_namespace():
+    from loadpath.extractors.django import _app_from_path
+
+    assert _app_from_path("src/pretix/control/views/vouchers.py") == "control"
+    assert _app_from_path("src/pretix/presale/views/widget.py") == "presale"
+    assert _app_from_path("wger/nutrition/tests/test_search_api.py") == "nutrition"
+    assert _app_from_path("wger/nutrition/api/views.py") == "nutrition"
+    assert _app_from_path("wger/nutrition/api/filtersets.py") == "nutrition"
+    assert _app_from_path("shop/api/viewsets/order.py") == "shop"
+    assert _app_from_path("api/views.py") == "api"
+    assert _app_from_path("backend/billing/views.py") == "billing"
+    assert _app_from_path("backend/billing/migrations/0001_initial.py") == "billing"
+
+    source = (
+        "from django.views import View\n"
+        "class CartApplyVoucher(View):\n"
+        "    pass\n"
+    )
+    control = extract_django_file("src/pretix/control/views/vouchers.py", source, _cfg())
+    presale = extract_django_file("src/pretix/presale/views/widget.py", source, _cfg())
+    ids = {n.id for n in control.nodes + presale.nodes if n.type is NodeType.VIEW}
+    assert ids == {"django.view:control.CartApplyVoucher", "django.view:presale.CartApplyVoucher"}
+
+
+def test_regex_empty_and_named_group_routes_are_readable():
+    source = (
+        "from django.urls import re_path, include\n"
+        "from . import views\n"
+        "urlpatterns = [\n"
+        "    re_path(r'^$', views.home, name='home'),\n"
+        "    re_path(r'^', include('addons.urls')),\n"
+        "    re_path(r'^(?P<slug>[\\w-]+)/clone/$', views.clone, name='clone'),\n"
+        "]\n"
+    )
+    g = extract_django_file("experimenter/nimbus_ui/urls.py", source, _cfg())
+    routes = [n for n in g.nodes if n.type is NodeType.ROUTE]
+    names = {n.name for n in routes}
+    assert "home" in names or "/" in names
+    assert "^$" not in names
+    assert "^" not in names
+    assert any("{slug}/clone/" == n.name or n.name == "{slug}/clone" for n in routes)
+    assert any(e.dst == "django.view:nimbus_ui.clone" for e in g.edges if e.type.value == "publishes_route")
+
+    nested = extract_django_file(
+        "shop/urls.py",
+        (
+            "from django.urls import re_path\n"
+            "from . import views\n"
+            "urlpatterns = [\n"
+            "    re_path(r'^(?P<slug>(?:[\\w-]+))/$', views.item, name='item'),\n"
+            "]\n"
+        ),
+        _cfg(),
+    )
+    nested_names = {n.name for n in nested.nodes if n.type is NodeType.ROUTE}
+    assert "{slug}/" in nested_names or "{slug}" in nested_names
+    assert not any(")" in name for name in nested_names)
+
+
+def test_pretty_url_pattern_nested_named_groups():
+    from loadpath.extractors.django import pretty_url_pattern
+
+    assert pretty_url_pattern(r"^(?P<slug>(?:[\w-]+))/$") in {"{slug}/", "{slug}"}
+    assert ")" not in pretty_url_pattern(r"^(?P<slug>(?:[\w-]+))/$")
+    assert pretty_url_pattern(r"^$") in {"", "/"}
+    assert pretty_url_pattern(r"^") == ""
+
+
+def test_filterset_is_a_form_and_links_from_the_view():
+    filters = (
+        "from django_filters import FilterSet\n"
+        "from .models import Ingredient\n"
+        "class IngredientFilterSet(FilterSet):\n"
+        "    class Meta:\n"
+        "        model = Ingredient\n"
+        "        fields = ['name']\n"
+    )
+    views = (
+        "from rest_framework.viewsets import ModelViewSet\n"
+        "from .filtersets import IngredientFilterSet\n"
+        "from .serializers import IngredientSerializer\n"
+        "from .models import Ingredient\n"
+        "class IngredientViewSet(ModelViewSet):\n"
+        "    serializer_class = IngredientSerializer\n"
+        "    filterset_class = IngredientFilterSet\n"
+        "    queryset = Ingredient.objects.all()\n"
+    )
+    fg = extract_django_file("wger/nutrition/api/filtersets.py", filters, _cfg())
+    vg = extract_django_file("wger/nutrition/api/views.py", views, _cfg())
+    fs = next(n for n in fg.nodes if n.name == "IngredientFilterSet")
+    assert fs.type is NodeType.FORM
+    assert fs.extra.get("filterset") is True
+    assert fs.qualified_name == "nutrition.IngredientFilterSet"
+    assert any(e.src == fs.id and e.type.value == "serializes" for e in fg.edges)
+    assert any(
+        e.src == "django.view:nutrition.IngredientViewSet" and e.dst == "django.form:nutrition.IngredientFilterSet"
+        for e in vg.edges
+    )
 

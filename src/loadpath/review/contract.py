@@ -38,7 +38,11 @@ def classify_contract_break(impact_nodes: list[dict], diff: DiffSet | None) -> d
 
     patch = "\n".join(f.patch or "" for f in (diff.files if diff else []))
     changed_files = {f.path for f in (diff.files if diff else []) if not f.skip}
-    required = {m.group(1) for m in REQUIRED_RE.finditer(patch) if "+" in patch[max(0, m.start() - 80) : m.start() + 1] or True}
+    required = {
+        m.group(1)
+        for m in REQUIRED_RE.finditer(patch)
+        if "+" in patch[max(0, m.start() - 80) : m.start() + 1]
+    }
     # extra_kwargs required=True in added lines
     added_required: list[str] = []
     for line in patch.splitlines():

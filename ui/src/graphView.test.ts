@@ -49,6 +49,17 @@ describe("visibleGraph", () => {
     expect(g.nodes.map((n) => n.id).sort()).toEqual(["a", "b", "c", "d"]);
   });
 
+  it("does not shrink the graph when a node is selected without neighborhood mode", () => {
+    const g = visibleGraph(nodes, edges, {
+      detail: "full",
+      families: allFamilies,
+      focusId: "b",
+      neighborhoodOnly: false,
+    });
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(["a", "b", "c", "d"]);
+    expect(g.edges).toHaveLength(3);
+  });
+
   it("family chips drop other stacks", () => {
     const g = visibleGraph(nodes, edges, { detail: "full", families: new Set(["django"]) });
     expect(g.nodes.map((n) => n.id).sort()).toEqual(["a", "b", "d"]);

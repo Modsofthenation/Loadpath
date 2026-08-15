@@ -8,7 +8,9 @@ from typing import Any, Protocol
 
 import httpx
 
-REPO_SLUG = re.compile(r"^[\w.-]+/[\w.-]+$")
+# GitLab nested groups: group/subgroup/project. GitHub/Bitbucket stay owner/name.
+# Reject "." / ".." so a slug cannot walk off the host path.
+REPO_SLUG = re.compile(r"^[\w.-]+(?:/[\w.-]+)+$")
 LOADPATH_COMMENT_MARKER = "<!-- loadpath-review -->"
 REMOTE_HOST = re.compile(
     r"(?P<host>github\.com|bitbucket\.org|gitlab\.com|(?:[\w.-]+\.)?(?:github|gitlab)[\w.-]*)[:/](?P<slug>[\w.-]+(?:/[\w.-]+)+?)(?:\.git)?/?$",
@@ -25,9 +27,17 @@ def _marked_comment(markdown: str) -> str:
 
 
 
+def _safe_slug_parts(parts: list[str]) -> list[str] | None:
+    cleaned = [p for p in parts if p]
+    if not cleaned or any(p in {".", ".."} for p in cleaned):
+        return None
+    return cleaned
+
+
 def require_repo_slug(repo: str) -> str:
     slug = repo.strip().strip("/")
-    if not REPO_SLUG.match(slug):
+    parts = _safe_slug_parts(slug.split("/"))
+    if parts is None or not REPO_SLUG.match(slug):
         raise ValueError("repo must be owner/name")
     return slug
 
@@ -41,12 +51,16 @@ def parse_remote_url(url: str) -> tuple[str, str] | None:
     slug = match.group("slug").strip("/")
     if slug.endswith(".git"):
         slug = slug[:-4]
-    parts = slug.split("/")
-    if len(parts) >= 2:
+    host = match.group("host").lower()
+    parts = _safe_slug_parts(slug.split("/"))
+    if not parts:
+        return None
+    if "gitlab" in host and len(parts) >= 2:
+        slug = "/".join(parts)
+    elif len(parts) >= 2:
         slug = "/".join(parts[:2])
     if not REPO_SLUG.match(slug):
         return None
-    host = match.group("host").lower()
     if "bitbucket" in host:
         provider = "bitbucket"
     elif "gitlab" in host:

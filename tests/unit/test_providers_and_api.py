@@ -102,9 +102,17 @@ def test_github_upserts_single_loadpath_comment():
 def test_github_rejects_unsafe_repo_slug():
     import pytest
 
+    from loadpath.providers.scm import parse_remote_url, require_repo_slug
+
     gh = GitHubProvider("tok")
     with pytest.raises(ValueError):
         gh.list_pull_requests("../etc/passwd")
+    with pytest.raises(ValueError):
+        require_repo_slug("acme/../passwd")
+    with pytest.raises(ValueError):
+        require_repo_slug("acme/./demo")
+    assert require_repo_slug("acme/billing/demo") == "acme/billing/demo"
+    assert parse_remote_url("https://github.com/../etc/passwd") is None
 
 
 def test_parse_remote_url_github_and_bitbucket():
@@ -118,6 +126,8 @@ def test_parse_remote_url_github_and_bitbucket():
     assert parse_remote_url("https://gitlab.com/acme/demo.git") == ("gitlab", "acme/demo")
     assert parse_remote_url("git@gitlab.com:acme/demo.git") == ("gitlab", "acme/demo")
     assert parse_remote_url("https://gitlab.example.com/acme/demo.git") == ("gitlab", "acme/demo")
+    assert parse_remote_url("https://gitlab.com/acme/billing/demo.git") == ("gitlab", "acme/billing/demo")
+    assert parse_remote_url("git@gitlab.com:acme/billing/demo.git") == ("gitlab", "acme/billing/demo")
 
 
 def test_github_lists_repositories_across_pages():
@@ -277,3 +287,36 @@ def test_clone_url_and_fetch_spec():
     assert fetch_spec("gitlab", 4) == "merge-requests/4/head"
     assert fetch_spec("bitbucket", 3) == "pull-requests/3/from"
     assert local_pr_ref(12) == "refs/loadpath/pr-12"
+
+
+def test_redact_secrets_strips_tokens():
+    from loadpath.providers.pr_fetch import redact_secrets
+
+    leaked = "fatal: https://oauth2:glpat-secret@gitlab.com/acme/demo.git"
+    assert "glpat-secret" not in redact_secrets(leaked, "glpat-secret")
+    assert "***" in redact_secrets(leaked, "glpat-secret")
+
+
+def test_checkout_review_tree_indexes_pr_head(tmp_path, monkeypatch):
+    from loadpath.providers import pr_fetch
+
+    monkeypatch.setattr(pr_fetch, "clones_root", lambda: tmp_path / "clones")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess = __import__("subprocess")
+    subprocess.check_call(["git", "init", "-b", "main"], cwd=repo, stdout=subprocess.DEVNULL)
+    subprocess.check_call(["git", "config", "user.email", "lp@test"], cwd=repo)
+    subprocess.check_call(["git", "config", "user.name", "lp"], cwd=repo)
+    (repo / "on-main.txt").write_text("main\n")
+    subprocess.check_call(["git", "add", "on-main.txt"], cwd=repo)
+    subprocess.check_call(["git", "commit", "-m", "main"], cwd=repo, stdout=subprocess.DEVNULL)
+    subprocess.check_call(["git", "checkout", "-b", "pr"], cwd=repo, stdout=subprocess.DEVNULL)
+    (repo / "on-pr.txt").write_text("pr\n")
+    subprocess.check_call(["git", "add", "on-pr.txt"], cwd=repo)
+    subprocess.check_call(["git", "commit", "-m", "pr"], cwd=repo, stdout=subprocess.DEVNULL)
+    pr_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    subprocess.check_call(["git", "update-ref", "refs/loadpath/pr-9", pr_sha], cwd=repo)
+    subprocess.check_call(["git", "checkout", "main"], cwd=repo, stdout=subprocess.DEVNULL)
+    tree = pr_fetch.checkout_review_tree(repo, "refs/loadpath/pr-9", 9)
+    assert (tree / "on-pr.txt").is_file()
+    assert not (repo / "on-pr.txt").exists()

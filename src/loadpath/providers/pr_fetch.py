@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,16 @@ FETCH_SPEC = {
     "gitlab": "merge-requests/{n}/head",
     "bitbucket": "pull-requests/{n}/from",
 }
+
+
+def redact_secrets(text: str, *secrets: str) -> str:
+    out = text
+    for secret in secrets:
+        if not secret:
+            continue
+        out = out.replace(secret, "***")
+        out = out.replace(quote(secret, safe=""), "***")
+    return out
 
 
 def clones_root() -> Path:
@@ -88,13 +99,19 @@ def ensure_clone(provider: str, slug: str, *, token: str = "", host: str = "") -
             pass
         return dest
     url = clone_url(provider, slug, token, host)
-    subprocess.check_call(
-        ["git", "clone", "--filter=blob:none", url, str(dest)],
-        env=env,
-        timeout=_GIT_TIMEOUT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
+    try:
+        subprocess.run(
+            ["git", "clone", "--filter=blob:none", url, str(dest)],
+            env=env,
+            timeout=_GIT_TIMEOUT,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = redact_secrets((exc.stderr or "").strip() or "git clone failed", token)
+        raise RuntimeError(detail) from None
     return dest
 
 
@@ -110,6 +127,25 @@ def fetch_pull_ref(repo_root: Path, provider: str, number: int) -> str:
             "Need a remote named origin that advertises pull/merge-request refs."
         ) from exc
     return local
+
+
+def checkout_review_tree(repo_root: Path, local_ref: str, number: int) -> Path:
+    """Detached worktree at the fetched PR ref so index reads the PR, not the user's branch."""
+    repo_root = repo_root.resolve()
+    dest = clones_root() / "worktrees" / f"{repo_root.name}-pr-{int(number)}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _git(repo_root, "worktree", "remove", "--force", str(dest))
+    except subprocess.CalledProcessError:
+        pass
+    if dest.exists():
+        shutil.rmtree(dest, ignore_errors=True)
+        try:
+            _git(repo_root, "worktree", "prune")
+        except subprocess.CalledProcessError:
+            pass
+    _git(repo_root, "worktree", "add", "--detach", str(dest), local_ref)
+    return dest
 
 
 def prepare_pull_request(
@@ -151,6 +187,7 @@ def prepare_pull_request(
         cloned = True
         register_workspace(root, name=repo.split("/")[-1])
     local_ref = fetch_pull_ref(root, provider, number)
+    review_root = checkout_review_tree(root, local_ref, number)
     base_ref = (pr.target_branch if pr else None) or "origin/HEAD"
     if pr and pr.target_branch:
         try:
@@ -159,7 +196,7 @@ def prepare_pull_request(
         except subprocess.CalledProcessError:
             base_ref = pr.target_branch
     return {
-        "repo_path": str(root),
+        "repo_path": str(review_root),
         "provider": provider,
         "repo": repo,
         "number": number,
