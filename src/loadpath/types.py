@@ -24,6 +24,7 @@ class NodeType(StrEnum):
     VIEWSET_ACTION = "django.viewset_action"
     SERIALIZER = "django.serializer"
     SERIALIZER_FIELD = "django.serializer_field"
+    FORM = "django.form"
     SERVICE = "django.service"
     MODEL = "django.model"
     FIELD = "django.field"
@@ -128,6 +129,7 @@ SINK_TYPES = {
 CONTRACT_TYPES = {
     NodeType.SERIALIZER,
     NodeType.SERIALIZER_FIELD,
+    NodeType.FORM,
     NodeType.OPENAPI_PATH,
     NodeType.FORM_SCHEMA,
     NodeType.ROUTE,

@@ -171,6 +171,7 @@ export const LAYER_ORDER: Record<string, number> = {
   "django.viewset_action": 2,
   "django.permission": 2,
   "django.serializer": 3,
+  "django.form": 3,
   "django.serializer_field": 4,
   "django.service": 4,
   "django.model": 5,
