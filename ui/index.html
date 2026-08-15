@@ -9,7 +9,7 @@
         try {
           var t = localStorage.getItem("loadpath.theme");
           if (t) document.documentElement.setAttribute("data-theme", t);
-          var light = { paper: 1, "solarized-light": 1, seafoam: 1, "high-contrast": 1 };
+          var light = { paper: 1, "solarized-light": 1, seafoam: 1, "high-contrast": 1, sakura: 1, citrus: 1, peach: 1, candy: 1, sky: 1, coral: 1 };
           document.documentElement.style.colorScheme = light[t] ? "light" : "dark";
         } catch (e) {}
       })();

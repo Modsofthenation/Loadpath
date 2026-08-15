@@ -10,7 +10,19 @@ export type ThemeId =
   | "amber"
   | "seafoam"
   | "volcano"
-  | "lavender";
+  | "lavender"
+  | "neon-noir"
+  | "synthwave"
+  | "phosphor"
+  | "aurora"
+  | "biolume"
+  | "carbon"
+  | "sakura"
+  | "citrus"
+  | "peach"
+  | "candy"
+  | "sky"
+  | "coral";
 
 export type Theme = { id: ThemeId; label: string; group: "dark" | "light" };
 
@@ -23,10 +35,22 @@ export const THEMES: Theme[] = [
   { id: "amber", label: "Midnight Amber", group: "dark" },
   { id: "volcano", label: "Volcano", group: "dark" },
   { id: "lavender", label: "Lavender", group: "dark" },
+  { id: "neon-noir", label: "Neon Noir", group: "dark" },
+  { id: "synthwave", label: "Synthwave", group: "dark" },
+  { id: "phosphor", label: "Phosphor", group: "dark" },
+  { id: "aurora", label: "Aurora", group: "dark" },
+  { id: "biolume", label: "Biolume", group: "dark" },
+  { id: "carbon", label: "Carbon", group: "dark" },
   { id: "paper", label: "Paper", group: "light" },
   { id: "solarized-light", label: "Solarized Light", group: "light" },
   { id: "seafoam", label: "Seafoam", group: "light" },
   { id: "high-contrast", label: "High Contrast", group: "light" },
+  { id: "sakura", label: "Sakura", group: "light" },
+  { id: "citrus", label: "Citrus", group: "light" },
+  { id: "peach", label: "Peach Fuzz", group: "light" },
+  { id: "candy", label: "Cotton Candy", group: "light" },
+  { id: "sky", label: "Clear Sky", group: "light" },
+  { id: "coral", label: "Coral Reef", group: "light" },
 ];
 
 export const DEFAULT_THEME: ThemeId = "obsidian";
