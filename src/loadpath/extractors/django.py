@@ -767,9 +767,16 @@ class DjangoExtractor(ast.NodeVisitor):
             fs_q = fs if "." in fs and not fs.startswith("filter") else f"{self.app}.{fs.split('.')[-1]}"
             self.add_edge(view.id, node_id(NodeType.FORM, fs_q), EdgeType.CALLS, confidence=0.9)
         for perm in permissions:
-            pid = node_id(NodeType.PERMISSION, perm)
+            ident = self._permission_identity(perm)
+            pid = node_id(NodeType.PERMISSION, ident)
             self.graph.nodes.append(
-                Node(id=pid, type=NodeType.PERMISSION, name=perm, qualified_name=perm, extra={"from_view": qname})
+                Node(
+                    id=pid,
+                    type=NodeType.PERMISSION,
+                    name=perm.split(".")[-1],
+                    qualified_name=ident,
+                    extra={"from_view": qname},
+                )
             )
             self.add_edge(view.id, pid, EdgeType.HAS_PERMISSION)
         for throttle in extra.get("throttles") or []:
@@ -821,8 +828,15 @@ class DjangoExtractor(ast.NodeVisitor):
         qname = f"{self.app}.{node.name}"
         self.add_node(NodeType.ADMIN, node.name, qname, node.lineno, _with_doc({"app": self.app}, node))
 
+    def _permission_identity(self, perm: str) -> str:
+        """Local *Permission classes share an id with view.permission_classes."""
+        short = perm.split(".")[-1]
+        if short.endswith("Permission"):
+            return f"{self.app}.{short}"
+        return short
+
     def _permission_class(self, node: ast.ClassDef) -> None:
-        qname = f"{self.app}.{node.name}"
+        qname = self._permission_identity(node.name)
         self.add_node(
             NodeType.PERMISSION,
             node.name,
