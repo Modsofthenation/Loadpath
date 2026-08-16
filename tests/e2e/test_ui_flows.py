@@ -576,9 +576,14 @@ def test_ui_architecture_edges_use_distinct_verticals(live_app, browser_page):
           const segs = [];
           for (const p of document.querySelectorAll('.react-flow__edge-path')) {
             const pts = pointsOf(p.getAttribute('d') || '');
+            if (pts.length < 2) continue;
+            const sx = pts[0].x;
+            const tx = pts[pts.length - 1].x;
+            if (tx <= sx + 8) continue;
             for (let i = 0; i + 1 < pts.length; i++) {
               const a = pts[i];
               const b = pts[i + 1];
+              if (a.x <= sx + 8 || a.x >= tx - 8) continue;
               if (Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) > 16) {
                 segs.push({ x: Math.round(a.x), y0: Math.min(a.y, b.y), y1: Math.max(a.y, b.y) });
               }

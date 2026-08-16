@@ -92,11 +92,10 @@ describe("assignEdgeStepPositions", () => {
     const edges = [edge("r1", "v1"), edge("r2", "u")];
     const steps = assignEdgeStepPositions(nodes, edges, pos);
     const srcX = 208;
-    const nextCol = 296;
-    const skipCol = 592;
-    const xNext = srcX + (nextCol - srcX) * (steps.get("r2->u") ?? 0);
-    const xSkip = srcX + (skipCol - srcX) * (steps.get("r1->v1") ?? 0);
-    expect(Math.abs(xNext - xSkip)).toBeGreaterThan(40);
+    const laneX = (dst: number, step: number) => srcX + 20 + (dst - srcX - 40) * step;
+    const xNext = laneX(296, steps.get("r2->u") ?? 0);
+    const xSkip = laneX(592, steps.get("r1->v1") ?? 0);
+    expect(Math.abs(xNext - xSkip)).toBeGreaterThan(20);
   });
 
   it("bends skip-column edges in the first gap so they do not sit on the next column", () => {
@@ -113,8 +112,29 @@ describe("assignEdgeStepPositions", () => {
     const steps = assignEdgeStepPositions(nodes, [edge("r", "v")], pos);
     const step = steps.get("r->v") ?? 0.5;
     const srcX = 208;
-    const laneX = srcX + (592 - srcX) * step;
+    const laneX = srcX + 20 + (592 - srcX - 40) * step;
     expect(laneX).toBeLessThan(296);
+  });
+
+  it("gives two skip-column edges from one node distinct first-gap verticals", () => {
+    const nodes = [
+      node("v", "django.view"),
+      node("c", "django.cache_key"),
+      node("f", "django.feature_flag"),
+      node("s", "django.serializer"),
+    ];
+    const pos = new Map([
+      ["v", { x: 0, y: 184 }],
+      ["s", { x: 296, y: 184 }],
+      ["c", { x: 592, y: 0 }],
+      ["f", { x: 592, y: 92 }],
+    ]);
+    const steps = assignEdgeStepPositions(nodes, [edge("v", "c"), edge("v", "f")], pos);
+    const srcX = 208;
+    const laneX = (dst: number, step: number) => srcX + 20 + (dst - srcX - 40) * step;
+    const xc = laneX(592, steps.get("v->c") ?? 0.5);
+    const xf = laneX(592, steps.get("v->f") ?? 0.5);
+    expect(Math.abs(xc - xf)).toBeGreaterThan(20);
   });
 
   it("spreads lanes between 0.2 and 0.8", () => {

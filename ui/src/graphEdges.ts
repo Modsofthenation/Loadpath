@@ -10,6 +10,8 @@ import {
 const HORIZONTAL_EPS = 12;
 const STEP_LO = 0.2;
 const STEP_HI = 0.8;
+/** Matches @xyflow/react getSmoothStepPath default handle offset. */
+const STEP_OFFSET = 20;
 /** Adjacent stacked steps sit ~one node apart; reuse a vertical only beyond that. */
 const CLEARANCE = GRAPH_NODE_HEIGHT;
 
@@ -70,13 +72,8 @@ export function assignEdgeStepPositions(
     const gutter = gapAfter(colXs, sourceX);
     for (const span of sorted) {
       const t = stepForLane(laneOf.get(span.id) ?? 0, laneCount);
-      const denom = span.targetX - span.sourceX;
-      if (Math.abs(denom - gutter) < 0.5) {
-        steps.set(span.id, t);
-        continue;
-      }
-      const laneX = span.sourceX + gutter * t;
-      steps.set(span.id, Math.min(0.92, Math.max(0.08, (laneX - span.sourceX) / denom)));
+      const laneX = sourceX + STEP_OFFSET + Math.max(1, gutter - 2 * STEP_OFFSET) * t;
+      steps.set(span.id, stepForLaneX(span.sourceX, span.targetX, laneX));
     }
   }
   return steps;
@@ -87,6 +84,13 @@ function gapAfter(colXs: number[], sourceX: number): number {
   const next = colXs.find((x) => x > colX + 1);
   if (next === undefined) return GRAPH_COL_GAP;
   return Math.max(GRAPH_COL_GAP, next - sourceX);
+}
+
+/** Invert getSmoothStepPath: vertical sits at sourceX + offset + (dx - 2*offset) * step. */
+function stepForLaneX(sourceX: number, targetX: number, laneX: number): number {
+  const inner = targetX - sourceX - 2 * STEP_OFFSET;
+  if (inner < 1) return 0.5;
+  return (laneX - sourceX - STEP_OFFSET) / inner;
 }
 
 /** First-fit coloring: two verticals share an x only when their y ranges stay apart. */
