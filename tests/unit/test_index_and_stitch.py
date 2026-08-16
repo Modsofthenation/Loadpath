@@ -26,6 +26,34 @@ def test_index_stitches_django_route_to_react_client(tmp_path: Path):
     assert any((e.get("extra") or {}).get("superseded_by_generated") for e in inferred)
     schema_edges = [e for e in edges if e["type"] == "matches_schema"]
     assert schema_edges, "serializer fields should overlap invoiceSchema"
+    typed = [
+        n
+        for n in store.nodes([NodeType.API_CLIENT])
+        if (n.get("extra") or {}).get("typed_client") in {"rtk", "openapi-fetch"}
+    ]
+    assert typed, "RTK / openapi-fetch clients should be indexed"
+    e2e = [
+        e
+        for e in edges
+        if e["type"] == "tested_by" and (e.get("extra") or {}).get("via") == "e2e"
+    ]
+    assert e2e, "Playwright visits should stitch tested_by onto routes"
+    gql_schema = [
+        e
+        for e in schema_edges
+        if (e.get("extra") or {}).get("via") == "graphql-codegen"
+    ]
+    assert gql_schema, "graphql-codegen InvoiceType should match the server GraphQL type"
+    assert any(n["type"] == "react.server_action" for n in store.nodes())
+    assert any(n["type"] == "react.page" and (n.get("extra") or {}).get("next_app") for n in store.nodes())
+    by_id = {n["id"]: n for n in store.nodes()}
+    for e in consumed:
+        src = by_id.get(e["src"]) or {}
+        dst = by_id.get(e["dst"]) or {}
+        blob = f"{src.get('name','')} {dst.get('name','')} {e.get('extra')}"
+        assert "/internal/invoices" not in blob
+        if (dst.get("extra") or {}).get("typed_client") == "trpc":
+            assert "websocket" not in (src.get("type") or "")
     store.close()
 
 
@@ -179,3 +207,14 @@ def test_regex_include_join_strips_anchors(tmp_path: Path):
     assert child is not None
     assert child["name"] == "/base"
     store.close()
+
+
+def test_paths_match_allows_api_mount_but_not_internal_or_collection():
+    from loadpath.stitch.openapi import _paths_match
+
+    assert _paths_match("/api/invoices/{id}", "/invoices/{id}")
+    assert _paths_match("/api/invoices/{id}", "/api/invoices/{pk}")
+    assert not _paths_match("/api/invoices/{id}", "/internal/invoices/{id}")
+    assert not _paths_match("/api/invoices/{id}", "/api/invoices")
+    assert not _paths_match("/api/invoices/{id}", "/api/invoices/{id}/ledger")
+

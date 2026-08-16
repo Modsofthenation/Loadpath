@@ -49,6 +49,7 @@ READ_ORDER = [
     NodeType.API_CLIENT,
     NodeType.QUERY_KEY,
     NodeType.COMPONENT,
+    NodeType.SERVER_ACTION,
     NodeType.TEST,
     NodeType.REACT_TEST,
     NodeType.GRAPHQL_TYPE,
@@ -274,7 +275,7 @@ def collect_residuals(store: GraphStore, impact_nodes: list[dict], diff: DiffSet
         fields_by_name.setdefault(field["name"], []).append(field)
     for n in impact_nodes:
         extra = n.get("extra") or {}
-        if extra.get("get_serializer_class"):
+        if extra.get("get_serializer_class") and not extra.get("serializer_classes"):
             residuals.append(f"Dynamic get_serializer_class on {n['qualified_name']}")
         if extra.get("string_ref"):
             residuals.append(f"String model ref {n['qualified_name']}")
@@ -551,6 +552,8 @@ def _sink_summaries(nodes: list[dict], store: GraphStore) -> list[dict]:
         NodeType.TASK.value,
         NodeType.PAGE.value,
         NodeType.FORM_SCHEMA.value,
+        NodeType.SERVER_ACTION.value,
+        NodeType.REACT_ROUTE.value,
         NodeType.FORM.value,
         NodeType.PERMISSION.value,
         NodeType.MIGRATION_OP.value,

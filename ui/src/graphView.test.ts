@@ -1,5 +1,4 @@
-import { describe, expect, it } from "vitest";
-import { LAYER_ORDER } from "./types";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   LARGE_GRAPH,
   LAYER_LABELS,
@@ -7,12 +6,16 @@ import {
   defaultProjection,
   familyFor,
   isolatePathIds,
+  layoutGraph,
   layoutNodes3d,
+  layoutUsesColumns,
   neighborIds,
+  readGraphLayout,
   searchNodes,
   visibleGraph,
+  writeGraphLayout,
 } from "./graphView";
-import type { GraphEdge, GraphNode } from "./types";
+import { GRAPH_COL_GAP, GRAPH_NODE_WIDTH, LAYER_ORDER, layoutNodes, type GraphEdge, type GraphNode } from "./types";
 
 function node(id: string, type: string, name = id): GraphNode {
   return { id, type, name, qualified_name: name };
@@ -128,5 +131,71 @@ describe("defaults", () => {
     for (const layer of new Set(Object.values(LAYER_ORDER))) {
       expect(LAYER_LABELS[layer]).toBeTruthy();
     }
+  });
+});
+
+describe("layoutGraph", () => {
+  it("layers matches the architecture-column layout", () => {
+    expect(layoutGraph(nodes, edges, "layers")).toEqual(layoutNodes(nodes, edges));
+  });
+
+  it("flow ranks destinations to the right of sources", () => {
+    const chain = [node("s", "django.view", "S"), node("m", "django.serializer", "M"), node("t", "react.page", "T")];
+    const flowEdges = [edge("s", "m"), edge("m", "t")];
+    const pos = layoutGraph(chain, flowEdges, "flow");
+    expect(pos.get("m")!.x).toBeGreaterThan(pos.get("s")!.x);
+    expect(pos.get("t")!.x).toBeGreaterThan(pos.get("m")!.x);
+  });
+
+  it("radial and grid produce finite coordinates for every node", () => {
+    for (const layout of ["radial", "grid"] as const) {
+      const pos = layoutGraph(nodes, edges, layout);
+      expect(pos.size).toBe(nodes.length);
+      for (const n of nodes) {
+        const p = pos.get(n.id)!;
+        expect(Number.isFinite(p.x)).toBe(true);
+        expect(Number.isFinite(p.y)).toBe(true);
+      }
+    }
+  });
+
+  it("switching algorithm moves at least one node", () => {
+    const layers = layoutGraph(nodes, edges, "layers");
+    const radial = layoutGraph(nodes, edges, "radial");
+    const moved = nodes.some(
+      (n) => layers.get(n.id)!.x !== radial.get(n.id)!.x || layers.get(n.id)!.y !== radial.get(n.id)!.y,
+    );
+    expect(moved).toBe(true);
+  });
+
+  it("caps flow ranks so cycles do not explode into a long strip", () => {
+    const cycle = [node("a", "django.view", "A"), node("b", "django.serializer", "B")];
+    const loop = [edge("a", "b"), edge("b", "a")];
+    const pos = layoutGraph(cycle, loop, "flow");
+    const span = Math.abs(pos.get("a")!.x - pos.get("b")!.x);
+    expect(span).toBeLessThanOrEqual(GRAPH_NODE_WIDTH + GRAPH_COL_GAP);
+  });
+
+  it("treats flow as columns and radial/grid as freeform", () => {
+    expect(layoutUsesColumns("layers")).toBe(true);
+    expect(layoutUsesColumns("flow")).toBe(true);
+    expect(layoutUsesColumns("radial")).toBe(false);
+    expect(layoutUsesColumns("grid")).toBe(false);
+  });
+});
+
+describe("graph layout preference", () => {
+  afterEach(() => {
+    localStorage.removeItem("loadpath.graphLayout");
+  });
+
+  it("falls back to layers for invalid storage", () => {
+    localStorage.setItem("loadpath.graphLayout", "force-atlas");
+    expect(readGraphLayout()).toBe("layers");
+  });
+
+  it("round-trips a valid layout", () => {
+    writeGraphLayout("radial");
+    expect(readGraphLayout()).toBe("radial");
   });
 });

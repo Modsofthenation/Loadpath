@@ -74,6 +74,7 @@ DRAMATIQ_ENQUEUE = {"send", "send_with_options"}
 CELERY_TASK_BASES = {"Task"}
 DRAMATIQ_TASK_BASES = {"GenericActor"}
 NINJA_HTTP = {"get", "post", "put", "patch", "delete", "api_operation"}
+NINJA_SCHEMA_BASES = {"Schema", "ModelSchema"}
 FASTAPI_HTTP = {"get", "post", "put", "patch", "delete", "options", "head", "trace", "api_route", "websocket"}
 CONSUMER_BASES = {
     "WebsocketConsumer",
@@ -152,6 +153,34 @@ def _list_names(node: ast.AST | None) -> list[str]:
         return names
     n = _name(node)
     return [n.split(".")[-1]] if n else []
+
+
+def _ann_class_names(node: ast.AST | None) -> list[str]:
+    if node is None:
+        return []
+    if isinstance(node, ast.Name):
+        return [node.id] if node.id[:1].isupper() else []
+    if isinstance(node, ast.Attribute):
+        n = _name(node)
+        short = n.split(".")[-1] if n else ""
+        return [short] if short[:1].isupper() else []
+    if isinstance(node, ast.Subscript):
+        return _ann_class_names(node.value) + _ann_class_names(node.slice)
+    if isinstance(node, ast.Tuple):
+        names: list[str] = []
+        for elt in node.elts:
+            names.extend(_ann_class_names(elt))
+        return names
+    if isinstance(node, ast.BinOp):
+        return _ann_class_names(node.left) + _ann_class_names(node.right)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value[:1].isupper():
+        return [node.value.split(".")[-1]]
+    return []
+
+
+def _looks_like_ninja_blob(imports: dict[str, str], from_imports: dict[str, str]) -> bool:
+    blob = " ".join(imports.values()) + " " + " ".join(from_imports.values())
+    return "ninja" in blob.lower()
 
 
 def _bases(node: ast.ClassDef) -> list[str]:
@@ -409,6 +438,8 @@ class DjangoExtractor(ast.NodeVisitor):
             self._graphql_type(node)
         elif _has_base(node, {"BaseModel"}) and not _has_base(node, MODEL_BASES):
             self._pydantic_model(node)
+        elif self._is_ninja_schema(node):
+            self._pydantic_model(node, ninja=True)
         elif _has_base(node, ADMIN_BASES) or node.name.endswith("Admin"):
             self._admin(node)
         elif any(x.endswith("Config") for x in _bases(node)) or node.name.endswith("Config"):
@@ -577,6 +608,9 @@ class DjangoExtractor(ast.NodeVisitor):
                     declared.append((fname, stmt.lineno))
             if isinstance(stmt, ast.FunctionDef) and "queryset" in ast.dump(stmt):
                 queryset_in_serializer = True
+        nested_by_name = self._nested_serializer_fields(node)
+        method_fields = self._method_field_names(node)
+        to_repr_fields = self._to_representation_fields(node)
         body = self._slice(node)
         if queryset_in_serializer or ".objects." in body or "objects.filter" in body:
             ser.extra["queryset_in_serializer"] = True
@@ -586,10 +620,27 @@ class DjangoExtractor(ast.NodeVisitor):
             for f in meta_fields:
                 if f not in existing:
                     fields.append((f, node.lineno))
+        existing_names = {n for n, _ in fields}
+        for fname in to_repr_fields:
+            if fname not in existing_names:
+                fields.append((fname, node.lineno))
+                existing_names.add(fname)
         for fname, lineno in fields:
             fq = f"{qname}.{fname}"
-            fn = self.add_node(NodeType.SERIALIZER_FIELD, fname, fq, lineno, {"app": self.app})
+            field_extra: dict = {"app": self.app}
+            nested = nested_by_name.get(fname)
+            if nested:
+                field_extra["nested_serializer"] = nested
+            if fname in method_fields:
+                field_extra["method_field"] = True
+            if fname in to_repr_fields:
+                field_extra["from_to_representation"] = True
+            fn = self.add_node(NodeType.SERIALIZER_FIELD, fname, fq, lineno, field_extra)
             self.add_edge(ser.id, fn.id, EdgeType.HAS_FIELD)
+            if nested:
+                nested_q = nested if "." in nested else f"{self.app}.{nested.split('.')[-1]}"
+                self.add_edge(fn.id, node_id(NodeType.SERIALIZER, nested_q), EdgeType.USES_SERIALIZER, extra={"nested": True})
+                self.add_edge(ser.id, node_id(NodeType.SERIALIZER, nested_q), EdgeType.CALLS, extra={"nested": True})
             if meta_model:
                 model_q = meta_model if "." in meta_model else f"{self.app}.{meta_model.split('.')[-1]}"
                 self.add_edge(fn.id, node_id(NodeType.FIELD, f"{model_q}.{fname}"), EdgeType.SERIALIZES, confidence=0.85)
@@ -598,6 +649,17 @@ class DjangoExtractor(ast.NodeVisitor):
             self.add_edge(ser.id, node_id(NodeType.MODEL, model_q), EdgeType.SERIALIZES)
         if meta_exclude:
             ser.extra["exclude"] = meta_exclude
+        if nested_by_name:
+            ser.extra["nested_serializers"] = sorted(set(nested_by_name.values()))
+        if method_fields:
+            ser.extra["method_fields"] = sorted(method_fields)
+        if to_repr_fields:
+            ser.extra["to_representation_fields"] = to_repr_fields
+        elif any(isinstance(s, ast.FunctionDef) and s.name == "to_representation" for s in node.body):
+            ser.extra["to_representation"] = True
+            self.graph.residuals.append(
+                f"to_representation on {qname} ({self.rel_path}:{node.lineno}) — published fields not parsed"
+            )
 
     def _view(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
@@ -637,9 +699,14 @@ class DjangoExtractor(ast.NodeVisitor):
             if isinstance(stmt, ast.FunctionDef) and stmt.name == "get_serializer_class":
                 dynamic_serializer = True
                 extra["get_serializer_class"] = True
-                self.graph.residuals.append(
-                    f"Dynamic get_serializer_class on {qname} ({self.rel_path}:{stmt.lineno})"
-                )
+                resolved = self._serializer_names_in(stmt)
+                extra["serializer_classes"] = resolved
+                if resolved:
+                    extra["get_serializer_class_resolved"] = True
+                else:
+                    self.graph.residuals.append(
+                        f"Dynamic get_serializer_class on {qname} ({self.rel_path}:{stmt.lineno})"
+                    )
             if isinstance(stmt, ast.FunctionDef) and stmt.name in {
                 "list",
                 "create",
@@ -662,6 +729,14 @@ class DjangoExtractor(ast.NodeVisitor):
                 else f"{self.app}.{serializer_class.split('.')[-1]}"
             )
             self.add_edge(view.id, node_id(NodeType.SERIALIZER, ser_q), EdgeType.USES_SERIALIZER)
+        for name in extra.get("serializer_classes") or []:
+            ser_q = name if "." in name and not name.startswith("serializers") else f"{self.app}.{name.split('.')[-1]}"
+            self.add_edge(
+                view.id,
+                node_id(NodeType.SERIALIZER, ser_q),
+                EdgeType.USES_SERIALIZER,
+                extra={"from": "get_serializer_class"},
+            )
         if extra.get("filterset") and extra["filterset"] not in {True, False}:
             fs = str(extra["filterset"])
             fs_q = fs if "." in fs and not fs.startswith("filter") else f"{self.app}.{fs.split('.')[-1]}"
@@ -987,6 +1062,21 @@ class DjangoExtractor(ast.NodeVisitor):
                     {"app": self.app, "route": route, "ninja": True, "method": short.upper()},
                 )
                 self.add_edge(rn.id, view.id, EdgeType.PUBLISHES_ROUTE)
+            for schema_name in self._ninja_response_schemas(node, dec):
+                schema_q = f"{self.app}.{schema_name.split('.')[-1]}"
+                self.add_edge(
+                    view.id,
+                    node_id(NodeType.PYDANTIC_MODEL, schema_q),
+                    EdgeType.USES_SERIALIZER,
+                    extra={"ninja_schema": True},
+                )
+                if route:
+                    self.add_edge(
+                        rn.id,
+                        node_id(NodeType.PYDANTIC_MODEL, schema_q),
+                        EdgeType.USES_SERIALIZER,
+                        extra={"ninja_schema": True},
+                    )
         return hit
 
     def _owner_id(self) -> tuple[NodeType, str]:
@@ -1095,6 +1185,7 @@ class DjangoExtractor(ast.NodeVisitor):
                 {"app": self.app},
             )
             self.add_edge(gql.id, field.id, EdgeType.HAS_FIELD)
+            extra.setdefault("fields", []).append(fname)
             if root and not any(
                 n.type is NodeType.GRAPHQL_OPERATION and n.name == fname for n in self.graph.nodes
             ):
@@ -1147,21 +1238,182 @@ class DjangoExtractor(ast.NodeVisitor):
                     EdgeType.PUBLISHES_GRAPHQL,
                 )
 
-    def _pydantic_model(self, node: ast.ClassDef) -> None:
+    def _pydantic_model(self, node: ast.ClassDef, *, ninja: bool = False) -> None:
         qname = f"{self.app}.{node.name}"
-        extra: dict = _with_doc({"app": self.app, "pydantic": True}, node)
+        extra: dict = _with_doc({"app": self.app, "pydantic": True, "ninja_schema": ninja}, node)
+        meta_fields: list[str] = []
+        for stmt in node.body:
+            if isinstance(stmt, ast.ClassDef) and stmt.name == "Meta":
+                for m in stmt.body:
+                    if isinstance(m, ast.Assign) and m.targets and isinstance(m.targets[0], ast.Name) and m.targets[0].id == "fields":
+                        if isinstance(m.value, (ast.List, ast.Tuple)):
+                            meta_fields = [
+                                elt.value
+                                for elt in m.value.elts
+                                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                            ]
+        extra["fields"] = []
         model = self.add_node(NodeType.PYDANTIC_MODEL, node.name, qname, node.lineno, extra)
+        seen: set[str] = set()
         for stmt in node.body:
             if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
                 fname = stmt.target.id
+                if fname.startswith("_") or fname in seen:
+                    continue
+                seen.add(fname)
+                extra["fields"].append(fname)
                 field = self.add_node(
                     NodeType.SERIALIZER_FIELD,
                     fname,
                     f"{qname}.{fname}",
                     stmt.lineno,
-                    {"app": self.app, "pydantic": True},
+                    {"app": self.app, "pydantic": True, "ninja_schema": ninja},
                 )
                 self.add_edge(model.id, field.id, EdgeType.HAS_FIELD)
+                for nested in _ann_class_names(stmt.annotation):
+                    if nested in {"Optional", "List", "Dict", "Union", "Any", "Schema", "BaseModel", node.name}:
+                        continue
+                    self.add_edge(
+                        field.id,
+                        node_id(NodeType.PYDANTIC_MODEL, f"{self.app}.{nested}"),
+                        EdgeType.USES_SERIALIZER,
+                        extra={"nested": True},
+                    )
+                    self.add_edge(
+                        model.id,
+                        node_id(NodeType.PYDANTIC_MODEL, f"{self.app}.{nested}"),
+                        EdgeType.CALLS,
+                        extra={"nested": True},
+                    )
+        for fname in meta_fields:
+            if fname in seen:
+                continue
+            seen.add(fname)
+            extra["fields"].append(fname)
+            field = self.add_node(
+                NodeType.SERIALIZER_FIELD,
+                fname,
+                f"{qname}.{fname}",
+                node.lineno,
+                {"app": self.app, "pydantic": True, "ninja_schema": ninja},
+            )
+            self.add_edge(model.id, field.id, EdgeType.HAS_FIELD)
+
+    def _looks_like_ninja(self) -> bool:
+        return _looks_like_ninja_blob(self.imports, self.from_imports)
+
+    def _is_ninja_schema(self, node: ast.ClassDef) -> bool:
+        for base in _bases(node):
+            short = base.split(".")[-1]
+            if short not in NINJA_SCHEMA_BASES:
+                continue
+            resolved = self._resolve(base)
+            if "ninja" in resolved.lower():
+                return True
+        return False
+
+    def _ninja_response_schemas(self, node: ast.FunctionDef, dec: ast.Call) -> list[str]:
+        names = _ann_class_names(node.returns)
+        names.extend(_ann_class_names(_kw(dec, "response")))
+        resp = _kw(dec, "response")
+        if isinstance(resp, ast.Dict):
+            for val in resp.values:
+                names.extend(_ann_class_names(val))
+        skip = {
+            "dict",
+            "list",
+            "Dict",
+            "List",
+            "Any",
+            "None",
+            "int",
+            "str",
+            "bool",
+            "float",
+            "Optional",
+            "Union",
+            "HttpResponse",
+            "HttpRequest",
+        }
+        out: list[str] = []
+        seen: set[str] = set()
+        for name in names:
+            short = name.split(".")[-1]
+            if short in skip or short in seen or not short[:1].isupper():
+                continue
+            seen.add(short)
+            out.append(short)
+        return out
+
+    def _nested_serializer_fields(self, node: ast.ClassDef) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for stmt in node.body:
+            if not isinstance(stmt, ast.Assign) or not stmt.targets or not isinstance(stmt.targets[0], ast.Name):
+                continue
+            fname = stmt.targets[0].id
+            call = stmt.value if isinstance(stmt.value, ast.Call) else None
+            raw = _name(call.func if call else stmt.value)
+            if not raw:
+                continue
+            short = raw.split(".")[-1]
+            if short.endswith("Serializer") and short not in SERIALIZER_BASES:
+                found[fname] = short
+        return found
+
+    def _method_field_names(self, node: ast.ClassDef) -> set[str]:
+        names: set[str] = set()
+        for stmt in node.body:
+            if not isinstance(stmt, ast.Assign) or not stmt.targets or not isinstance(stmt.targets[0], ast.Name):
+                continue
+            call = stmt.value if isinstance(stmt.value, ast.Call) else None
+            raw = _name(call.func if call else None) or ""
+            if raw.split(".")[-1] == "SerializerMethodField":
+                names.add(stmt.targets[0].id)
+        return names
+
+    def _to_representation_fields(self, node: ast.ClassDef) -> list[str]:
+        for stmt in node.body:
+            if isinstance(stmt, ast.FunctionDef) and stmt.name == "to_representation":
+                keys: list[str] = []
+                seen: set[str] = set()
+                for child in ast.walk(stmt):
+                    if not isinstance(child, ast.Return) or not isinstance(child.value, ast.Dict):
+                        continue
+                    for key in child.value.keys:
+                        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                            if key.value not in seen:
+                                seen.add(key.value)
+                                keys.append(key.value)
+                return keys
+        return []
+
+    def _serializer_names_in(self, node: ast.AST) -> list[str]:
+        names: list[str] = []
+        seen: set[str] = set()
+        for child in ast.walk(node):
+            candidates: list[str] = []
+            if isinstance(child, ast.Return) and child.value is not None:
+                n = _name(child.value)
+                if n:
+                    candidates.append(n)
+                if isinstance(child.value, ast.Dict):
+                    for val in child.value.values:
+                        vn = _name(val)
+                        if vn:
+                            candidates.append(vn)
+                if isinstance(child.value, ast.Subscript):
+                    inner = child.value.value
+                    if isinstance(inner, ast.Dict):
+                        for val in inner.values:
+                            vn = _name(val)
+                            if vn:
+                                candidates.append(vn)
+            for n in candidates:
+                short = n.split(".")[-1]
+                if short.endswith("Serializer") and short not in SERIALIZER_BASES and short not in seen:
+                    seen.add(short)
+                    names.append(short)
+        return names
 
     def _consumer(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"

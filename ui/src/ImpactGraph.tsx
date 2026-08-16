@@ -19,14 +19,20 @@ import {
 import "@xyflow/react/dist/style.css";
 import { typeLabel, wrapHint } from "./format";
 import {
+  GRAPH_LAYOUTS,
   defaultDetail,
   defaultProjection,
   familyFor,
   isolatePathIds,
+  layoutGraph,
+  layoutUsesColumns,
+  readGraphLayout,
   searchNodes,
   visibleGraph,
+  writeGraphLayout,
   type GraphDetail,
   type GraphFamily,
+  type GraphLayoutId,
   type GraphProjection,
 } from "./graphView";
 import { inspectNode, type InspectorLink } from "./nodeInspector";
@@ -34,7 +40,6 @@ import { assignEdgeStepPositions } from "./graphEdges";
 import {
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
-  layoutNodes,
   type GraphEdge,
   type GraphNode,
 } from "./types";
@@ -51,6 +56,25 @@ const WEIGHT_COLOR: Record<string, string> = {
   critical: "var(--edge-critical)",
 };
 
+const HANDLE_POS = {
+  n: Position.Top,
+  e: Position.Right,
+  s: Position.Bottom,
+  w: Position.Left,
+} as const;
+
+function facingHandles(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): { source: keyof typeof HANDLE_POS; target: keyof typeof HANDLE_POS } {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? { source: "e", target: "w" } : { source: "w", target: "e" };
+  }
+  return dy >= 0 ? { source: "s", target: "n" } : { source: "n", target: "s" };
+}
+
 function LoadNode({
   data,
   selected,
@@ -61,12 +85,16 @@ function LoadNode({
   const roles = (data.roles || []).map((role) => `role-${role}`).join(" ");
   return (
     <div className={["lp-node", selected ? "selected" : "", data.dim ? "dim" : "", roles].filter(Boolean).join(" ")}>
-      <Handle type="target" position={Position.Left} isConnectable={false} />
+      {(["n", "e", "s", "w"] as const).map((side) => (
+        <Handle key={`tgt-${side}`} id={`tgt-${side}`} type="target" position={HANDLE_POS[side]} isConnectable={false} />
+      ))}
       <div className="t">{typeLabel(data.type)}</div>
       <div className="n" title={data.name}>
         {wrapHint(data.name)}
       </div>
-      <Handle type="source" position={Position.Right} isConnectable={false} />
+      {(["n", "e", "s", "w"] as const).map((side) => (
+        <Handle key={`src-${side}`} id={`src-${side}`} type="source" position={HANDLE_POS[side]} isConnectable={false} />
+      ))}
     </div>
   );
 }
@@ -147,10 +175,12 @@ export function toReactFlowElements(
   nodes: GraphNode[],
   edges: GraphEdge[],
   selectedId: string | null = null,
-  opts: { roles?: Record<string, string[]>; testOverlay?: boolean } = {},
+  opts: { roles?: Record<string, string[]>; testOverlay?: boolean; layout?: GraphLayoutId } = {},
 ): { rfNodes: Node[]; rfEdges: Edge[] } {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const pos = layoutNodes(nodes, edges);
+  const layout = opts.layout ?? "layers";
+  const columns = layoutUsesColumns(layout);
+  const pos = layoutGraph(nodes, edges, layout);
   const stepByEdge = assignEdgeStepPositions(nodes, edges, pos);
   const rfNodes: Node[] = nodes.map((n) => {
     const roles = opts.roles?.[n.id] || [];
@@ -178,11 +208,18 @@ export function toReactFlowElements(
     .map((e) => {
       const stroke = WEIGHT_COLOR[e.weight] || "var(--edge-cheap)";
       const labeled = Boolean(selectedId && (e.src === selectedId || e.dst === selectedId));
+      const from = pos.get(e.src) ?? { x: 0, y: 0 };
+      const to = pos.get(e.dst) ?? { x: 0, y: 0 };
+      const facing = columns ? { source: "e" as const, target: "w" as const } : facingHandles(from, to);
       return {
         id: e.id,
         source: e.src,
         target: e.dst,
-        type: "loadstep",
+        sourceHandle: `src-${facing.source}`,
+        targetHandle: `tgt-${facing.target}`,
+        sourcePosition: HANDLE_POS[facing.source],
+        targetPosition: HANDLE_POS[facing.target],
+        type: columns ? "loadstep" : "default",
         animated: e.weight === "critical",
         data: { stepPosition: stepByEdge.get(e.id) ?? 0.5 },
         style: {
@@ -457,6 +494,7 @@ export function ImpactGraph({
   };
   const [projection, setProjection] = useState<GraphProjection | null>(null);
   const [detail, setDetail] = useState<GraphDetail | null>(null);
+  const [layout, setLayout] = useState<GraphLayoutId>(() => readGraphLayout());
   const [families, setFamilies] = useState<Set<GraphFamily>>(new Set(ALL_FAMILIES));
   const [neighborhoodOnly, setNeighborhoodOnly] = useState(false);
   const [query, setQuery] = useState("");
@@ -484,20 +522,21 @@ export function ImpactGraph({
     [scopedNodes, scopedEdges, level, families, neighborhoodFocus],
   );
   const topologyKey = useMemo(
-    () => `${visible.nodes.map((n) => n.id).join("\0")}|${visible.edges.map((e) => e.id).join("\0")}`,
-    [visible.nodes, visible.edges],
+    () => `${layout}|${visible.nodes.map((n) => n.id).join("\0")}|${visible.edges.map((e) => e.id).join("\0")}`,
+    [layout, visible.nodes, visible.edges],
   );
   const selected = selectedId ? nodes.find((n) => n.id === selectedId) ?? null : null;
   const { rfNodes, rfEdges } = useMemo(() => {
     const elements = toReactFlowElements(visible.nodes, visible.edges, selectedId, {
       roles: nodeRoles,
       testOverlay,
+      layout,
     });
     if (reduceMotion) {
       elements.rfEdges = elements.rfEdges.map((edge) => ({ ...edge, animated: false }));
     }
     return elements;
-  }, [visible.nodes, visible.edges, selectedId, reduceMotion, nodeRoles, testOverlay]);
+  }, [visible.nodes, visible.edges, selectedId, reduceMotion, nodeRoles, testOverlay, layout]);
 
   useEffect(() => {
     if (!focusPath) return;
@@ -617,6 +656,29 @@ export function ImpactGraph({
               </button>
             ))}
         </div>
+        {view === "2d" ? (
+          <label className="graph-layout">
+            Layout
+            <select
+              id="graph-layout"
+              data-testid="graph-layout"
+              value={layout}
+              aria-label="2D layout algorithm"
+              onChange={(event) => {
+                const next = GRAPH_LAYOUTS.find((item) => item.id === event.target.value)?.id;
+                if (!next) return;
+                setLayout(next);
+                writeGraphLayout(next);
+              }}
+            >
+              {GRAPH_LAYOUTS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <button
           type="button"
           className={neighborhoodOnly ? "chip-btn active" : "chip-btn"}

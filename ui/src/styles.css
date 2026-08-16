@@ -1135,6 +1135,26 @@ kbd {
   background: var(--bg-2);
 }
 .graph-count { margin-left: auto; font-size: 11px; }
+.graph-layout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+.graph-layout select {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 10px;
+  height: 26px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0;
+  cursor: pointer;
+}
 .chip-btn {
   background: var(--surface);
   border: 1px solid var(--line);

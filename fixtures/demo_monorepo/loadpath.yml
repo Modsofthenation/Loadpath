@@ -2,7 +2,7 @@
 contexts:
   billing:
     django_apps: [billing]
-    react: [src/features/billing, frontend/src/features/billing]
+    react: [src/features/billing, frontend/src/features/billing, frontend/src/app/invoices]
     public_api:
       - "GET /api/invoices"
       - "POST /api/invoices"

@@ -9,6 +9,7 @@ export const SINK_TYPES = new Set([
   "django.route",
   "react.route",
   "react.page",
+  "react.server_action",
   "django.task",
   "django.migration_op",
   "django.permission",
@@ -82,6 +83,7 @@ const TYPE_PURPOSE: Record<string, string> = {
   "react.feature": "Frontend feature module (folder).",
   "react.route": "Client-side route. A sink: this is a URL the user can open.",
   "react.page": "Page or screen component rendered by a route.",
+  "react.server_action": "Next.js Server Action. A sink: the mutation runs on the server.",
   "react.component": "UI component.",
   "react.form_schema": "Zod (or similar) schema — typed form inputs on the client.",
   "react.test": "Frontend test covering a page, hook, or component.",
@@ -122,7 +124,27 @@ const FACT_LABELS: Record<string, string> = {
   get_serializer_class: "Dynamic serializer",
   dynamic: "Dynamic",
   fbv: "Function view",
-  ninja: "Django Ninja",
+  next_app: "Next.js App Router",
+  next_pages: "Next.js Pages Router",
+  next_kind: "Next file",
+  next_layout: "Layout",
+  server_action: "Server Action",
+  typed_client: "Typed client",
+  endpoint: "Endpoint",
+  procedure: "Procedure",
+  e2e: "E2E",
+  visits: "Visits",
+  nested_serializer: "Nested serializer",
+  nested_serializers: "Nested serializers",
+  method_field: "SerializerMethodField",
+  method_fields: "Method fields",
+  from_to_representation: "to_representation",
+  to_representation_fields: "to_representation fields",
+  to_representation: "Custom to_representation",
+  serializer_classes: "get_serializer_class returns",
+  get_serializer_class_resolved: "Serializer resolved",
+  ninja_schema: "Ninja Schema",
+  pydantic: "Pydantic",
   django_form: "Django form",
   mutation: "Mutation",
   has_error_boundary: "Error boundary",
@@ -185,6 +207,15 @@ const FACT_ORDER = [
   "fields",
   "form_fields",
   "exclude",
+  "nested_serializer",
+  "nested_serializers",
+  "method_fields",
+  "to_representation_fields",
+  "serializer_classes",
+  "typed_client",
+  "endpoint",
+  "procedure",
+  "visits",
   "kind",
   "bases",
   "permissions",
@@ -275,7 +306,22 @@ const HIDDEN_EXTRA_KEYS = new Set([
 ]);
 
 const ALWAYS_SHOW_FALSE = new Set(["looks_idempotent_on_pk", "null", "blank"]);
-const ROLE_FACT_KEYS = new Set(["inferred", "generated", "mutation", "fbv", "ninja", "filterset"]);
+const ROLE_FACT_KEYS = new Set([
+  "inferred",
+  "generated",
+  "mutation",
+  "fbv",
+  "ninja",
+  "filterset",
+  "next_app",
+  "next_pages",
+  "server_action",
+  "e2e",
+  "ninja_schema",
+  "pydantic",
+  "method_field",
+  "trpc",
+]);
 
 export type InspectorLink = {
   id: string;
@@ -343,6 +389,10 @@ export function inspectNode(
   if (extra.mutation) roles.push("mutation");
   if (extra.fbv) roles.push("function view");
   if (extra.ninja) roles.push("ninja");
+  if (extra.ninja_schema) roles.push("ninja schema");
+  if (extra.next_app) roles.push("app router");
+  if (extra.typed_client) roles.push(String(extra.typed_client));
+  if (extra.e2e) roles.push("e2e");
   if (extra.filterset === true) roles.push("filterset");
 
   const incoming = edges.filter((e) => e.dst === node.id);

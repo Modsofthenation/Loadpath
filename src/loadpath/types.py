@@ -61,6 +61,7 @@ class NodeType(StrEnum):
     FORM_SCHEMA = "react.form_schema"
     CONTEXT_PROVIDER = "react.context"
     REACT_TEST = "react.test"
+    SERVER_ACTION = "react.server_action"
     # Stitch
     OPENAPI_PATH = "openapi.path"
 
@@ -156,6 +157,7 @@ SINK_TYPES = {
     NodeType.SIDE_EFFECT,
     NodeType.GRAPHQL_OPERATION,
     NodeType.FASTAPI_ROUTE,
+    NodeType.SERVER_ACTION,
 }
 
 CONTRACT_TYPES = {

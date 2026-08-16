@@ -699,3 +699,75 @@ def test_filterset_is_a_form_and_links_from_the_view():
         for e in vg.edges
     )
 
+
+def test_resolves_get_serializer_class_returns():
+    source = (FIXTURE / "backend/billing/views.py").read_text()
+    g = extract_django_file("backend/billing/views.py", source, _cfg())
+    detail = next(n for n in g.nodes if n.name == "InvoiceDetailViewSet")
+    assert detail.extra.get("get_serializer_class") is True
+    assert set(detail.extra.get("serializer_classes") or []) >= {"InvoiceSerializer", "InvoiceDetailSerializer"}
+    assert not any("get_serializer_class" in r and "InvoiceDetailViewSet" in r for r in g.residuals)
+    assert any(
+        e.src == detail.id and "InvoiceDetailSerializer" in e.dst and e.type.value == "uses_serializer"
+        for e in g.edges
+    )
+
+
+def test_unresolved_get_serializer_class_is_residual():
+    source = (
+        "from rest_framework.viewsets import ModelViewSet\n"
+        "class InvoiceViewSet(ModelViewSet):\n"
+        "    def get_serializer_class(self):\n"
+        "        return registry[self.action]\n"
+    )
+    g = extract_django_file("backend/billing/views.py", source, _cfg())
+    assert any("get_serializer_class" in r for r in g.residuals)
+
+
+def test_nested_method_field_and_to_representation():
+    source = (FIXTURE / "backend/billing/serializers.py").read_text()
+    g = extract_django_file("backend/billing/serializers.py", source, _cfg())
+    detail = next(n for n in g.nodes if n.name == "InvoiceDetailSerializer")
+    assert "LineSerializer" in (detail.extra.get("nested_serializers") or [])
+    assert "display_total" in (detail.extra.get("method_fields") or [])
+    assert "display_total" in (detail.extra.get("to_representation_fields") or [])
+    lines = next(n for n in g.nodes if n.name == "lines" and "InvoiceDetailSerializer" in n.qualified_name)
+    assert lines.extra.get("nested_serializer") == "LineSerializer"
+    assert any(e.extra.get("nested") and "LineSerializer" in e.dst for e in g.edges)
+
+
+def test_unparsed_to_representation_is_residual():
+    source = (
+        "from rest_framework import serializers\n"
+        "class InvoiceSerializer(serializers.Serializer):\n"
+        "    def to_representation(self, instance):\n"
+        "        return helper(instance)\n"
+    )
+    g = extract_django_file("backend/billing/serializers.py", source, _cfg())
+    assert any("to_representation" in r for r in g.residuals)
+
+
+def test_dead_serializer_dict_does_not_resolve_get_serializer_class():
+    source = (
+        "from rest_framework.viewsets import ModelViewSet\n"
+        "class InvoiceViewSet(ModelViewSet):\n"
+        "    def get_serializer_class(self):\n"
+        "        unused = {\"list\": InvoiceSerializer}\n"
+        "        return registry[self.action]\n"
+    )
+    g = extract_django_file("backend/billing/views.py", source, _cfg())
+    assert any("get_serializer_class" in r for r in g.residuals)
+
+
+def test_marshmallow_schema_is_not_ninja_when_router_imported():
+    source = (
+        "from ninja import Router\n"
+        "from marshmallow import Schema\n"
+        "router = Router()\n"
+        "class Weird(Schema):\n"
+        "    amount: str\n"
+    )
+    g = extract_django_file("backend/billing/api.py", source, _cfg())
+    assert not any(n.extra.get("ninja_schema") for n in g.nodes)
+
+

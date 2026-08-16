@@ -9,7 +9,7 @@ from waffle import flag_is_active
 
 from billing.actors import rebuild_ledger
 from billing.models import Invoice
-from billing.serializers import InvoiceSerializer
+from billing.serializers import InvoiceDetailSerializer, InvoiceSerializer
 from billing.tasks import send_invoice_email
 
 
@@ -35,6 +35,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if flag_is_active(self.request, "async_ledger"):
             transaction.on_commit(lambda: rebuild_ledger.send(invoice.id))
         return invoice
+
+
+class InvoiceDetailViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [IsAuthenticated]
+    queryset = Invoice.objects.all()
+
+    def get_serializer_class(self):
+        if self.action == "list":
+            return InvoiceSerializer
+        return InvoiceDetailSerializer
 
 
 class InvoiceBoardView(TemplateView):

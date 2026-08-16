@@ -29,6 +29,20 @@ describe("toReactFlowElements", () => {
     expect(rfEdges[0].markerEnd).toMatchObject({ type: MarkerType.ArrowClosed });
     expect(rfEdges[0].label).toBeUndefined();
     expect(rfEdges[0].data).toMatchObject({ stepPosition: 0.5 });
+    expect(rfEdges[0].sourceHandle).toBe("src-e");
+    expect(rfEdges[0].targetHandle).toBe("tgt-w");
+  });
+
+  it("uses bezier edges and different positions for radial layout", () => {
+    const layered = toReactFlowElements(nodes, edges);
+    const radial = toReactFlowElements(nodes, edges, null, { layout: "radial" });
+    expect(radial.rfEdges[0]?.type).toBe("default");
+    expect(radial.rfEdges[0]?.sourceHandle).toMatch(/^src-/);
+    const moved = layered.rfNodes.some((n, i) => {
+      const other = radial.rfNodes[i]!;
+      return n.position.x !== other.position.x || n.position.y !== other.position.y;
+    });
+    expect(moved).toBe(true);
   });
 
   it("labels only edges incident to the selected node", () => {
