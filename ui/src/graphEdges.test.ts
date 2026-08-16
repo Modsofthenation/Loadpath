@@ -46,7 +46,21 @@ describe("assignEdgeStepPositions", () => {
     expect(steps.size).toBe(0);
   });
 
-  it("separates collinear verticals in the same gap even when their y ranges do not overlap", () => {
+  it("separates stacked route-to-view verticals that would read as one bus", () => {
+    const nodes = [node("r1", "django.route"), node("r2", "django.route"), node("v1", "django.view"), node("v2", "django.view")];
+    const pos = new Map([
+      ["r1", { x: 0, y: 0 }],
+      ["r2", { x: 0, y: 92 }],
+      ["v1", { x: 296, y: 48 }],
+      ["v2", { x: 296, y: 140 }],
+    ]);
+    const edges = [edge("r1", "v1"), edge("r2", "v2")];
+    const steps = assignEdgeStepPositions(nodes, edges, pos);
+    expect(steps.get("r1->v1")).toBe(0.2);
+    expect(steps.get("r2->v2")).toBe(0.8);
+  });
+
+  it("reuses a vertical when two bent edges are far apart in y", () => {
     const nodes = [node("r1", "django.route"), node("r2", "django.route"), node("v1", "django.view"), node("v2", "django.view")];
     const pos = new Map([
       ["r1", { x: 0, y: 0 }],
@@ -56,8 +70,8 @@ describe("assignEdgeStepPositions", () => {
     ]);
     const edges = [edge("r1", "v1"), edge("r2", "v2")];
     const steps = assignEdgeStepPositions(nodes, edges, pos);
-    expect(steps.get("r1->v1")).toBe(0.2);
-    expect(steps.get("r2->v2")).toBe(0.8);
+    expect(steps.get("r1->v1")).toBe(0.5);
+    expect(steps.get("r2->v2")).toBe(0.5);
   });
 
   it("spreads lanes between 0.2 and 0.8", () => {
@@ -72,8 +86,8 @@ describe("getSmoothStepPath stepPosition", () => {
     const shared = {
       sourceX: 208,
       sourceY: 32,
-      targetX: 336,
       targetY: 120,
+      targetX: 336,
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
     };

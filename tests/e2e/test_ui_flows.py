@@ -559,29 +559,31 @@ def test_ui_architecture_edges_use_distinct_verticals(live_app, browser_page):
     wait_visible_graph(page)
     info = page.evaluate(
         """() => {
-          const paths = [...document.querySelectorAll('.react-flow__edge-path')].map((p) => p.getAttribute('d') || '');
-          const bySx = {};
-          for (const d of paths) {
-            const m = d.match(/^M(-?\\d+\\.?\\d*)/);
-            const nums = [...d.matchAll(/(-?\\d+\\.?\\d*)/g)].map((mm) => Number(mm[1]));
-            if (!m || nums.length < 4) continue;
-            const sx = Math.round(Number(m[1]));
-            const lastX = nums[nums.length - 2];
-            if (lastX <= sx) continue;
-            const verts = [];
+          const segs = [];
+          for (const p of document.querySelectorAll('.react-flow__edge-path')) {
+            const nums = [...(p.getAttribute('d') || '').matchAll(/(-?\\d+\\.?\\d*)/g)].map((mm) => Number(mm[1]));
             for (let i = 0; i + 3 < nums.length; i += 2) {
-              if (Math.abs(nums[i] - nums[i + 2]) < 1 && Math.abs(nums[i + 1] - nums[i + 3]) > 8) {
-                verts.push(Math.round(nums[i]));
+              if (Math.abs(nums[i] - nums[i + 2]) < 1 && Math.abs(nums[i + 1] - nums[i + 3]) > 16) {
+                const y0 = Math.min(nums[i + 1], nums[i + 3]);
+                const y1 = Math.max(nums[i + 1], nums[i + 3]);
+                segs.push({ x: Math.round(nums[i]), y0, y1 });
               }
             }
-            (bySx[sx] ||= []).push(verts);
           }
-          return Object.values(bySx).filter((list) => list.length >= 2);
+          const overlaps = [];
+          for (let i = 0; i < segs.length; i++) {
+            for (let j = i + 1; j < segs.length; j++) {
+              const a = segs[i];
+              const b = segs[j];
+              if (a.x !== b.x) continue;
+              if (a.y0 < b.y1 - 4 && b.y0 < a.y1 - 4) overlaps.push({ a, b });
+            }
+          }
+          return { segCount: segs.length, overlapCount: overlaps.length, overlaps: overlaps.slice(0, 5) };
         }"""
     )
-    assert info, "expected multiple left-to-right edges from one column"
-    distinct = any(len({x for verts in group for x in verts}) > 1 for group in info)
-    assert distinct, info
+    assert info["segCount"] > 0, info
+    assert info["overlapCount"] == 0, info
 
 
 @pytest.mark.playwright
