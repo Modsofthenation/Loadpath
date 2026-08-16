@@ -56,8 +56,8 @@ describe("assignEdgeStepPositions", () => {
     ]);
     const edges = [edge("r1", "v1"), edge("r2", "v2")];
     const steps = assignEdgeStepPositions(nodes, edges, pos);
-    expect(steps.get("r1->v1")).toBe(0.2);
-    expect(steps.get("r2->v2")).toBe(0.8);
+    expect(steps.get("r1->v1")).toBeCloseTo(0.2);
+    expect(steps.get("r2->v2")).toBeCloseTo(0.8);
   });
 
   it("reuses a vertical when two bent edges are far apart in y", () => {
@@ -72,6 +72,31 @@ describe("assignEdgeStepPositions", () => {
     const steps = assignEdgeStepPositions(nodes, edges, pos);
     expect(steps.get("r1->v1")).toBe(0.5);
     expect(steps.get("r2->v2")).toBe(0.5);
+  });
+
+  it("puts skip-column and next-column edges on the same pixel tracks", () => {
+    const nodes = [
+      node("r1", "django.route"),
+      node("r2", "django.route"),
+      node("u", "django.url_name"),
+      node("v1", "django.view"),
+      node("v2", "django.view"),
+    ];
+    const pos = new Map([
+      ["r1", { x: 0, y: 0 }],
+      ["r2", { x: 0, y: 92 }],
+      ["u", { x: 296, y: 0 }],
+      ["v1", { x: 592, y: 184 }],
+      ["v2", { x: 592, y: 276 }],
+    ]);
+    const edges = [edge("r1", "v1"), edge("r2", "u")];
+    const steps = assignEdgeStepPositions(nodes, edges, pos);
+    const srcX = 208;
+    const nextCol = 296;
+    const skipCol = 592;
+    const xNext = srcX + (nextCol - srcX) * (steps.get("r2->u") ?? 0);
+    const xSkip = srcX + (skipCol - srcX) * (steps.get("r1->v1") ?? 0);
+    expect(Math.abs(xNext - xSkip)).toBeGreaterThan(40);
   });
 
   it("spreads lanes between 0.2 and 0.8", () => {

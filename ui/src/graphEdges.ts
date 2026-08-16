@@ -16,6 +16,8 @@ type Span = {
   id: string;
   y0: number;
   y1: number;
+  sourceX: number;
+  targetX: number;
   corridor: string;
 };
 
@@ -36,13 +38,17 @@ export function assignEdgeStepPositions(
     if (Math.abs(sourceY - targetY) < HORIZONTAL_EPS) continue;
     const sourceX = src.x + GRAPH_NODE_WIDTH;
     const targetX = dst.x;
+    const gap = targetX - sourceX;
+    if (gap < HORIZONTAL_EPS) continue;
     const y0 = Math.min(sourceY, targetY);
     const y1 = Math.max(sourceY, targetY);
     spans.push({
       id: edge.id,
       y0,
       y1,
-      corridor: `${Math.round(sourceX / 8)}>${Math.round(targetX / 8)}`,
+      sourceX,
+      targetX,
+      corridor: `${Math.round(sourceX / 8)}`,
     });
   }
 
@@ -58,8 +64,17 @@ export function assignEdgeStepPositions(
     const sorted = [...group].sort((a, b) => a.y0 - b.y0 || a.y1 - b.y1 || a.id.localeCompare(b.id));
     const laneOf = lanesFor(sorted);
     const laneCount = Math.max(0, ...laneOf.values()) + 1;
+    const minDx = Math.min(...sorted.map((span) => span.targetX - span.sourceX));
     for (const span of sorted) {
-      steps.set(span.id, stepForLane(laneOf.get(span.id) ?? 0, laneCount));
+      const lane = laneOf.get(span.id) ?? 0;
+      const t = stepForLane(lane, laneCount);
+      const denom = span.targetX - span.sourceX;
+      if (Math.abs(denom - minDx) < 0.5) {
+        steps.set(span.id, t);
+        continue;
+      }
+      const laneX = span.sourceX + minDx * t;
+      steps.set(span.id, Math.min(0.92, Math.max(0.08, (laneX - span.sourceX) / denom)));
     }
   }
   return steps;

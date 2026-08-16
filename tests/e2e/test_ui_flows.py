@@ -559,14 +559,28 @@ def test_ui_architecture_edges_use_distinct_verticals(live_app, browser_page):
     wait_visible_graph(page)
     info = page.evaluate(
         """() => {
+          const pointsOf = (d) => {
+            const pts = [];
+            const re = /([MLQC])([^MLQC]*)/g;
+            let m;
+            while ((m = re.exec(d))) {
+              const nums = [...m[2].matchAll(/-?\\d+\\.?\\d*/g)].map(Number);
+              if (m[1] === 'Q' && nums.length >= 4) pts.push({ x: nums[2], y: nums[3] });
+              else if (m[1] === 'C' && nums.length >= 6) pts.push({ x: nums[4], y: nums[5] });
+              else {
+                for (let i = 0; i + 1 < nums.length; i += 2) pts.push({ x: nums[i], y: nums[i + 1] });
+              }
+            }
+            return pts;
+          };
           const segs = [];
           for (const p of document.querySelectorAll('.react-flow__edge-path')) {
-            const nums = [...(p.getAttribute('d') || '').matchAll(/(-?\\d+\\.?\\d*)/g)].map((mm) => Number(mm[1]));
-            for (let i = 0; i + 3 < nums.length; i += 2) {
-              if (Math.abs(nums[i] - nums[i + 2]) < 1 && Math.abs(nums[i + 1] - nums[i + 3]) > 16) {
-                const y0 = Math.min(nums[i + 1], nums[i + 3]);
-                const y1 = Math.max(nums[i + 1], nums[i + 3]);
-                segs.push({ x: Math.round(nums[i]), y0, y1 });
+            const pts = pointsOf(p.getAttribute('d') || '');
+            for (let i = 0; i + 1 < pts.length; i++) {
+              const a = pts[i];
+              const b = pts[i + 1];
+              if (Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) > 16) {
+                segs.push({ x: Math.round(a.x), y0: Math.min(a.y, b.y), y1: Math.max(a.y, b.y) });
               }
             }
           }
