@@ -656,29 +656,27 @@ export function ImpactGraph({
               </button>
             ))}
         </div>
-        {view === "2d" ? (
-          <label className="graph-layout">
-            Layout
-            <select
-              id="graph-layout"
-              data-testid="graph-layout"
-              value={layout}
-              aria-label="2D layout algorithm"
-              onChange={(event) => {
-                const next = GRAPH_LAYOUTS.find((item) => item.id === event.target.value)?.id;
-                if (!next) return;
-                setLayout(next);
-                writeGraphLayout(next);
-              }}
-            >
-              {GRAPH_LAYOUTS.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
+        <label className="graph-layout">
+          Layout
+          <select
+            id="graph-layout"
+            data-testid="graph-layout"
+            value={layout}
+            aria-label="Graph layout algorithm"
+            onChange={(event) => {
+              const next = GRAPH_LAYOUTS.find((item) => item.id === event.target.value)?.id;
+              if (!next) return;
+              setLayout(next);
+              writeGraphLayout(next);
+            }}
+          >
+            {GRAPH_LAYOUTS.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <button
           type="button"
           className={neighborhoodOnly ? "chip-btn active" : "chip-btn"}
@@ -749,8 +747,8 @@ export function ImpactGraph({
         ) : view === "3d" ? (
           <div className="graph-3d" data-testid="graph-3d">
             <p className="graph-3d-hint">
-              Architecture layers are stacked in depth (Django → stitch → React). Drag to orbit, scroll to
-              zoom, click a node to inspect it.
+              Same layout as the 2D map, with bounded context on the depth axis. Dashed edges are inferred.
+              Drag to orbit, scroll to zoom, click a node to inspect it.
             </p>
             <Suspense fallback={<p className="muted graph-3d-hint">Loading 3D layers…</p>}>
               <LayeredGraph3D
@@ -758,6 +756,9 @@ export function ImpactGraph({
                 edges={visible.edges}
                 selectedId={selectedId}
                 neighborIds={neighborhoodFocus ? visible.neighborIds : NO_NEIGHBORS}
+                layout={layout}
+                nodeRoles={nodeRoles}
+                testOverlay={testOverlay}
                 onSelect={(id) => {
                   setSelectedId(id);
                   if (!id) setNeighborhoodOnly(false);

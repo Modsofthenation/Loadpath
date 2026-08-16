@@ -7,10 +7,12 @@ import {
   defaultProjection,
   familyFor,
   isolatePathIds,
+  isInferredEdge,
   layoutGraph,
   layoutNodes3d,
   layoutUsesColumns,
   neighborIds,
+  nodeRadius3d,
   readGraphLayout,
   searchNodes,
   visibleGraph,
@@ -79,6 +81,63 @@ describe("layoutNodes3d", () => {
     const django = laid.get("a")!;
     const react = laid.get("c")!;
     expect(react.x).toBeGreaterThan(django.x);
+  });
+
+  it("packs occupied layers instead of leaving empty architecture gaps", () => {
+    const laid = layoutNodes3d([node("a", "django.model", "A"), node("c", "react.page", "C")]);
+    expect(laid.get("c")!.x - laid.get("a")!.x).toBe(160);
+  });
+
+  it("pulls a connected neighbor closer in Y than an unrelated sibling", () => {
+    const viewA = { ...node("view-a", "django.view", "AView"), context: "billing" };
+    const viewB = { ...node("view-b", "django.view", "BView"), context: "billing" };
+    const serZ = { ...node("ser-z", "django.serializer", "ZebraSerializer"), context: "billing" };
+    const serA = { ...node("ser-a", "django.serializer", "AlphaSerializer"), context: "billing" };
+    const laid = layoutNodes3d([viewA, viewB, serZ, serA], [edge("view-b", "ser-z")]);
+    const dyLinked = Math.abs(laid.get("ser-z")!.y - laid.get("view-b")!.y);
+    const dyOther = Math.abs(laid.get("ser-a")!.y - laid.get("view-b")!.y);
+    expect(dyLinked).toBeLessThan(dyOther);
+  });
+
+  it("separates bounded contexts along Z", () => {
+    const billing = { ...node("bill", "django.model", "Invoice"), context: "billing" };
+    const identity = { ...node("id", "django.model", "User"), context: "identity" };
+    const laid = layoutNodes3d([billing, identity]);
+    expect(laid.get("bill")!.z).not.toBe(laid.get("id")!.z);
+    expect(laid.get("bill")!.x).toBe(laid.get("id")!.x);
+  });
+
+  it("keeps radial's ring shape instead of packing unique x into columns", () => {
+    const ring = [
+      node("a", "django.view", "A"),
+      node("b", "django.serializer", "B"),
+      node("c", "react.page", "C"),
+      node("d", "django.model", "D"),
+    ];
+    const ringEdges = [edge("a", "b"), edge("a", "c"), edge("a", "d")];
+    const radial2d = layoutGraph(ring, ringEdges, "radial");
+    const radial3d = layoutNodes3d(ring, ringEdges, "radial");
+    const xs = ring.map((n) => radial3d.get(n.id)!.x);
+    expect(new Set(xs.map((x) => Math.round(x * 10))).size).toBeGreaterThan(1);
+    for (const n of ring) {
+      expect(radial3d.get(n.id)!.x).toBeCloseTo(radial2d.get(n.id)!.x * 0.45);
+      expect(radial3d.get(n.id)!.y).toBeCloseTo(-radial2d.get(n.id)!.y * 0.45);
+    }
+  });
+});
+
+describe("nodeRadius3d", () => {
+  it("keeps fields smaller than sinks and models", () => {
+    expect(nodeRadius3d("django.field")).toBeLessThan(nodeRadius3d("django.model"));
+    expect(nodeRadius3d("django.field")).toBeLessThan(nodeRadius3d("django.route"));
+    expect(nodeRadius3d("django.route")).toBeGreaterThan(nodeRadius3d("django.service"));
+  });
+});
+
+describe("isInferredEdge", () => {
+  it("treats low-confidence stitches as inferred", () => {
+    expect(isInferredEdge(edge("a", "b"))).toBe(false);
+    expect(isInferredEdge({ ...edge("a", "c"), confidence: 0.6 })).toBe(true);
   });
 });
 

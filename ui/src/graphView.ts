@@ -117,9 +117,11 @@ export const TYPE_COLOR: Record<string, string> = {
   "react.test": "#6c757d",
 };
 
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-const LAYER_GAP = 220;
-const SPIRAL = 26;
+const LAYER_GAP_3D = 160;
+const Y_SCALE_3D = 0.42;
+const CONTEXT_GAP_3D = 100;
+const FREEFORM_SCALE_3D = 0.45;
+export const INFERRED_EDGE = 0.8;
 
 export const LAYER_LABELS: Record<number, string> = {
   0: "context",
@@ -274,40 +276,112 @@ export function isolatePathIds(
   return { nodeIds: keep, edgeIds };
 }
 
-export function layoutNodes3d(nodes: GraphNode[]): Map<string, { x: number; y: number; z: number }> {
-  const columns = new Map<number, GraphNode[]>();
-  for (const n of nodes) {
-    const layer = layerFor(n.type);
-    const list = columns.get(layer) ?? [];
-    list.push(n);
-    columns.set(layer, list);
+function contextKey(node: GraphNode): string {
+  return (node.context || "").trim();
+}
+
+export function isInferredEdge(edge: GraphEdge): boolean {
+  return edge.confidence < INFERRED_EDGE;
+}
+
+/** Fields and tests stay small; sinks and published types read as landmarks. */
+export function nodeRadius3d(type: string): number {
+  if (OVERVIEW_HIDDEN_TYPES.has(type)) return 6.5;
+  if (PATH_SINK_TYPES.has(type)) return 13;
+  if (
+    type.endsWith(".model") ||
+    type.endsWith(".serializer") ||
+    type.endsWith(".view") ||
+    type.endsWith(".page") ||
+    type.endsWith(".component")
+  ) {
+    return 12;
   }
+  return 9.5;
+}
+
+/**
+ * 2D layout in XY (edge-aware), bounded context on Z.
+ * Column layouts pack occupied architecture ranks; radial/grid keep their shape.
+ */
+export function layoutNodes3d(
+  nodes: GraphNode[],
+  edges: GraphEdge[] = [],
+  layout: GraphLayoutId = "layers",
+): Map<string, { x: number; y: number; z: number }> {
+  const laid = layoutGraph(nodes, edges, layout);
   const pos = new Map<string, { x: number; y: number; z: number }>();
-  for (const [layer, list] of columns) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
-    const x = layer * LAYER_GAP;
-    list.forEach((n, i) => {
-      if (list.length === 1) {
-        pos.set(n.id, { x, y: 0, z: 0 });
-        return;
-      }
-      const r = SPIRAL * Math.sqrt(i + 1);
-      const theta = i * GOLDEN_ANGLE;
-      pos.set(n.id, { x, y: r * Math.cos(theta), z: r * Math.sin(theta) });
-    });
+  if (!nodes.length) return pos;
+
+  const contexts: string[] = [];
+  const seen = new Set<string>();
+  for (const n of nodes) {
+    const key = contextKey(n);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    contexts.push(key);
+  }
+  contexts.sort((a, b) => {
+    if (!a && b) return 1;
+    if (a && !b) return -1;
+    return a.localeCompare(b);
+  });
+  const ctxOf = new Map(contexts.map((c, i) => [c, i]));
+  const ctxMid = (contexts.length - 1) / 2;
+  const columns = layoutUsesColumns(layout);
+  const colXs = [...new Set([...laid.values()].map((p) => p.x))].sort((a, b) => a - b);
+  const colIndex = new Map(colXs.map((x, i) => [x, i]));
+
+  for (const n of nodes) {
+    const p = laid.get(n.id) ?? { x: 0, y: 0 };
+    const zi = ctxOf.get(contextKey(n)) ?? 0;
+    const z = (zi - ctxMid) * CONTEXT_GAP_3D;
+    if (columns) {
+      const xi = colIndex.get(p.x) ?? 0;
+      pos.set(n.id, { x: xi * LAYER_GAP_3D, y: -p.y * Y_SCALE_3D, z });
+    } else {
+      pos.set(n.id, { x: p.x * FREEFORM_SCALE_3D, y: -p.y * FREEFORM_SCALE_3D, z });
+    }
   }
   return pos;
 }
 
-export function layerCenters(nodes: GraphNode[]): { layer: number; x: number; count: number }[] {
-  const counts = new Map<number, number>();
+export function layerCenters(
+  nodes: GraphNode[],
+  pos: Map<string, { x: number; y: number; z: number }>,
+): { layer: number; x: number; count: number; radius: number }[] {
+  const groups = new Map<number, GraphNode[]>();
   for (const n of nodes) {
     const layer = layerFor(n.type);
-    counts.set(layer, (counts.get(layer) || 0) + 1);
+    const list = groups.get(layer) ?? [];
+    list.push(n);
+    groups.set(layer, list);
   }
-  return [...counts.entries()]
+  return [...groups.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([layer, count]) => ({ layer, x: layer * LAYER_GAP, count }));
+    .map(([layer, list]) => {
+      let x = 0;
+      let y = 0;
+      let z = 0;
+      for (const n of list) {
+        const p = pos.get(n.id) ?? { x: 0, y: 0, z: 0 };
+        x += p.x;
+        y += p.y;
+        z += p.z;
+      }
+      const n = Math.max(list.length, 1);
+      x /= n;
+      y /= n;
+      z /= n;
+      let radius = 28;
+      for (const node of list) {
+        const p = pos.get(node.id) ?? { x: 0, y: 0, z: 0 };
+        const dy = p.y - y;
+        const dz = p.z - z;
+        radius = Math.max(radius, Math.hypot(dy, dz) + nodeRadius3d(node.type) + 16);
+      }
+      return { layer, x, count: list.length, radius };
+    });
 }
 
 export function readGraphLayout(): GraphLayoutId {
