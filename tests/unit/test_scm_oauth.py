@@ -243,6 +243,21 @@ def test_scm_routes_reject_cross_origin(tmp_path, monkeypatch):
     assert client.get("/api/oauth/status", headers=headers).status_code == 403
     assert client.post("/api/oauth/github/start", headers=headers).status_code == 403
     assert client.post("/api/oauth/disconnect", json={"provider": "github"}, headers=headers).status_code == 403
+    assert client.put(
+        "/api/config",
+        json={"repo_path": "/tmp", "rules": ["leaked_seam"]},
+        headers=headers,
+    ).status_code == 403
+    assert client.post(
+        "/api/config/waiver",
+        json={"repo_path": "/tmp", "rule": "leaked_seam"},
+        headers=headers,
+    ).status_code == 403
+    assert client.post(
+        "/api/open",
+        json={"repo_path": "/tmp", "path": "a.py"},
+        headers=headers,
+    ).status_code == 403
 
 
 def test_loopback_request_helper():

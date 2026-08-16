@@ -46,7 +46,8 @@ export function CommandPalette({
   }, [query]);
 
   if (!open) return null;
-  const current = hits[index];
+  const shown = hits.slice(0, 40);
+  const current = shown[Math.min(index, Math.max(shown.length - 1, 0))];
 
   const run = (action?: PaletteAction) => {
     if (!action) return;
@@ -75,7 +76,7 @@ export function CommandPalette({
               onClose();
             } else if (e.key === "ArrowDown") {
               e.preventDefault();
-              setIndex((i) => Math.min(hits.length - 1, i + 1));
+              setIndex((i) => Math.min(Math.max(shown.length - 1, 0), i + 1));
             } else if (e.key === "ArrowUp") {
               e.preventDefault();
               setIndex((i) => Math.max(0, i - 1));
@@ -86,8 +87,8 @@ export function CommandPalette({
           }}
         />
         <ul>
-          {hits.length === 0 ? <li className="muted">No matches</li> : null}
-          {hits.slice(0, 40).map((action, i) => (
+          {shown.length === 0 ? <li className="muted">No matches</li> : null}
+          {shown.map((action, i) => (
             <li key={action.id}>
               <button
                 type="button"

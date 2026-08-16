@@ -129,7 +129,7 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> LoadpathCon
         contexts=contexts,
         django_layers=list(layers.get("django") or ["route", "view", "service", "model"]),
         react_layers=list(layers.get("react") or ["route", "page", "feature", "shared"]),
-        rules=list(raw.get("rules") or DEFAULT_RULES),
+        rules=list(DEFAULT_RULES if raw.get("rules") is None else raw.get("rules") or []),
         waivers=waivers,
         django_root=raw.get("django_root", "backend"),
         react_root=raw.get("react_root", "frontend/src"),
@@ -245,10 +245,8 @@ def write_config(repo_root: Path, document: dict[str, Any]) -> dict[str, Any]:
 
 def add_waiver(repo_root: Path, rule: str, node: str | None = None, reason: str = "") -> dict[str, Any]:
     cfg = load_config(repo_root)
-    doc = config_document(cfg)
-    waivers = list(doc.get("waivers") or [])
+    waivers = [{"rule": w.rule, "node": w.node, "reason": w.reason} for w in cfg.waivers]
     entry = {"rule": rule, "node": node, "reason": reason}
     if not any(w.get("rule") == rule and w.get("node") == node for w in waivers):
         waivers.append(entry)
-    doc["waivers"] = waivers
-    return write_config(repo_root, doc)
+    return write_config(repo_root, {"waivers": waivers})

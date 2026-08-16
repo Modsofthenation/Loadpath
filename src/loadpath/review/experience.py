@@ -468,9 +468,13 @@ def architecture_health(reviews: list[dict[str, Any]]) -> dict[str, Any]:
                 {"created_at": point["created_at"], "findings": count, "level": point["level"]}
             )
     points.sort(key=lambda p: p.get("created_at") or "")
+    contexts = {}
+    for name, series in sorted(context_series.items()):
+        series.sort(key=lambda p: p.get("created_at") or "")
+        contexts[name] = series[-24:]
     return {
         "points": points[-24:],
-        "contexts": {k: v[-24:] for k, v in sorted(context_series.items())},
+        "contexts": contexts,
     }
 
 

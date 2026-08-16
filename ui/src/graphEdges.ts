@@ -90,7 +90,7 @@ function gapAfter(colXs: number[], sourceX: number): number {
 function stepForLaneX(sourceX: number, targetX: number, laneX: number): number {
   const inner = targetX - sourceX - 2 * STEP_OFFSET;
   if (inner < 1) return 0.5;
-  return (laneX - sourceX - STEP_OFFSET) / inner;
+  return Math.min(1, Math.max(0, (laneX - sourceX - STEP_OFFSET) / inner));
 }
 
 /** First-fit coloring: two verticals share an x only when their y ranges stay apart. */

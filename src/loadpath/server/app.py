@@ -236,7 +236,7 @@ def _call_scm(provider: str, fn):
 
 def require_loopback(request: Request) -> None:
     if not is_loopback_request(request.headers.get("host") or "", request.headers.get("origin") or ""):
-        raise HTTPException(403, "SCM sign-in and repo listing are only available from the local Loadpath UI")
+        raise HTTPException(403, "This action is only available from the local Loadpath UI")
 
 
 def _attach_loadpath(listed: list[dict[str, Any]], repo_path: str | None) -> list[dict[str, Any]]:
@@ -552,14 +552,16 @@ def create_app(
         return config_document(load_config(root))
 
     @app.put("/api/config")
-    def api_config_put(body: ConfigUpdate) -> dict[str, Any]:
+    def api_config_put(request: Request, body: ConfigUpdate) -> dict[str, Any]:
+        require_loopback(request)
         root = require_repo_path(body.repo_path)
         document = body.model_dump(exclude_unset=True)
         document.pop("repo_path", None)
         return write_config(root, document)
 
     @app.post("/api/config/waiver")
-    def api_config_waiver(body: WaiverRequest) -> dict[str, Any]:
+    def api_config_waiver(request: Request, body: WaiverRequest) -> dict[str, Any]:
+        require_loopback(request)
         root = require_repo_path(body.repo_path)
         if not body.rule.strip():
             raise HTTPException(400, "rule is required")
@@ -605,7 +607,8 @@ def create_app(
         return workspace_status(root)
 
     @app.post("/api/open")
-    def api_open(body: OpenEditorRequest) -> dict[str, Any]:
+    def api_open(request: Request, body: OpenEditorRequest) -> dict[str, Any]:
+        require_loopback(request)
         root = require_repo_path(body.repo_path)
         try:
             return open_in_editor(root, body.path, body.line, body.editor)

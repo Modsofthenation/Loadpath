@@ -71,7 +71,7 @@ def _glob_to_re(pattern: str) -> re.Pattern[str]:
 
 
 def owners_for_path(path: str, rules: list[tuple[str, list[str]]]) -> list[str]:
-    normalized = path.replace("\\", "/").lstrip("./")
+    normalized = path.replace("\\", "/").removeprefix("./").lstrip("/")
     matched: list[str] = []
     for pattern, owners in rules:
         try:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from loadpath.config import add_waiver, config_document, load_config, write_config
+from loadpath.config import DEFAULT_RULES, add_waiver, config_document, load_config, write_config
 from loadpath.review.codeowners import owners_for_path, parse_codeowners, review_codeowners
 from loadpath.review.editor import editor_urls
 from loadpath.review.experience import (
@@ -31,6 +31,12 @@ def test_codeowners_last_match_wins():
     assert owners_for_path("backend/accounts/models.py", rules) == ["@backend-team"]
     assert owners_for_path("backend/billing/serializers.py", rules) == ["@billing-team", "@alice"]
     assert owners_for_path("README.md", rules) == ["@docs"]
+
+
+def test_codeowners_keeps_dot_directory_paths():
+    rules = parse_codeowners("/.github/ @platform\n")
+    assert owners_for_path(".github/workflows/ci.yml", rules) == ["@platform"]
+    assert owners_for_path("./.github/CODEOWNERS", rules) == ["@platform"]
 
 
 def test_review_codeowners_from_github_file(tmp_path):
@@ -212,6 +218,29 @@ def test_architecture_health_points():
     assert health["contexts"]["billing"][-1]["findings"] == 1
 
 
+def test_architecture_health_keeps_newest_context_points():
+    reviews = []
+    for i in range(30, 0, -1):
+        reviews.append(
+            {
+                "id": str(i),
+                "created_at": f"2026-01-{i:02d}T00:00:00Z",
+                "payload": {
+                    "confidence": {"level": "low"},
+                    "findings": [{"node_id": "n1", "waived": False}],
+                    "edges": [],
+                    "nodes": [{"id": "n1", "context": "billing"}],
+                },
+            }
+        )
+    health = architecture_health(reviews)
+    assert health["points"][0]["created_at"] == "2026-01-07T00:00:00Z"
+    assert health["points"][-1]["created_at"] == "2026-01-30T00:00:00Z"
+    series = health["contexts"]["billing"]
+    assert series[0]["created_at"] == "2026-01-07T00:00:00Z"
+    assert series[-1]["created_at"] == "2026-01-30T00:00:00Z"
+
+
 def test_file_marks_badge_prefers_seed(tmp_path):
     review = {
         "seed_ids": ["ser"],
@@ -260,6 +289,25 @@ def test_write_config_and_waiver(tmp_path):
     assert "legacy" in (repo / "loadpath.yml").read_text()
 
 
+def test_add_waiver_does_not_materialize_default_rules(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "loadpath.yml").write_text("contexts:\n  billing:\n    django_apps: [billing]\n", encoding="utf-8")
+    add_waiver(repo, "leaked_seam", None, "legacy")
+    text = (repo / "loadpath.yml").read_text()
+    assert "legacy" in text
+    assert "django_root" not in text
+    assert sum(1 for rule in DEFAULT_RULES if rule in text) < len(DEFAULT_RULES)
+
+
+def test_empty_rules_list_is_not_replaced_with_defaults(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "loadpath.yml").write_text("contexts: {}\nrules: []\n", encoding="utf-8")
+    cfg = load_config(repo)
+    assert cfg.rules == []
+
+
 def test_workspace_status_fingerprint_changes(tmp_path):
     repo = prepare_review_repo(tmp_path)
     clean = workspace_status(repo)
@@ -271,6 +319,17 @@ def test_workspace_status_fingerprint_changes(tmp_path):
     (repo / "backend/billing/serializers.py").write_text("changed again\n", encoding="utf-8")
     later = workspace_status(repo)
     assert later["fingerprint"] != dirty["fingerprint"]
+
+
+def test_workspace_status_ignores_loadpath_db(tmp_path):
+    repo = prepare_review_repo(tmp_path)
+    before = workspace_status(repo)
+    db = repo / ".loadpath" / "graph.sqlite3"
+    db.parent.mkdir(parents=True)
+    db.write_bytes(b"sqlite")
+    after = workspace_status(repo)
+    assert after["fingerprint"] == before["fingerprint"]
+    assert not any(p.startswith(".loadpath") for p in after["dirty"])
 
 
 def test_editor_urls_include_line():

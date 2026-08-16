@@ -137,6 +137,18 @@ describe("assignEdgeStepPositions", () => {
     expect(Math.abs(xc - xf)).toBeGreaterThan(20);
   });
 
+  it("clamps skip-step into 0..1 when the next column is unusually close", () => {
+    const nodes = [node("r", "django.route"), node("v", "django.view")];
+    const pos = new Map([
+      ["r", { x: 0, y: 0 }],
+      ["v", { x: 240, y: 92 }],
+    ]);
+    const steps = assignEdgeStepPositions(nodes, [edge("r", "v")], pos);
+    const step = steps.get("r->v") ?? 0.5;
+    expect(step).toBeGreaterThanOrEqual(0);
+    expect(step).toBeLessThanOrEqual(1);
+  });
+
   it("spreads lanes between 0.2 and 0.8", () => {
     expect(stepForLane(0, 1)).toBe(0.5);
     expect(stepForLane(0, 2)).toBe(0.2);

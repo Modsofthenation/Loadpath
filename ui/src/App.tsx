@@ -105,6 +105,8 @@ export function App() {
   const [gitlabWaiting, setGitlabWaiting] = useState(false);
   const repoRef = useRef(repo);
   repoRef.current = repo;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   const explorerOpenRef = useRef(false);
   explorerOpenRef.current = explorerOpen;
   const gitRefsPath = useRef("");
@@ -433,9 +435,15 @@ export function App() {
           prev ? { ...prev, nodes: g.nodes, edges: g.edges, graph_pending: false } : prev,
         );
       });
-      graphP.catch(() => undefined).finally(() => {
-        if (repoRef.current === path) setGraphLoading(false);
-      });
+      graphP
+        .catch(() => {
+          setArchitecture((prev) =>
+            prev && repoRef.current === path ? { ...prev, graph_pending: false } : prev,
+          );
+        })
+        .finally(() => {
+          if (archHydratePath.current === path) setGraphLoading(false);
+        });
       if (waitForGraph) await graphP;
       return report;
     } catch (e) {
@@ -482,7 +490,7 @@ export function App() {
     persistRefs(base, head);
     const stopWatch = watchIndex(repo);
     try {
-      const r = await api.review(repo, base, head, true, dirty);
+      const r = await api.review(repo, base, head, true, dirtyRef.current);
       rememberReview(r);
       setGraphMode("review");
       setTab("review");
@@ -797,6 +805,7 @@ export function App() {
           !busyRef.current
         ) {
           setDirty(true);
+          dirtyRef.current = true;
           localStorage.setItem("loadpath.dirty", "1");
           void runReviewRef.current();
         }
@@ -900,7 +909,8 @@ export function App() {
       persistRefs(next.base || base, next.head || head);
       setGraphMode("review");
       setTab("review");
-      const previous = reviewHistory.find((item) => item.id !== id);
+      const idx = reviewHistory.findIndex((item) => item.id === id);
+      const previous = idx >= 0 ? reviewHistory[idx + 1] : undefined;
       if (previous) {
         try {
           setReviewDiff(await api.reviewDiff(repo, id, previous.id));
@@ -1055,7 +1065,8 @@ export function App() {
         {busy ? (
           <div
             className={indexPct != null ? "progress determinate" : "progress"}
-            role="status"
+            role={indexPct != null ? "progressbar" : "status"}
+            aria-label={busy}
             aria-live="polite"
             aria-busy="true"
             aria-valuemin={indexPct != null ? 0 : undefined}
@@ -1435,7 +1446,15 @@ export function App() {
                 </button>
               </div>
               {graphNodes.length ? (
-                <ImpactGraph nodes={graphNodes} edges={graphEdges} onWhatIf={runWhatIf} {...graphBind} />
+                <ImpactGraph
+                  nodes={graphNodes}
+                  edges={graphEdges}
+                  onWhatIf={runWhatIf}
+                  {...graphBind}
+                  {...(graphMode === "architecture"
+                    ? { isolateSource: null, onIsolate: undefined, nodeRoles: undefined, testOverlay: false }
+                    : {})}
+                />
               ) : graphLoading || architecture?.graph_pending ? (
                 <p className="empty" data-testid="graph-loading">
                   Drawing the architecture map…

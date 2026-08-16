@@ -210,9 +210,14 @@ def git_dirty_paths(repo_root: Path) -> list[str]:
         path = line[3:].strip()
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
-        if path:
+        if path and not _is_loadpath_internal(path):
             paths.append(path)
     return paths
+
+
+def _is_loadpath_internal(path: str) -> bool:
+    rel = path.replace("\\", "/").removeprefix("./").lstrip("/")
+    return rel == ".loadpath" or rel.startswith(".loadpath/")
 
 
 def workspace_status(repo_root: Path) -> dict[str, Any]:
