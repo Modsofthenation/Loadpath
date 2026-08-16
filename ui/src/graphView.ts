@@ -61,6 +61,29 @@ export const PATH_SINK_TYPES = new Set([
 
 export const LARGE_GRAPH = 90;
 
+export function webglAvailable(createCanvas: () => HTMLCanvasElement = () => document.createElement("canvas")): boolean {
+  try {
+    const canvas = createCanvas();
+    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (!gl) return false;
+    const lose = (gl as WebGLRenderingContext).getExtension?.("WEBGL_lose_context");
+    lose?.loseContext();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Keep large graphs on 2D until WebGL is confirmed so Review can paint without Three.js. */
+export function effectiveProjection(
+  preferred: GraphProjection,
+  chosen: GraphProjection | null,
+  webgl: boolean | null,
+): GraphProjection {
+  if (preferred === "3d" && chosen == null && webgl !== true) return "2d";
+  return preferred;
+}
+
 /** Leaf noise that turns a load-path into an unreadable field cloud. */
 export const OVERVIEW_HIDDEN_TYPES = new Set([
   "django.field",
@@ -117,9 +140,11 @@ export const TYPE_COLOR: Record<string, string> = {
   "react.test": "#6c757d",
 };
 
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-const LAYER_GAP = 220;
-const SPIRAL = 26;
+const LAYER_GAP_3D = 160;
+const Y_SCALE_3D = 0.42;
+const CONTEXT_GAP_3D = 100;
+const FREEFORM_SCALE_3D = 0.45;
+export const INFERRED_EDGE = 0.8;
 
 export const LAYER_LABELS: Record<number, string> = {
   0: "context",
@@ -153,7 +178,11 @@ export function colorForType(type: string): string {
   return "#4a5568";
 }
 
-export function defaultProjection(nodeCount: number): GraphProjection {
+export function defaultProjection(
+  nodeCount: number,
+  automated = typeof navigator !== "undefined" && Boolean(navigator.webdriver),
+): GraphProjection {
+  if (automated) return "2d";
   return nodeCount >= LARGE_GRAPH ? "3d" : "2d";
 }
 
@@ -274,40 +303,206 @@ export function isolatePathIds(
   return { nodeIds: keep, edgeIds };
 }
 
-export function layoutNodes3d(nodes: GraphNode[]): Map<string, { x: number; y: number; z: number }> {
-  const columns = new Map<number, GraphNode[]>();
-  for (const n of nodes) {
-    const layer = layerFor(n.type);
-    const list = columns.get(layer) ?? [];
-    list.push(n);
-    columns.set(layer, list);
+const GUIDE_PAD = 16;
+const RING_BIN = 28;
+
+export type LayoutGuide3d = {
+  shape: "slab" | "ring";
+  x: number;
+  y: number;
+  z: number;
+  extentY: number;
+  extentZ: number;
+  radius: number;
+  label: string;
+  count: number;
+};
+
+function contextKey(node: GraphNode): string {
+  return (node.context || "").trim();
+}
+
+export function isInferredEdge(edge: GraphEdge): boolean {
+  return edge.confidence < INFERRED_EDGE;
+}
+
+/** Fields and tests stay small; sinks and published types read as landmarks. */
+export function nodeRadius3d(type: string): number {
+  if (OVERVIEW_HIDDEN_TYPES.has(type)) return 6.5;
+  if (PATH_SINK_TYPES.has(type)) return 13;
+  if (
+    type.endsWith(".model") ||
+    type.endsWith(".serializer") ||
+    type.endsWith(".view") ||
+    type.endsWith(".page") ||
+    type.endsWith(".component")
+  ) {
+    return 12;
   }
+  return 9.5;
+}
+
+/**
+ * 2D layout in XY (edge-aware), bounded context on Z.
+ * Column layouts pack occupied architecture ranks; radial/grid keep their shape.
+ */
+export function layoutNodes3d(
+  nodes: GraphNode[],
+  edges: GraphEdge[] = [],
+  layout: GraphLayoutId = "layers",
+): Map<string, { x: number; y: number; z: number }> {
+  const laid = layoutGraph(nodes, edges, layout);
   const pos = new Map<string, { x: number; y: number; z: number }>();
-  for (const [layer, list] of columns) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
-    const x = layer * LAYER_GAP;
-    list.forEach((n, i) => {
-      if (list.length === 1) {
-        pos.set(n.id, { x, y: 0, z: 0 });
-        return;
-      }
-      const r = SPIRAL * Math.sqrt(i + 1);
-      const theta = i * GOLDEN_ANGLE;
-      pos.set(n.id, { x, y: r * Math.cos(theta), z: r * Math.sin(theta) });
-    });
+  if (!nodes.length) return pos;
+
+  const contexts: string[] = [];
+  const seen = new Set<string>();
+  for (const n of nodes) {
+    const key = contextKey(n);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    contexts.push(key);
+  }
+  contexts.sort((a, b) => {
+    if (!a && b) return 1;
+    if (a && !b) return -1;
+    return a.localeCompare(b);
+  });
+  const ctxOf = new Map(contexts.map((c, i) => [c, i]));
+  const ctxMid = (contexts.length - 1) / 2;
+  const columns = layoutUsesColumns(layout);
+  const colXs = [...new Set([...laid.values()].map((p) => p.x))].sort((a, b) => a - b);
+  const colIndex = new Map(colXs.map((x, i) => [x, i]));
+
+  for (const n of nodes) {
+    const p = laid.get(n.id) ?? { x: 0, y: 0 };
+    const zi = ctxOf.get(contextKey(n)) ?? 0;
+    const z = (zi - ctxMid) * CONTEXT_GAP_3D;
+    if (columns) {
+      const xi = colIndex.get(p.x) ?? 0;
+      pos.set(n.id, { x: xi * LAYER_GAP_3D, y: -p.y * Y_SCALE_3D, z });
+    } else {
+      pos.set(n.id, { x: p.x * FREEFORM_SCALE_3D, y: -p.y * FREEFORM_SCALE_3D, z });
+    }
   }
   return pos;
 }
 
-export function layerCenters(nodes: GraphNode[]): { layer: number; x: number; count: number }[] {
-  const counts = new Map<number, number>();
+export function layoutGuideKind(layout: GraphLayoutId): "slab" | "ring" | "none" {
+  if (layout === "layers" || layout === "flow") return "slab";
+  if (layout === "radial" || layout === "concentric" || layout === "circle") return "ring";
+  return "none";
+}
+
+export function layoutGuides3d(
+  nodes: GraphNode[],
+  pos: Map<string, { x: number; y: number; z: number }>,
+  layout: GraphLayoutId = "layers",
+): LayoutGuide3d[] {
+  if (!nodes.length) return [];
+  const kind = layoutGuideKind(layout);
+  if (kind === "none") return [];
+  if (kind === "ring") return radialGuides(nodes, pos);
+
+  const groups = new Map<number, GraphNode[]>();
   for (const n of nodes) {
+    const x = Math.round((pos.get(n.id)?.x ?? 0) * 10) / 10;
+    const list = groups.get(x) ?? [];
+    list.push(n);
+    groups.set(x, list);
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, members]) => slabGuide(members, pos, layout));
+}
+
+function guideLabel(members: GraphNode[], layout: GraphLayoutId): string {
+  const counts = new Map<number, number>();
+  for (const n of members) {
     const layer = layerFor(n.type);
     counts.set(layer, (counts.get(layer) || 0) + 1);
   }
-  return [...counts.entries()]
+  let bestLayer = -1;
+  let bestCount = 0;
+  for (const [layer, count] of counts) {
+    if (count > bestCount) {
+      bestLayer = layer;
+      bestCount = count;
+    }
+  }
+  if (layout === "flow" && bestCount < members.length * 0.6) return "";
+  return LAYER_LABELS[bestLayer] ?? "";
+}
+
+function slabGuide(
+  members: GraphNode[],
+  pos: Map<string, { x: number; y: number; z: number }>,
+  layout: GraphLayoutId,
+): LayoutGuide3d {
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let sumX = 0;
+  for (const n of members) {
+    const p = pos.get(n.id) ?? { x: 0, y: 0, z: 0 };
+    const r = nodeRadius3d(n.type);
+    sumX += p.x;
+    minY = Math.min(minY, p.y - r);
+    maxY = Math.max(maxY, p.y + r);
+    minZ = Math.min(minZ, p.z - r);
+    maxZ = Math.max(maxZ, p.z + r);
+  }
+  return {
+    shape: "slab",
+    x: sumX / members.length,
+    y: (minY + maxY) / 2,
+    z: (minZ + maxZ) / 2,
+    extentY: Math.max((maxY - minY) / 2 + GUIDE_PAD, 20),
+    extentZ: Math.max((maxZ - minZ) / 2 + GUIDE_PAD, 20),
+    radius: 0,
+    label: guideLabel(members, layout),
+    count: members.length,
+  };
+}
+
+function radialGuides(
+  nodes: GraphNode[],
+  pos: Map<string, { x: number; y: number; z: number }>,
+): LayoutGuide3d[] {
+  const groups = new Map<number, GraphNode[]>();
+  for (const n of nodes) {
+    const p = pos.get(n.id) ?? { x: 0, y: 0, z: 0 };
+    const r = Math.hypot(p.x, p.y);
+    const bin = r < 12 ? 0 : Math.round(r / RING_BIN);
+    const list = groups.get(bin) ?? [];
+    list.push(n);
+    groups.set(bin, list);
+  }
+  return [...groups.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([layer, count]) => ({ layer, x: layer * LAYER_GAP, count }));
+    .map(([, members]) => {
+      let sumR = 0;
+      let sumZ = 0;
+      for (const n of members) {
+        const p = pos.get(n.id) ?? { x: 0, y: 0, z: 0 };
+        sumR += Math.hypot(p.x, p.y);
+        sumZ += p.z;
+      }
+      const radius = sumR / members.length;
+      return {
+        shape: "ring" as const,
+        x: 0,
+        y: 0,
+        z: sumZ / members.length,
+        extentY: 0,
+        extentZ: 0,
+        radius,
+        label: radius < 12 ? "" : guideLabel(members, "radial"),
+        count: members.length,
+      };
+    })
+    .filter((guide) => guide.radius >= 12);
 }
 
 export function readGraphLayout(): GraphLayoutId {

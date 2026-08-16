@@ -55,7 +55,7 @@ Index a repo first. The architecture tab is the full typed graph plus `loadpath.
 
 ### Impact graph
 
-Toggle **This review** (impact subgraph) vs **Indexed architecture** (the repo map). Dashed edges are inferred (URL/Zod overlap); solid edges are extracted or generated-client stitches. 2D is the default; 3D is available when WebGL is.
+Toggle **This review** (impact subgraph) vs **Indexed architecture** (the repo map). Dashed edges are inferred (URL/Zod overlap); solid edges are extracted or generated-client stitches. 2D is the default. 3D uses the same layout algorithms, puts bounded context on the depth axis, and is available when WebGL is.
 
 ![Impact graph, this review](docs/screenshots/graph.png)
 

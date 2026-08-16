@@ -1219,6 +1219,7 @@ kbd {
 }
 .graph-3d-tip .t { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
 .graph-3d-tip .n { font-weight: 600; }
+.graph-3d-tip .f { color: var(--muted); font-size: 10px; margin-top: 2px; overflow-wrap: anywhere; }
 .graph-3d-hint {
   position: absolute;
   left: 10px;

@@ -188,7 +188,7 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     page.get_by_test_id("graph-view-3d").click()
     assert page.get_by_test_id("graph-view-3d").get_attribute("aria-pressed") == "true"
     page.get_by_test_id("graph-3d").wait_for(timeout=15_000)
-    assert page.get_by_test_id("graph-layout").count() == 0
+    page.get_by_test_id("graph-layout").wait_for()
     page.locator("[data-testid='graph-3d-canvas'], [data-testid='graph-3d-fallback']").first.wait_for(timeout=20_000)
     page.get_by_test_id("graph-view-2d").click()
     page.locator(".react-flow__node").first.wait_for(timeout=15_000)
