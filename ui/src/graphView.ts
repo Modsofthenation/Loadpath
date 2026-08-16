@@ -61,6 +61,29 @@ export const PATH_SINK_TYPES = new Set([
 
 export const LARGE_GRAPH = 90;
 
+export function webglAvailable(createCanvas: () => HTMLCanvasElement = () => document.createElement("canvas")): boolean {
+  try {
+    const canvas = createCanvas();
+    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (!gl) return false;
+    const lose = (gl as WebGLRenderingContext).getExtension?.("WEBGL_lose_context");
+    lose?.loseContext();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Keep large graphs on 2D until WebGL is confirmed so Review can paint without Three.js. */
+export function effectiveProjection(
+  preferred: GraphProjection,
+  chosen: GraphProjection | null,
+  webgl: boolean | null,
+): GraphProjection {
+  if (preferred === "3d" && chosen == null && webgl !== true) return "2d";
+  return preferred;
+}
+
 /** Leaf noise that turns a load-path into an unreadable field cloud. */
 export const OVERVIEW_HIDDEN_TYPES = new Set([
   "django.field",

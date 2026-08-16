@@ -5,6 +5,7 @@ import {
   LAYER_LABELS,
   defaultDetail,
   defaultProjection,
+  effectiveProjection,
   familyFor,
   isolatePathIds,
   isInferredEdge,
@@ -17,6 +18,7 @@ import {
   readGraphLayout,
   searchNodes,
   visibleGraph,
+  webglAvailable,
   writeGraphLayout,
 } from "./graphView";
 import { GRAPH_COL_GAP, GRAPH_NODE_WIDTH, LAYER_ORDER, layoutNodes, type GraphEdge, type GraphNode } from "./types";
@@ -246,6 +248,28 @@ describe("defaults", () => {
     expect(defaultProjection(LARGE_GRAPH)).toBe("3d");
     expect(defaultDetail(LARGE_GRAPH - 1)).toBe("full");
     expect(defaultDetail(LARGE_GRAPH)).toBe("overview");
+  });
+
+  it("holds auto-3d until WebGL is confirmed", () => {
+    expect(effectiveProjection("3d", null, null)).toBe("2d");
+    expect(effectiveProjection("3d", null, false)).toBe("2d");
+    expect(effectiveProjection("3d", null, true)).toBe("3d");
+    expect(effectiveProjection("3d", "3d", false)).toBe("3d");
+    expect(effectiveProjection("2d", null, true)).toBe("2d");
+  });
+
+  it("treats a canvas probe as WebGL only when a context exists", () => {
+    const canvas = (gl: unknown) =>
+      ({
+        getContext: () => gl,
+      }) as unknown as HTMLCanvasElement;
+    expect(webglAvailable(() => canvas({ getExtension: () => ({ loseContext: () => undefined }) }))).toBe(true);
+    expect(webglAvailable(() => canvas(null))).toBe(false);
+    expect(
+      webglAvailable(() => {
+        throw new Error("no canvas");
+      }),
+    ).toBe(false);
   });
 
   it("places GraphQL and FastAPI with the stitch family", () => {

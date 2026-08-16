@@ -22,6 +22,7 @@ import {
   GRAPH_LAYOUTS,
   defaultDetail,
   defaultProjection,
+  effectiveProjection,
   familyFor,
   isolatePathIds,
   layoutGraph,
@@ -29,6 +30,7 @@ import {
   readGraphLayout,
   searchNodes,
   visibleGraph,
+  webglAvailable,
   writeGraphLayout,
   type GraphDetail,
   type GraphFamily,
@@ -50,22 +52,21 @@ const LayeredGraph3D = lazy(() =>
   import("./LayeredGraph3D").then((mod) => ({ default: mod.LayeredGraph3D })),
 );
 
-class Graph3DBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+class GraphBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
   }
   render() {
-    if (this.state.failed) {
-      return (
-        <p className="muted graph-3d-hint" data-testid="graph-3d-fallback">
-          WebGL is unavailable in this browser, so the 3D view cannot start. Switch back to 2D map.
-        </p>
-      );
-    }
-    return this.props.children;
+    return this.state.failed ? this.props.fallback : this.props.children;
   }
 }
+
+const WEBGL_FALLBACK = (
+  <p className="muted graph-3d-hint" data-testid="graph-3d-fallback">
+    WebGL is unavailable in this browser, so the 3D view cannot start. Switch back to 2D map.
+  </p>
+);
 
 const WEIGHT_COLOR: Record<string, string> = {
   cheap: "var(--edge-cheap)",
@@ -472,7 +473,7 @@ function InspectorLinks({
   );
 }
 
-export function ImpactGraph({
+function ImpactGraphView({
   nodes,
   edges,
   onWhatIf,
@@ -516,10 +517,16 @@ export function ImpactGraph({
   const [neighborhoodOnly, setNeighborhoodOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [hitsOpen, setHitsOpen] = useState(false);
+  const [webgl, setWebgl] = useState<boolean | null>(null);
   const reduceMotion =
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const view = projection ?? defaultProjection(nodes.length);
+  useEffect(() => {
+    setWebgl(webglAvailable());
+  }, []);
+
+  const preferred = projection ?? defaultProjection(nodes.length);
+  const view = effectiveProjection(preferred, projection, webgl);
   const level = detail ?? defaultDetail(nodes.length);
   const neighborhoodFocus = neighborhoodOnly ? selectedId : null;
   const isolated = useMemo(
@@ -767,23 +774,29 @@ export function ImpactGraph({
               Same layout as the 2D map, with bounded context on the depth axis. Dashed edges are inferred.
               Drag to orbit, scroll to zoom, click a node to inspect it.
             </p>
-            <Suspense fallback={<p className="muted graph-3d-hint">Loading 3D layers…</p>}>
-              <Graph3DBoundary>
-                <LayeredGraph3D
-                  nodes={visible.nodes}
-                  edges={visible.edges}
-                  selectedId={selectedId}
-                  neighborIds={neighborhoodFocus ? visible.neighborIds : NO_NEIGHBORS}
-                  layout={layout}
-                  nodeRoles={nodeRoles}
-                  testOverlay={testOverlay}
-                  onSelect={(id) => {
-                    setSelectedId(id);
-                    if (!id) setNeighborhoodOnly(false);
-                  }}
-                />
-              </Graph3DBoundary>
-            </Suspense>
+            {webgl === false ? (
+              WEBGL_FALLBACK
+            ) : webgl === null ? (
+              <p className="muted graph-3d-hint">Loading 3D layers…</p>
+            ) : (
+              <GraphBoundary fallback={WEBGL_FALLBACK}>
+                <Suspense fallback={<p className="muted graph-3d-hint">Loading 3D layers…</p>}>
+                  <LayeredGraph3D
+                    nodes={visible.nodes}
+                    edges={visible.edges}
+                    selectedId={selectedId}
+                    neighborIds={neighborhoodFocus ? visible.neighborIds : NO_NEIGHBORS}
+                    layout={layout}
+                    nodeRoles={nodeRoles}
+                    testOverlay={testOverlay}
+                    onSelect={(id) => {
+                      setSelectedId(id);
+                      if (!id) setNeighborhoodOnly(false);
+                    }}
+                  />
+                </Suspense>
+              </GraphBoundary>
+            )}
             {inspector}
           </div>
         ) : (
@@ -826,5 +839,19 @@ export function ImpactGraph({
         )}
       </div>
     </div>
+  );
+}
+
+export function ImpactGraph(props: Parameters<typeof ImpactGraphView>[0]) {
+  return (
+    <GraphBoundary
+      fallback={
+        <p className="muted graph-3d-hint" data-testid="graph-crash-fallback">
+          The graph failed to render. Switch to 2D map or another layout.
+        </p>
+      }
+    >
+      <ImpactGraphView {...props} />
+    </GraphBoundary>
   );
 }
