@@ -16,19 +16,24 @@ import {
 import "@xyflow/react/dist/style.css";
 import { typeLabel, wrapHint } from "./format";
 import {
+  GRAPH_LAYOUTS,
   defaultDetail,
   defaultProjection,
   familyFor,
+  layoutGraph,
+  layoutUsesColumns,
+  readGraphLayout,
   visibleGraph,
+  writeGraphLayout,
   type GraphDetail,
   type GraphFamily,
+  type GraphLayoutId,
   type GraphProjection,
 } from "./graphView";
 import { inspectNode, type InspectorLink } from "./nodeInspector";
 import {
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
-  layoutNodes,
   type GraphEdge,
   type GraphNode,
 } from "./types";
@@ -82,9 +87,11 @@ export function toReactFlowElements(
   nodes: GraphNode[],
   edges: GraphEdge[],
   selectedId: string | null = null,
+  layout: GraphLayoutId = "layers",
 ): { rfNodes: Node[]; rfEdges: Edge[] } {
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const pos = layoutNodes(nodes, edges);
+  const pos = layoutGraph(nodes, edges, layout);
+  const edgeType = layoutUsesColumns(layout) ? "smoothstep" : "default";
   const rfNodes: Node[] = nodes.map((n) => ({
     id: n.id,
     type: "load",
@@ -106,7 +113,7 @@ export function toReactFlowElements(
         id: e.id,
         source: e.src,
         target: e.dst,
-        type: "smoothstep",
+        type: edgeType,
         animated: e.weight === "critical",
         style: {
           stroke,
@@ -276,6 +283,7 @@ export function ImpactGraph({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [projection, setProjection] = useState<GraphProjection | null>(null);
   const [detail, setDetail] = useState<GraphDetail | null>(null);
+  const [layout, setLayout] = useState<GraphLayoutId>(() => readGraphLayout());
   const [families, setFamilies] = useState<Set<GraphFamily>>(new Set(ALL_FAMILIES));
   const [neighborhoodOnly, setNeighborhoodOnly] = useState(false);
   const reduceMotion =
@@ -295,18 +303,18 @@ export function ImpactGraph({
     [nodes, edges, level, families, neighborhoodFocus],
   );
   const topologyKey = useMemo(
-    () => `${visible.nodes.map((n) => n.id).join("\0")}|${visible.edges.map((e) => e.id).join("\0")}`,
-    [visible.nodes, visible.edges],
+    () => `${layout}|${visible.nodes.map((n) => n.id).join("\0")}|${visible.edges.map((e) => e.id).join("\0")}`,
+    [layout, visible.nodes, visible.edges],
   );
   const byId = useMemo(() => new Map(visible.nodes.map((n) => [n.id, n])), [visible.nodes]);
   const selected = selectedId ? byId.get(selectedId) ?? null : null;
   const { rfNodes, rfEdges } = useMemo(() => {
-    const elements = toReactFlowElements(visible.nodes, visible.edges, selectedId);
+    const elements = toReactFlowElements(visible.nodes, visible.edges, selectedId, layout);
     if (reduceMotion) {
       elements.rfEdges = elements.rfEdges.map((edge) => ({ ...edge, animated: false }));
     }
     return elements;
-  }, [visible.nodes, visible.edges, selectedId, reduceMotion]);
+  }, [visible.nodes, visible.edges, selectedId, layout, reduceMotion]);
 
   useEffect(() => {
     if (selectedId && !byId.has(selectedId)) setSelectedId(null);
@@ -407,7 +415,29 @@ export function ImpactGraph({
               </button>
             ))}
         </div>
-        {view === "3d" ? (
+        {view === "2d" ? (
+          <label className="graph-layout">
+            Layout
+            <select
+              id="graph-layout"
+              data-testid="graph-layout"
+              value={layout}
+              aria-label="2D layout algorithm"
+              onChange={(event) => {
+                const next = GRAPH_LAYOUTS.find((item) => item.id === event.target.value)?.id;
+                if (!next) return;
+                setLayout(next);
+                writeGraphLayout(next);
+              }}
+            >
+              {GRAPH_LAYOUTS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
           <button
             type="button"
             className={neighborhoodOnly ? "chip-btn active" : "chip-btn"}
@@ -417,7 +447,7 @@ export function ImpactGraph({
           >
             {neighborhoodOnly ? "Neighborhood" : "Focus neighbors"}
           </button>
-        ) : null}
+        )}
         <span className="muted graph-count">
           {visible.nodes.length} nodes · {visible.edges.length} edges
           {hidden ? ` · ${hidden} hidden` : ""}

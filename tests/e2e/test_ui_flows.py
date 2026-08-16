@@ -107,9 +107,25 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert "billing-team" in brief
     assert "MePage" not in brief
     force_2d_graph(page)
-    page.locator(".react-flow__node").filter(has_text="InvoicePage").first.wait_for(timeout=15_000)
+    invoice = page.locator(".react-flow__node").filter(has_text="InvoicePage").first
+    invoice.wait_for(timeout=15_000)
     page.locator(".react-flow__edge").filter(visible=True).first.wait_for(timeout=15_000)
     assert page.locator(".react-flow__node").filter(has_text="MePage").count() == 0
+    layout = page.get_by_test_id("graph-layout")
+    layout.wait_for()
+    assert layout.input_value() == "layers"
+    before = invoice.get_attribute("style")
+    layout.select_option("radial")
+    page.wait_for_function(
+        """before => {
+          const n = [...document.querySelectorAll('.react-flow__node')]
+            .find(el => (el.textContent || '').includes('InvoicePage'));
+          return Boolean(n && n.getAttribute('style') !== before);
+        }""",
+        arg=before,
+        timeout=10_000,
+    )
+    assert layout.input_value() == "radial"
 
     page.get_by_test_id("tab-graph").click()
     page.get_by_test_id("graph-full").wait_for()
@@ -144,9 +160,11 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     page.get_by_test_id("graph-view-3d").click()
     assert page.get_by_test_id("graph-view-3d").get_attribute("aria-pressed") == "true"
     page.get_by_test_id("graph-3d").wait_for(timeout=15_000)
+    assert page.get_by_test_id("graph-layout").count() == 0
     page.locator("[data-testid='graph-3d-canvas'], [data-testid='graph-3d-fallback']").first.wait_for(timeout=20_000)
     page.get_by_test_id("graph-view-2d").click()
     page.locator(".react-flow__node").first.wait_for(timeout=15_000)
+    page.get_by_test_id("graph-layout").wait_for()
 
     page.get_by_test_id("graph-mode-architecture").click()
     assert page.get_by_test_id("graph-mode-architecture").get_attribute("aria-pressed") == "true"

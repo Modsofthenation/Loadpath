@@ -30,6 +30,17 @@ describe("toReactFlowElements", () => {
     expect(rfEdges[0].label).toBeUndefined();
   });
 
+  it("uses bezier edges and different positions for radial layout", () => {
+    const layered = toReactFlowElements(nodes, edges);
+    const radial = toReactFlowElements(nodes, edges, null, "radial");
+    expect(radial.rfEdges[0]?.type).toBe("default");
+    const moved = layered.rfNodes.some((n, i) => {
+      const other = radial.rfNodes[i]!;
+      return n.position.x !== other.position.x || n.position.y !== other.position.y;
+    });
+    expect(moved).toBe(true);
+  });
+
   it("labels only edges incident to the selected node", () => {
     const extraNodes: GraphNode[] = [
       ...nodes,
