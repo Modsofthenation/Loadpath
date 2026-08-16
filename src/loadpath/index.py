@@ -23,7 +23,7 @@ from loadpath.types import GENERATED_PATH_MARKERS, ExtractedGraph, Node, NodeTyp
 PY_SKIP = {"migrations"}  # still extract migrations, just not skip
 INDEX_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".html", ".htm", ".graphql", ".gql"}
 # Bump when extractor/stitch node identity changes so incremental indexes rebuild.
-INDEX_REVISION = "14"
+INDEX_REVISION = "16"
 _UPSERT_BATCH = 25
 
 ProgressCallback = Callable[[dict[str, Any]], None]

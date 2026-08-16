@@ -191,6 +191,27 @@ def _has_base(node: ast.ClassDef, names: set[str]) -> bool:
     return any((b.split(".")[-1] in names) for b in _bases(node))
 
 
+def _is_test_path(rel: str) -> bool:
+    path = Path(rel)
+    return path.name.startswith("test") or "/tests/" in f"/{rel}/" or path.name == "tests.py"
+
+
+def _is_dataclass(node: ast.ClassDef) -> bool:
+    return any(name.split(".")[-1] == "dataclass" for name in _decorator_names(node))
+
+
+def _is_permission_class(node: ast.ClassDef) -> bool:
+    if node.name.startswith("Test"):
+        return False
+    if node.name.endswith("Permission"):
+        return True
+    return any(
+        part in {"BasePermission", "BasePermissionMetaclass", "TaigaResourcePermission", "ResourcePermission"}
+        for base in _bases(node)
+        for part in base.split(".")
+    )
+
+
 def _decorator_names(node: ast.FunctionDef | ast.ClassDef | ast.AsyncFunctionDef) -> list[str]:
     out = []
     for dec in node.decorator_list:
@@ -444,7 +465,11 @@ class DjangoExtractor(ast.NodeVisitor):
             self._admin(node)
         elif any(x.endswith("Config") for x in _bases(node)) or node.name.endswith("Config"):
             self._app_config(node)
+        elif _is_permission_class(node):
+            self._permission_class(node)
         elif "Service" in node.name or "UseCase" in node.name:
+            self._service_class(node)
+        elif _is_dataclass(node) and not _is_test_path(self.rel_path):
             self._service_class(node)
         self.generic_visit(node)
         self.class_stack.pop()
@@ -742,9 +767,16 @@ class DjangoExtractor(ast.NodeVisitor):
             fs_q = fs if "." in fs and not fs.startswith("filter") else f"{self.app}.{fs.split('.')[-1]}"
             self.add_edge(view.id, node_id(NodeType.FORM, fs_q), EdgeType.CALLS, confidence=0.9)
         for perm in permissions:
-            pid = node_id(NodeType.PERMISSION, perm)
+            ident = self._permission_identity(perm)
+            pid = node_id(NodeType.PERMISSION, ident)
             self.graph.nodes.append(
-                Node(id=pid, type=NodeType.PERMISSION, name=perm, qualified_name=perm, extra={"from_view": qname})
+                Node(
+                    id=pid,
+                    type=NodeType.PERMISSION,
+                    name=perm.split(".")[-1],
+                    qualified_name=ident,
+                    extra={"from_view": qname},
+                )
             )
             self.add_edge(view.id, pid, EdgeType.HAS_PERMISSION)
         for throttle in extra.get("throttles") or []:
@@ -795,6 +827,23 @@ class DjangoExtractor(ast.NodeVisitor):
     def _admin(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
         self.add_node(NodeType.ADMIN, node.name, qname, node.lineno, _with_doc({"app": self.app}, node))
+
+    def _permission_identity(self, perm: str) -> str:
+        """Local *Permission classes share an id with view.permission_classes."""
+        short = perm.split(".")[-1]
+        if short.endswith("Permission"):
+            return f"{self.app}.{short}"
+        return short
+
+    def _permission_class(self, node: ast.ClassDef) -> None:
+        qname = self._permission_identity(node.name)
+        self.add_node(
+            NodeType.PERMISSION,
+            node.name,
+            qname,
+            node.lineno,
+            _with_doc({"app": self.app, "permission_class": True}, node),
+        )
 
     def _service_class(self, node: ast.ClassDef) -> None:
         qname = f"{self.app}.{node.name}"
@@ -1570,11 +1619,7 @@ class DjangoExtractor(ast.NodeVisitor):
             self.add_node(NodeType.MANAGEMENT_COMMAND, cmd, f"{self.app}.{cmd}", node.lineno, {"app": self.app})
 
     def _maybe_test(self, node: ast.FunctionDef) -> None:
-        is_test_file = (
-            Path(self.rel_path).name.startswith("test")
-            or "/tests/" in f"/{self.rel_path}/"
-            or Path(self.rel_path).name == "tests.py"
-        )
+        is_test_file = _is_test_path(self.rel_path)
         if not is_test_file:
             return
         if not (node.name.startswith("test_") or node.name.startswith("test")):
@@ -1592,7 +1637,15 @@ class DjangoExtractor(ast.NodeVisitor):
         # crude: referenced class names in the test become tested_by
         for child in ast.walk(node):
             if isinstance(child, ast.Name) and child.id[:1].isupper():
-                for ntype in (NodeType.SERIALIZER, NodeType.FORM, NodeType.VIEW, NodeType.MODEL, NodeType.SERVICE, NodeType.RECEIVER):
+                for ntype in (
+                    NodeType.SERIALIZER,
+                    NodeType.FORM,
+                    NodeType.VIEW,
+                    NodeType.MODEL,
+                    NodeType.SERVICE,
+                    NodeType.RECEIVER,
+                    NodeType.PERMISSION,
+                ):
                     self.add_edge(
                         node_id(ntype, f"{self.app}.{child.id}"),
                         test.id,

@@ -251,6 +251,12 @@ def checklist(review: dict[str, Any]) -> list[dict[str, Any]]:
                 "action": "none",
             },
         )
+    if "nodes" in review:
+        ids = {n.get("id") for n in (review.get("nodes") or []) if n.get("id")}
+        for item in items:
+            nid = item.get("node_id")
+            if nid and nid not in ids:
+                item["node_id"] = None
     return items
 
 

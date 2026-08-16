@@ -100,7 +100,7 @@ def classify_change(impact_nodes: list[dict], findings: list, seeds: list[dict] 
         kinds.add(ChangeKind.CROSS_CONTEXT.value)
     if NodeType.SERVICE.value in types and ChangeKind.PUBLIC_CONTRACT.value not in kinds:
         kinds.add(ChangeKind.INTERNAL_SERVICE.value)
-    ui_only = types <= {
+    ui_only = bool(types) and types <= {
         NodeType.COMPONENT.value,
         NodeType.PAGE.value,
         NodeType.REACT_ROUTE.value,
@@ -410,7 +410,6 @@ def run_review(
         for f in findings
         if (f.node_id and f.node_id in impact_ids)
         or (f.file_path and f.file_path in impact_files)
-        or not impact_ids
     ]
     residuals = collect_residuals(store, impact_nodes, diff)
     evolution = analyze_evolution(repo_root, diff, impact_nodes, config)

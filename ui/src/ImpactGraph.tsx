@@ -738,7 +738,15 @@ export function ImpactGraph({
         </span>
       </div>
       <div className="graph-stage">
-        {view === "3d" ? (
+        {nodes.length === 0 ? (
+          <div className="empty graph-walk-empty" data-testid="graph-walk-empty">
+            <h2>No typed nodes on this walk</h2>
+            <p>
+              This range did not hit models, views, routes, or React pages Loadpath extracts. Open the
+              architecture map for the indexed graph.
+            </p>
+          </div>
+        ) : view === "3d" ? (
           <div className="graph-3d" data-testid="graph-3d">
             <p className="graph-3d-hint">
               Architecture layers are stacked in depth (Django → stitch → React). Drag to orbit, scroll to

@@ -128,6 +128,27 @@ def test_checklist_todos_for_blocker_and_untested():
     assert "it('renders')" in (test_item.get("body") or "")
 
 
+def test_checklist_drops_node_ids_missing_from_the_graph():
+    items = checklist(
+        {
+            "nodes": [],
+            "confidence": {"level": "medium", "untested_sinks": []},
+            "findings": [
+                {
+                    "rule": "queryset_nplusone",
+                    "severity": "warning",
+                    "message": "unrelated model",
+                    "node_id": "django.model:order.AbstractOrder",
+                    "waived": False,
+                }
+            ],
+            "contract_break": {"kind": "none"},
+        }
+    )
+    finding = next(i for i in items if i["kind"] == "finding")
+    assert finding["node_id"] is None
+
+
 def test_isolate_paths_keeps_only_source_to_sink():
     nodes = [
         {"id": "a", "type": "django.field", "name": "total"},

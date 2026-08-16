@@ -20,6 +20,8 @@ ARCHITECTURE_NODE_TYPES = {
     NodeType.SERIALIZER.value,
     NodeType.FORM.value,
     NodeType.MODEL.value,
+    NodeType.SERVICE.value,
+    NodeType.PERMISSION.value,
     NodeType.TASK.value,
     NodeType.MANAGEMENT_COMMAND.value,
     NodeType.SIGNAL.value,

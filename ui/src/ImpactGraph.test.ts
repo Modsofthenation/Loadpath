@@ -62,4 +62,10 @@ describe("toReactFlowElements", () => {
     expect(rfEdges.find((e) => e.id === "ok")?.label).toBe("uses serializer");
     expect(rfEdges.find((e) => e.id === "other")?.label).toBeUndefined();
   });
+
+  it("layouts an empty walk without nodes or edges", () => {
+    const { rfNodes, rfEdges } = toReactFlowElements([], []);
+    expect(rfNodes).toEqual([]);
+    expect(rfEdges).toEqual([]);
+  });
 });

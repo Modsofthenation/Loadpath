@@ -3,14 +3,14 @@ from __future__ import annotations
 from loadpath.review.auth import auth_path
 from loadpath.review.contract import classify_contract_break
 from loadpath.review.diff import DiffSet, FileDiff, git_diff
-from loadpath.review.engine import run_review
+from loadpath.review.engine import classify_change, run_review
 from loadpath.review.gate import FAIL_ON_CHOICES, gate_result, write_github_output
 from loadpath.review.suggested_tests import suggested_tests
 from loadpath.review.trend import confidence_trend
 from loadpath.review.whatif import simulate_node
-from loadpath.types import ContractBreakKind
+from loadpath.types import ChangeKind, ContractBreakKind
 
-from tests.conftest import copy_fixture, git_init_with_main, prepare_review_repo
+from tests.conftest import copy_fixture, git_commit_all, git_init_with_main, prepare_review_repo
 
 
 def test_contract_break_required_field_is_breaking():
@@ -216,3 +216,22 @@ def test_confidence_trend_compares_same_range(tmp_path):
     note = confidence_trend(store, base=first["base"] if "base" in first else None, head=None)
     store.close()
     assert note["note"]
+
+
+def test_empty_impact_is_not_leaf_ui():
+    assert ChangeKind.LEAF_UI.value not in classify_change([], [])
+    assert classify_change([], []) == [ChangeKind.INTERNAL_SERVICE.value]
+
+
+def test_docs_only_review_does_not_attach_architecture_findings(tmp_path):
+    repo = prepare_review_repo(tmp_path)
+    (repo / "README.md").write_text("# docs only\n", encoding="utf-8")
+    git_commit_all(repo, "docs")
+    review = run_review(repo, base="HEAD~1", head="HEAD")
+    assert review["nodes"] == []
+    assert review["edges"] == []
+    assert "leaf_ui" not in review["change_kinds"]
+    assert review["findings"] == []
+    for item in review["checklist"]:
+        assert not item.get("node_id")
+

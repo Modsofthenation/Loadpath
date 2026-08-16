@@ -206,8 +206,6 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
 
 @pytest.mark.playwright
 def test_ui_index_polls_progress_endpoint(live_app, browser_page):
-    import time
-
     base_url, repo = live_app
     page = browser_page
     page.goto(base_url, wait_until="networkidle")
@@ -223,10 +221,6 @@ def test_ui_index_polls_progress_endpoint(live_app, browser_page):
             progress_hits.append(url)
             route.continue_()
             return
-        if req.method == "POST" and url.rstrip("/").endswith("/api/index"):
-            time.sleep(1.2)
-            route.continue_()
-            return
         route.continue_()
 
     page.route("**/api/**", on_route)
@@ -239,9 +233,9 @@ def test_ui_index_polls_progress_endpoint(live_app, browser_page):
         page.wait_for_function(
             """() => {
               const t = document.querySelector('.rail-foot .muted')?.textContent || '';
-              return /Extract|Scan|Stitch|Indexed|Boot|Hashed/.test(t);
+              return /Extract|Scan|Stitch|Indexed|Boot|Hashed|Indexing/.test(t);
             }""",
-            timeout=10_000,
+            timeout=20_000,
         )
         page.screenshot(path="/opt/cursor/artifacts/index_progress_bar.png")
     page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=15_000)

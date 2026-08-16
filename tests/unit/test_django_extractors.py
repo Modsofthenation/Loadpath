@@ -759,6 +759,77 @@ def test_dead_serializer_dict_does_not_resolve_get_serializer_class():
     assert any("get_serializer_class" in r for r in g.residuals)
 
 
+def test_extracts_permission_class_and_dataclass_service():
+    source = (
+        "from dataclasses import dataclass\n"
+        "from rest_framework.permissions import BasePermission\n"
+        "\n"
+        "class InvoicePermission(BasePermission):\n"
+        "    def has_permission(self, request, view):\n"
+        "        return True\n"
+        "\n"
+        "@dataclass(frozen=True)\n"
+        "class ViewerAccess:\n"
+        "    privileged: bool = False\n"
+        "\n"
+        "def test_viewer_access():\n"
+        "    ViewerAccess(privileged=True)\n"
+        "    InvoicePermission()\n"
+    )
+    g = extract_django_file("backend/billing/access.py", source, _cfg())
+    assert any(n.type is NodeType.PERMISSION and n.name == "InvoicePermission" for n in g.nodes)
+    assert any(n.type is NodeType.SERVICE and n.name == "ViewerAccess" for n in g.nodes)
+    tests = extract_django_file(
+        "backend/billing/tests/test_access.py",
+        "from billing.access import ViewerAccess, InvoicePermission\n"
+        "def test_viewer_access():\n"
+        "    ViewerAccess()\n"
+        "    InvoicePermission()\n",
+        _cfg(),
+    )
+    dsts = {e.dst for e in tests.edges}
+    srcs = {e.src for e in tests.edges}
+    assert any("ViewerAccess" in s for s in srcs)
+    assert any("InvoicePermission" in s for s in srcs)
+    assert any("test_viewer_access" in d for d in dsts)
+
+
+def test_view_permission_classes_share_id_with_permission_class():
+    perm_file = extract_django_file(
+        "backend/billing/permissions.py",
+        "from rest_framework.permissions import BasePermission\n"
+        "class InvoicePermission(BasePermission):\n"
+        "    def has_permission(self, request, view):\n"
+        "        return True\n",
+        _cfg(),
+    )
+    view_file = extract_django_file(
+        "backend/billing/views.py",
+        "from rest_framework.viewsets import ModelViewSet\n"
+        "class InvoiceViewSet(ModelViewSet):\n"
+        "    permission_classes = [InvoicePermission, IsAuthenticated]\n",
+        _cfg(),
+    )
+    class_ids = {n.id for n in perm_file.nodes if n.type is NodeType.PERMISSION}
+    view_ids = {n.id for n in view_file.nodes if n.type is NodeType.PERMISSION}
+    assert "django.permission:billing.InvoicePermission" in class_ids
+    assert "django.permission:billing.InvoicePermission" in view_ids
+    assert "django.permission:IsAuthenticated" in view_ids
+
+
+def test_dataclass_in_tests_is_not_a_service():
+    source = (
+        "from dataclasses import dataclass\n"
+        "@dataclass\n"
+        "class FixtureRow:\n"
+        "    name: str\n"
+        "def test_row():\n"
+        "    FixtureRow('x')\n"
+    )
+    g = extract_django_file("backend/billing/tests/test_rows.py", source, _cfg())
+    assert not any(n.type is NodeType.SERVICE and n.name == "FixtureRow" for n in g.nodes)
+
+
 def test_marshmallow_schema_is_not_ninja_when_router_imported():
     source = (
         "from ninja import Router\n"
@@ -769,5 +840,6 @@ def test_marshmallow_schema_is_not_ninja_when_router_imported():
     )
     g = extract_django_file("backend/billing/api.py", source, _cfg())
     assert not any(n.extra.get("ninja_schema") for n in g.nodes)
+
 
 
