@@ -27,7 +27,7 @@ It is a local CLI, a desktop UI, and an MCP server you can point Cursor at. Not 
 
 ## App
 
-`loadpath serve --port 7345` opens a local desktop-style UI: icon rail, labeled toolbar, merge-box confidence, and an inspectable impact graph. The same process hosts MCP at `/mcp` (OAuth). AI is used **only** for residual uncertainty the graph cannot close. Twenty-four themes live in Settings and `localStorage`. Last repo, git range, and SCM slug are remembered the same way. Copy the markdown brief, or post **one** PR comment (updated in place) from the Review tab. Keyboard: `1`–`5` switches tabs. Outside Settings and Pull requests, `⌘`/`Ctrl`+`Enter` runs a review.
+`loadpath serve --port 7345` opens a local desktop-style UI: icon rail, labeled toolbar, merge-box confidence, and an inspectable impact graph. The same process hosts MCP at `/mcp` (OAuth). AI is used **only** for residual uncertainty the graph cannot close. Twenty-four themes live in Settings and `localStorage`. Last repo, git range, SCM slug, and the last review id are remembered the same way. Copy the markdown brief, save HTML, or post **one** PR comment (updated in place) from the Review tab. Keyboard: `1`–`5` switches tabs. `⌘`/`Ctrl`+`K` opens the command palette. `j`/`k` walks read-order. Outside Settings and Pull requests, `⌘`/`Ctrl`+`Enter` runs a review. Click a finding, sink, or inspector neighbor to select it on the graph; Open in editor uses Cursor / VS Code. Watch the working tree to re-walk on save. Architecture edits `loadpath.yml` in place.
 
 ### Empty review
 
@@ -205,7 +205,7 @@ loadpath index /tmp/acme-billing
 loadpath serve --open
 ```
 
-Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path. Default range is `HEAD~1`…`HEAD`. Toggle **Include uncommitted** to walk the working tree. Click a node → **What if this changes** to walk sinks without a git range. The read-order list is a guided tour (prev/next highlights the file on the graph).
+Then point the UI at `/tmp/acme-billing`, or pick it from the repo explorer. `loadpath serve` always boots the app; it does not take a repo path. Default range is `HEAD~1`…`HEAD`. Toggle **Include uncommitted** to walk the working tree. Click a node → **What if this changes** to walk sinks as if that node changed — no git range, and **Back to git range** restores the last real review. Isolate path to sinks only filters the current map. The read-order list is a guided tour (prev/next highlights the file on the graph).
 
 ## GitHub Action merge gate
 
@@ -247,7 +247,7 @@ MCP URL: `https://your-tunnel.example/mcp` (or `http://127.0.0.1:7345/mcp` on th
 
 **Cursor / Claude / ChatGPT / Gemini (HTTP + OAuth)** — add that MCP URL in the host’s connectors. The first connect opens a consent page on the Loadpath machine.
 
-Tools: `list_workspaces`, `init_repo`, `index_repo`, `architecture`, `review`, `detect_repo`, `list_pull_requests`, `list_remote_repositories`, `post_review_comment`, `what_if`, `review_pull_request`. `review` returns the load-path brief (confidence, sinks, reviewers, contract-break, auth, suggested tests, trend) — not hunk comments. `review_pull_request` fetches GitHub / GitLab / Bitbucket refs into a local clone first.
+Tools: `list_workspaces`, `init_repo`, `index_repo`, `architecture`, `review`, `detect_repo`, `list_pull_requests`, `list_remote_repositories`, `post_review_comment`, `what_if`, `review_pull_request`, `load_path_marks`, `list_reviews`, `save_config`. `review` returns the load-path brief (confidence, sinks, reviewers, contract-break, auth, suggested tests, trend, checklist) — not hunk comments. `load_path_marks` is the gutter feed for the Cursor/VS Code extension in [`editors/vscode`](editors/vscode). `review_pull_request` fetches GitHub / GitLab / Bitbucket refs into a local clone first.
 
 Put `loadpath.yml` at the repo root (see [`loadpath.yml.example`](loadpath.yml.example) and [`fixtures/demo_monorepo/loadpath.yml`](fixtures/demo_monorepo/loadpath.yml)). The tool is opinionated about *your* architecture, not a generic module graph.
 

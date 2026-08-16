@@ -23,6 +23,7 @@ from loadpath.review.engine import (
     collect_residuals,
     suggested_reviewers,
 )
+from loadpath.review.experience import attach_experience
 
 
 def simulate_node(repo_root: Path, node_id: str, *, hops: int = 8) -> dict:
@@ -82,6 +83,7 @@ def simulate_node(repo_root: Path, node_id: str, *, hops: int = 8) -> dict:
         "seed_type": seed.get("type"),
         "counts": {"nodes": len(nodes), "edges": len(edges)},
     }
+    attach_experience(payload, seed_ids={node_id}, repo_root=repo_root)
     store.close()
     return payload
 

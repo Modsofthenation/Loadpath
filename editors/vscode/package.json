@@ -1,0 +1,31 @@
+{
+  "name": "loadpath",
+  "displayName": "Loadpath",
+  "description": "Gutter marks for files on the current Loadpath review (seed, untested sink, contract).",
+  "version": "0.1.0",
+  "publisher": "loadpath",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "loadpath.refreshMarks", "title": "Loadpath: Refresh load-path marks" }
+    ],
+    "configuration": {
+      "title": "Loadpath",
+      "properties": {
+        "loadpath.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:7345",
+          "description": "Local Loadpath server origin (loadpath serve)."
+        },
+        "loadpath.repoPath": {
+          "type": "string",
+          "default": "",
+          "description": "Repository path sent to Loadpath. Empty uses the first workspace folder."
+        }
+      }
+    }
+  }
+}

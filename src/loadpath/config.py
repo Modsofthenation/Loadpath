@@ -129,7 +129,7 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> LoadpathCon
         contexts=contexts,
         django_layers=list(layers.get("django") or ["route", "view", "service", "model"]),
         react_layers=list(layers.get("react") or ["route", "page", "feature", "shared"]),
-        rules=list(raw.get("rules") or DEFAULT_RULES),
+        rules=list(DEFAULT_RULES if raw.get("rules") is None else raw.get("rules") or []),
         waivers=waivers,
         django_root=raw.get("django_root", "backend"),
         react_root=raw.get("react_root", "frontend/src"),
@@ -145,3 +145,108 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> LoadpathCon
         extra=raw,
         boot_django=bool(raw.get("boot_django", False)),
     )
+
+
+def config_document(cfg: LoadpathConfig) -> dict[str, Any]:
+    path = find_config(cfg.repo_root)
+    return {
+        "repo_root": str(cfg.repo_root),
+        "path": str(path or (cfg.repo_root / "loadpath.yml")),
+        "exists": path is not None,
+        "contexts": {
+            name: {
+                "name": name,
+                "django_apps": list(ctx.django_apps),
+                "react": list(ctx.react),
+                "public_api": list(ctx.public_api),
+                "owners": list(ctx.owners),
+            }
+            for name, ctx in cfg.contexts.items()
+        },
+        "rules": list(cfg.rules),
+        "available_rules": list(DEFAULT_RULES),
+        "waivers": [
+            {"rule": w.rule, "node": w.node, "reason": w.reason} for w in cfg.waivers
+        ],
+        "django_root": cfg.django_root,
+        "react_root": cfg.react_root,
+        "openapi_paths": list(cfg.openapi_paths),
+        "boot_django": cfg.boot_django,
+        "layers": {"django": list(cfg.django_layers), "react": list(cfg.react_layers)},
+    }
+
+
+def _dump_config_payload(raw: dict[str, Any]) -> str:
+    header = (
+        "# Loadpath architecture manifest. Contexts, public_api, owners, and waivers "
+        "are the rules Loadpath will enforce.\n"
+    )
+    return header + yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+
+
+def write_config(repo_root: Path, document: dict[str, Any]) -> dict[str, Any]:
+    """Write loadpath.yml from an editor document. Preserves unknown keys."""
+    repo_root = repo_root.resolve()
+    path = find_config(repo_root) or (repo_root / "loadpath.yml")
+    raw: dict[str, Any] = {}
+    if path.is_file():
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw, dict):
+            raw = {}
+
+    if "contexts" in document:
+        contexts: dict[str, Any] = {}
+        for name, data in (document.get("contexts") or {}).items():
+            data = data or {}
+            name = str(name).strip()
+            if not name:
+                continue
+            contexts[name] = {
+                "django_apps": list(data.get("django_apps") or []),
+                "react": list(data.get("react") or []),
+                "public_api": list(data.get("public_api") or []),
+                "owners": list(data.get("owners") or []),
+            }
+        raw["contexts"] = contexts
+    if "rules" in document and document["rules"] is not None:
+        raw["rules"] = [str(r) for r in document["rules"] if str(r).strip()]
+    if "waivers" in document:
+        waivers = []
+        for w in document.get("waivers") or []:
+            rule = str((w or {}).get("rule") or "").strip()
+            if not rule:
+                continue
+            item: dict[str, Any] = {"rule": rule}
+            if (w or {}).get("node"):
+                item["node"] = w["node"]
+            if (w or {}).get("reason"):
+                item["reason"] = w["reason"]
+            waivers.append(item)
+        raw["waivers"] = waivers
+    if document.get("django_root") is not None:
+        raw["django_root"] = document["django_root"]
+    if document.get("react_root") is not None:
+        raw["react_root"] = document["react_root"]
+    if "openapi_paths" in document and document["openapi_paths"] is not None:
+        raw["openapi_paths"] = list(document["openapi_paths"])
+    if document.get("boot_django") is not None:
+        raw["boot_django"] = bool(document["boot_django"])
+    layers = document.get("layers")
+    if isinstance(layers, dict):
+        raw["layers"] = {
+            "django": list(layers.get("django") or raw.get("layers", {}).get("django") or ["route", "view", "service", "model"]),
+            "react": list(layers.get("react") or raw.get("layers", {}).get("react") or ["route", "page", "feature", "shared"]),
+        }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_dump_config_payload(raw), encoding="utf-8")
+    return config_document(load_config(repo_root, path))
+
+
+def add_waiver(repo_root: Path, rule: str, node: str | None = None, reason: str = "") -> dict[str, Any]:
+    cfg = load_config(repo_root)
+    waivers = [{"rule": w.rule, "node": w.node, "reason": w.reason} for w in cfg.waivers]
+    entry = {"rule": rule, "node": node, "reason": reason}
+    if not any(w.get("rule") == rule and w.get("node") == node for w in waivers):
+        waivers.append(entry)
+    return write_config(repo_root, {"waivers": waivers})

@@ -16,6 +16,7 @@ from loadpath.review.auth import auth_path
 from loadpath.review.contract import classify_contract_break
 from loadpath.review.diff import DiffSet, git_diff
 from loadpath.review.evolution import analyze_evolution
+from loadpath.review.experience import attach_experience
 from loadpath.review.suggested_tests import suggested_tests as sketches_for
 from loadpath.review.trend import confidence_trend
 from loadpath.stitch.openapi import published_route
@@ -528,6 +529,7 @@ def run_review(
             auth=auth,
         ),
     }
+    attach_experience(payload, seed_ids=seed_ids, repo_root=repo_root)
     store.save_review(payload["id"], payload["created_at"], str(repo_root), diff.base, diff.head, payload)
     payload["trend"] = confidence_trend(store, base=diff.base, head=diff.head)
     store.close()

@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { backendCommand, pickFreePort, waitForHealth } from "./backend.mjs";
-import { isAllowedExternalUrl, isAppOrigin } from "./urls.mjs";
+import { isAllowedExternalUrl, isAppOrigin, isEditorUrl } from "./urls.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,7 +19,7 @@ function repoRoot() {
 }
 
 function openExternalIfAllowed(url) {
-  if (!isAllowedExternalUrl(url)) return;
+  if (!isAllowedExternalUrl(url) && !isEditorUrl(url)) return;
   shell.openExternal(url).catch((err) => {
     dialog.showErrorBox("Loadpath", `Could not open link: ${err.message}`);
   });

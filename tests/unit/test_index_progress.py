@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from loadpath.progress import begin_progress, overall_percent, progress_callback, progress_key, read_progress
 from loadpath.index import index_repo
 from loadpath.server.app import create_app
 from tests.conftest import FIXTURE_ROOT as FIXTURE, prepare_review_repo
@@ -89,6 +90,58 @@ def test_api_index_progress_idle_then_done(tmp_path, monkeypatch):
     assert body["phase"] == "done"
     assert body["message"]
     assert "elapsed_ms" in body
+    assert body["percent"] == 100
+
+
+def test_overall_percent_never_goes_backwards_across_phases():
+    floor = 0
+    percents = []
+    events = [
+        {"phase": "scan", "done": 0, "total": 0},
+        {"phase": "scan", "done": 50, "total": 100},
+        {"phase": "scan", "done": 100, "total": 100},
+        {"phase": "extract", "done": 0, "total": 80},
+        {"phase": "extract", "done": 40, "total": 80},
+        {"phase": "extract", "done": 80, "total": 80},
+        {"phase": "boot", "done": 0, "total": 1},
+        {"phase": "stitch", "done": 0, "total": 1},
+        {"phase": "done", "done": 5, "total": 100},
+    ]
+    for event in events:
+        floor = overall_percent(event, floor=floor)
+        percents.append(floor)
+    assert percents == sorted(percents)
+    assert percents[0] == 0
+    assert percents[2] == percents[3] == 20
+    assert percents[-1] == 100
+    naive_extract_start = 0
+    assert percents[3] > naive_extract_start
+
+
+def test_recorded_index_percent_is_monotonic(tmp_path):
+    repo = prepare_review_repo(tmp_path)
+    begin_progress(repo)
+    percents: list[int] = []
+
+    inner = progress_callback(repo)
+
+    def _cb(event):
+        inner(event)
+        percents.append(int(read_progress(repo)["percent"]))
+
+    store = index_repo(repo, incremental=False, workers=1, progress=_cb)
+    store.close()
+    assert percents
+    assert percents == sorted(percents)
+    assert percents[-1] == 100
+    assert percents[0] < 50
+    leftover = read_progress(repo)
+    begin_progress(repo)
+    reset = read_progress(repo)
+    assert leftover["percent"] == 100
+    assert reset["percent"] == 0
+    assert reset["phase"] == "scan"
+    assert progress_key(repo) == reset["repo_path"]
 
 
 def test_default_workers_stays_sequential_on_small_trees(monkeypatch):

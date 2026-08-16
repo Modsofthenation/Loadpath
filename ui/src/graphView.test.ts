@@ -6,8 +6,10 @@ import {
   defaultDetail,
   defaultProjection,
   familyFor,
+  isolatePathIds,
   layoutNodes3d,
   neighborIds,
+  searchNodes,
   visibleGraph,
 } from "./graphView";
 import type { GraphEdge, GraphNode } from "./types";
@@ -79,6 +81,32 @@ describe("layoutNodes3d", () => {
 describe("neighborIds", () => {
   it("includes self and both edge directions", () => {
     expect([...neighborIds("a", edges)].sort()).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+describe("isolatePathIds", () => {
+  it("keeps only nodes on the path from source to a sink", () => {
+    const pathNodes: GraphNode[] = [
+      node("field", "django.field", "total"),
+      node("ser", "django.serializer", "InvoiceSerializer"),
+      node("route", "django.route", "/api/invoices"),
+      node("me", "react.page", "MePage"),
+    ];
+    const pathEdges: GraphEdge[] = [
+      edge("field", "ser"),
+      edge("ser", "route"),
+      edge("ser", "me"),
+    ];
+    const isolated = isolatePathIds(pathNodes, pathEdges, "field", "route");
+    expect([...isolated.nodeIds].sort()).toEqual(["field", "route", "ser"]);
+    expect(isolated.edgeIds.has("ser->me")).toBe(false);
+  });
+});
+
+describe("searchNodes", () => {
+  it("matches name and type", () => {
+    expect(searchNodes(nodes, "invoice").map((n) => n.id)).toEqual([]);
+    expect(searchNodes(nodes, "component").map((n) => n.id)).toEqual(["c"]);
   });
 });
 

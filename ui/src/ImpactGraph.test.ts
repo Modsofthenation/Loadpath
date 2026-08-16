@@ -24,10 +24,11 @@ describe("toReactFlowElements", () => {
       id: "ok",
       source: "view",
       target: "ser",
-      type: "smoothstep",
+      type: "loadstep",
     });
     expect(rfEdges[0].markerEnd).toMatchObject({ type: MarkerType.ArrowClosed });
     expect(rfEdges[0].label).toBeUndefined();
+    expect(rfEdges[0].data).toMatchObject({ stepPosition: 0.5 });
   });
 
   it("labels only edges incident to the selected node", () => {

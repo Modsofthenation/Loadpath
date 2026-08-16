@@ -44,6 +44,37 @@ export type DeepeningCandidate = {
   top?: boolean;
 };
 
+export type ChecklistItem = {
+  id: string;
+  kind: string;
+  status: "todo" | "done" | "info" | string;
+  title: string;
+  detail?: string;
+  node_id?: string | null;
+  file_path?: string | null;
+  rule?: string | null;
+  body?: string;
+  action?: string;
+};
+
+export type ContractSideRow = {
+  field: string;
+  serializer: boolean;
+  zod: boolean;
+  openapi: boolean;
+  graphql: boolean;
+  status: string;
+};
+
+export type FileMark = {
+  path: string;
+  line?: number | null;
+  roles: string[];
+  node_id?: string;
+  badge: string;
+  tooltip: string;
+};
+
 export type Review = {
   id: string;
   title: string;
@@ -72,7 +103,18 @@ export type Review = {
   architecture_note: string;
   depth_note?: string;
   deepening?: DeepeningCandidate[];
-  contract_break?: { kind: string; reasons: string[]; fields: string[] };
+  contract_break?: {
+    kind: string;
+    reasons: string[];
+    fields: string[];
+    sides?: {
+      serializer: string[];
+      zod: string[];
+      openapi: string[];
+      graphql: string[];
+      rows: ContractSideRow[];
+    };
+  };
   auth?: {
     note: string;
     sinks: { id: string; name: string; permissions: string[] }[];
@@ -81,14 +123,26 @@ export type Review = {
   suggested_tests?: { sink: string; type: string; kind: string; title: string; body: string }[];
   trend?: { note: string; points: { id: string; created_at: string; level: string; sinks?: number }[] };
   what_if?: boolean;
+  node?: GraphNode;
   evolution?: {
     hotspots: { path: string; commits: number; bus_factor: number; complexity?: number }[];
     change_coupling: { a: string; b: string; together: number; cross_context?: boolean }[];
     notes: string[];
   };
+  seed_ids?: string[];
+  node_roles?: Record<string, string[]>;
+  checklist?: ChecklistItem[];
+  marks?: FileMark[];
+  codeowners?: {
+    path?: string | null;
+    owners: string[];
+    files: { path: string; owners: string[] }[];
+  };
+  codeowners_reviewers?: string[];
   nodes: GraphNode[];
   edges: GraphEdge[];
   markdown?: string;
+  pull_request?: Record<string, unknown>;
   index?: {
     db: string;
     counts: { nodes: number; edges: number };
@@ -119,6 +173,7 @@ export type IndexProgress = {
   phase: string;
   done?: number;
   total?: number;
+  percent?: number;
   current?: string;
   workers?: number;
   skipped?: number;
@@ -155,6 +210,76 @@ export type ArchitectureReport = {
   reindex_skipped?: boolean;
   files_extracted?: number;
   boot_residuals?: string[];
+  graph_pending?: boolean;
+};
+
+export type ReviewSummary = {
+  id: string;
+  created_at?: string;
+  base_ref?: string | null;
+  head_ref?: string | null;
+  title?: string;
+  level?: string;
+  sinks?: number;
+  covered_sinks?: number;
+  contract_break?: string;
+  findings?: number;
+  low_risk?: boolean;
+  labels?: string[];
+  what_if?: boolean;
+  contexts?: string[];
+};
+
+export type ReviewDiff = {
+  direction: string;
+  added_sinks: string[];
+  removed_sinks: string[];
+  added_findings: number;
+  removed_findings: number;
+  from_level?: string;
+  to_level?: string;
+  from_contract?: string;
+  to_contract?: string;
+  note: string;
+};
+
+export type ArchitectureHealth = {
+  points: {
+    id?: string;
+    created_at?: string;
+    level?: string;
+    sinks?: number;
+    findings?: number;
+    inferred_ratio?: number;
+    contexts?: Record<string, number>;
+    title?: string;
+  }[];
+  contexts: Record<string, { created_at?: string; findings: number; level?: string }[]>;
+};
+
+export type LoadpathConfigDoc = {
+  repo_root: string;
+  path: string;
+  exists: boolean;
+  contexts: Record<
+    string,
+    { name: string; django_apps: string[]; react: string[]; public_api: string[]; owners: string[] }
+  >;
+  rules: string[];
+  available_rules: string[];
+  waivers: { rule: string; node?: string | null; reason?: string }[];
+  django_root: string;
+  react_root: string;
+  openapi_paths: string[];
+  boot_django: boolean;
+  layers: { django: string[]; react: string[] };
+};
+
+export type WorkspaceStatus = {
+  repo_path: string;
+  dirty: string[];
+  dirty_count: number;
+  fingerprint: string;
 };
 
 export type IndexedRepo = {
@@ -185,6 +310,7 @@ export type PullRequest = {
   draft: boolean;
   head_sha?: string;
   base_sha?: string;
+  loadpath?: ReviewSummary;
 };
 
 export type RemoteRepo = {
@@ -385,10 +511,25 @@ export function layoutNodes(
   const colPitch = GRAPH_NODE_WIDTH + GRAPH_COL_GAP;
   const rowPitch = GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP;
   const maxRows = Math.max(...order.map((col) => col.length), 1);
+  const colX: number[] = [];
+  let x = 0;
+  for (let i = 0; i < order.length; i++) {
+    colX.push(x);
+    const here = new Set((order[i] ?? []).map((n) => n.id));
+    const next = new Set((order[i + 1] ?? []).map((n) => n.id));
+    let between = 0;
+    if (next.size) {
+      for (const e of edges) {
+        if (here.has(e.src) && next.has(e.dst)) between += 1;
+      }
+    }
+    const extra = Math.min(120, Math.max(0, (between - 2) * 12));
+    x += colPitch + extra;
+  }
   order.forEach((col, colIndex) => {
     const y0 = ((maxRows - col.length) * rowPitch) / 2;
     col.forEach((n, i) => {
-      pos.set(n.id, { x: colIndex * colPitch, y: y0 + i * rowPitch });
+      pos.set(n.id, { x: colX[colIndex] ?? 0, y: y0 + i * rowPitch });
     });
   });
   return pos;
