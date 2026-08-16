@@ -117,3 +117,94 @@ export function useSaveInvoice() {
     assert any((n.extra or {}).get("invalidation") for n in keys)
     hook = next(n for n in g.nodes if n.name == "useSaveInvoice")
     assert hook.extra.get("mutation") is True
+
+
+def test_extracts_next_app_router_page_and_server_action():
+    page = extract_react_file(
+        "frontend/src/app/invoices/[id]/page.tsx",
+        (FIXTURE / "frontend/src/app/invoices/[id]/page.tsx").read_text(),
+        _cfg(),
+    )
+    routes = [n for n in page.nodes if n.type is NodeType.REACT_ROUTE]
+    assert any(n.name == "/invoices/{id}" for n in routes)
+    assert any(n.type is NodeType.PAGE and (n.extra or {}).get("next_app") for n in page.nodes)
+    actions = extract_react_file(
+        "frontend/src/app/invoices/[id]/actions.ts",
+        (FIXTURE / "frontend/src/app/invoices/[id]/actions.ts").read_text(),
+        _cfg(),
+    )
+    assert any(n.type is NodeType.SERVER_ACTION and n.name == "saveInvoice" for n in actions.nodes)
+
+
+def test_extracts_rtk_openapi_fetch_and_trpc_clients():
+    rtk = extract_react_file(
+        "frontend/src/features/billing/invoiceApi.ts",
+        (FIXTURE / "frontend/src/features/billing/invoiceApi.ts").read_text(),
+        _cfg(),
+    )
+    clients = [n for n in rtk.nodes if n.type is NodeType.API_CLIENT]
+    assert any(c.name == "/api/invoices/{id}" and c.extra.get("typed_client") == "rtk" for c in clients)
+    assert all(not c.extra.get("inferred") for c in clients)
+    fetch = extract_react_file(
+        "frontend/src/features/billing/openapiFetch.ts",
+        (FIXTURE / "frontend/src/features/billing/openapiFetch.ts").read_text(),
+        _cfg(),
+    )
+    assert any(
+        c.type is NodeType.API_CLIENT and c.extra.get("typed_client") == "openapi-fetch"
+        for c in fetch.nodes
+    )
+    trpc = extract_react_file(
+        "frontend/src/features/billing/trpc.ts",
+        (FIXTURE / "frontend/src/features/billing/trpc.ts").read_text(),
+        _cfg(),
+    )
+    assert any(n.extra.get("typed_client") == "trpc" and n.name == "invoice.get" for n in trpc.nodes)
+
+
+def test_extracts_playwright_e2e_visits():
+    g = extract_react_file(
+        "frontend/e2e/invoice.spec.ts",
+        (FIXTURE / "frontend/e2e/invoice.spec.ts").read_text(),
+        _cfg(),
+    )
+    tests = [n for n in g.nodes if n.type is NodeType.REACT_TEST]
+    assert tests
+    assert tests[0].extra.get("e2e") is True
+    visits = tests[0].extra.get("visits") or []
+    assert "/invoices/{id}" in visits
+    assert "/api/invoices/{id}" in visits
+    assert any(e.type.value == "tested_by" for e in g.edges)
+
+
+def test_extracts_graphql_codegen_and_document():
+    g = extract_react_file(
+        "frontend/src/generated/graphql.ts",
+        (FIXTURE / "frontend/src/generated/graphql.ts").read_text(),
+        _cfg(),
+    )
+    schemas = [n for n in g.nodes if n.type is NodeType.FORM_SCHEMA]
+    assert any(n.name == "InvoiceType" and n.extra.get("kind") == "graphql-codegen" for n in schemas)
+    doc = extract_react_file(
+        "frontend/src/features/billing/invoice.graphql",
+        (FIXTURE / "frontend/src/features/billing/invoice.graphql").read_text(),
+        _cfg(),
+    )
+    assert any(n.type is NodeType.GRAPHQL_OPERATION and n.name == "Invoice" and n.extra.get("client") for n in doc.nodes)
+
+
+def test_extracts_ts_rest_path_contract():
+    src = """
+import { initContract } from '@ts-rest/core';
+const c = initContract();
+export const invoiceContract = c.router({
+  getInvoice: {
+    method: 'GET',
+    path: '/api/invoices/:id',
+    responses: { 200: c.type<Invoice>() },
+  },
+});
+"""
+    g = extract_react_file("frontend/src/features/billing/contract.ts", src, _cfg())
+    clients = [n for n in g.nodes if n.type is NodeType.API_CLIENT]
+    assert any(c.name == "/api/invoices/{id}" and c.extra.get("typed_client") == "ts-rest" for c in clients)

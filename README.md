@@ -258,11 +258,11 @@ AST is the default extractor. It is a **framework overlay**, not an import graph
 | Surface | What Loadpath extracts |
 | --- | --- |
 | Models | Fields, FK / M2M / O2O, `on_delete`, string refs (`ForeignKey("accounts.User")`) as residuals |
-| Serializers | `Meta.fields` / `exclude`, declared fields, `serializes` edges, queryset-in-serializer flag |
-| Views | DRF ViewSets / APIViews, `serializer_class`, `get_serializer_class` (residual), `permission_classes`, `get_queryset`, `filterset_class`, `authentication_classes`, `pagination_class` |
+| Serializers | `Meta.fields` / `exclude`, declared fields, nested serializers, `SerializerMethodField`, parsed `to_representation` keys, `serializes` edges, queryset-in-serializer flag |
+| Views | DRF ViewSets / APIViews, `serializer_class`, `get_serializer_class` (resolved returns; residual only when unresolved), `permission_classes`, `get_queryset`, `filterset_class`, `authentication_classes`, `pagination_class` |
 | Function views | `@api_view`, `@login_required`, `@csrf_exempt`, … |
-| Django Ninja | `@router.get/post/…` routes and views |
-| FastAPI (same repo) | `@app.get/post/…` and Pydantic `BaseModel` — only when the file imports FastAPI, so Ninja is not stolen |
+| Django Ninja | `@router.get/post/…` routes and views, `Schema` / `ModelSchema` fields (including nested), response annotation → schema |
+| FastAPI (same repo) | `@app.get/post/…` and Pydantic `BaseModel` (nested annotations) — only when the file imports FastAPI, so Ninja is not stolen |
 | GraphQL | Strawberry `@strawberry.type` / `@strawberry.field` and Graphene `ObjectType` / `Mutation`; client `gql` documents stitch by operation/selection name |
 | Channels | `WebsocketConsumer` subclasses and `path(..., Consumer.as_asgi())` websocket routes |
 | Templates + HTMX | `.html` files, `{% url %}` / include / extends, `hx-get/post/…` stitched to Django routes |
@@ -301,9 +301,9 @@ AST is enough for review. If you need live `_meta` (db_table, resolved relations
 
 ## React + stitch
 
-**React:** react-router tables, composition, TanStack Query `queryKey` + fetch/axios URL templates, Zod schemas, feature-folder imports, RTL `render(<Page/>)` as `tested_by`.
+**React:** react-router tables, Next.js App Router (`app/**/page.tsx`) and Pages Router, Server Actions, composition, TanStack Query `queryKey` + fetch/axios URL templates, RTK Query `createApi` endpoints, openapi-fetch `client.GET/POST`, tRPC procedures, ts-rest `path:` contracts, Zod schemas, GraphQL codegen types, feature-folder imports, RTL `render(<Page/>)` and Playwright/Cypress `page.goto` / `cy.visit` as `tested_by`.
 
-**Stitch (the moat):** OpenAPI from Spectacular/schema files first; generated clients (`generated/`, orval, openapi-typescript) as high-confidence `consumed_by_client`; FastAPI routes and GraphQL operations stitch the same way; HTMX URLs match Django routes; fallback URL-template matching and serializer/Zod field overlap marked **inferred**.
+**Stitch (the moat):** OpenAPI from Spectacular/schema files first; generated clients (`generated/`, orval, openapi-typescript) and typed clients (RTK Query, openapi-fetch, ts-rest, tRPC) as high-confidence `consumed_by_client`; FastAPI routes, Ninja/Pydantic schemas, and GraphQL operations (including codegen types) stitch the same way; HTMX URLs and Playwright/Cypress visits match Django/React routes; fallback URL-template matching and serializer/Zod field overlap marked **inferred**.
 
 Frontend roots prefer `frontend/src`, `frontend`, `web/src`, `client/src`, `ui/src`, `src-ui/src` — not a Python package `src/` and not `docs` / docs-site trees. `app/` is a Django root candidate.
 

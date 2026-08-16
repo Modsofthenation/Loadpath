@@ -56,6 +56,7 @@ export const TYPE_COLOR: Record<string, string> = {
   "react.feature": "#9d4edd",
   "react.route": "#c77dff",
   "react.page": "#c77dff",
+  "react.server_action": "#e76f51",
   "react.component": "#9d4edd",
   "react.form_schema": "#ffd166",
   "react.test": "#6c757d",

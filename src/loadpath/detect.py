@@ -176,6 +176,7 @@ PREFERRED_REACT_ROOTS = (
     "client/src",
     "ui/src",
     "ui",
+    "src/app",
 )
 
 SKIP_REACT_PARTS = {

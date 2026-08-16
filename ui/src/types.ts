@@ -285,6 +285,7 @@ export const LAYER_ORDER: Record<string, number> = {
   "react.feature": 11,
   "react.route": 12,
   "react.page": 12,
+  "react.server_action": 12,
   "django.template": 12,
   "react.component": 13,
   "react.context": 13,

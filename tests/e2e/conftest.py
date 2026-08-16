@@ -49,12 +49,20 @@ def live_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[
         thread.join(timeout=5)
 
 
+def force_2d_graph(page) -> None:
+    btn = page.get_by_test_id("graph-view-2d")
+    if btn.count():
+        btn.first.click()
+
+
 def wait_visible_graph(page, timeout: int = 15_000) -> None:
     """Wait until React Flow has painted a node and at least one on-screen edge.
 
     `.react-flow__edge` first can stay `visibility: hidden` (unmeasured or
     clipped) even when other edges are visible, so filter to a visible edge.
+    Large reviews default to 3D; switch back so Playwright can see the 2D map.
     """
+    force_2d_graph(page)
     page.locator(".react-flow__node").first.wait_for(timeout=timeout)
     page.locator(".react-flow__edge").filter(visible=True).first.wait_for(timeout=timeout)
 

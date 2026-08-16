@@ -4,7 +4,7 @@ import shutil
 
 import pytest
 
-from tests.e2e.conftest import wait_visible_graph
+from tests.e2e.conftest import force_2d_graph, wait_visible_graph
 
 
 def _wait_fonts(page) -> None:
@@ -106,6 +106,7 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert "MEDIUM" in brief or "LOW" in brief or "HIGH" in brief
     assert "billing-team" in brief
     assert "MePage" not in brief
+    force_2d_graph(page)
     page.locator(".react-flow__node").filter(has_text="InvoicePage").first.wait_for(timeout=15_000)
     page.locator(".react-flow__edge").filter(visible=True).first.wait_for(timeout=15_000)
     assert page.locator(".react-flow__node").filter(has_text="MePage").count() == 0

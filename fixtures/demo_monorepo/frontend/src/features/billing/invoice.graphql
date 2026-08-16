@@ -1,0 +1,6 @@
+query Invoice($id: ID!) {
+  invoice {
+    total
+    status
+  }
+}

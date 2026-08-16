@@ -265,19 +265,30 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
                 )
             )
 
-    # Serializer field ↔ Zod field overlap
-    fields_by_serializer: dict[str, list[dict]] = {}
+    # Serializer / Pydantic / GraphQL field ↔ Zod / codegen schema overlap
+    contract_parents: list[dict] = []
+    contract_parents.extend(serializers)
+    contract_parents.extend(store.nodes([NodeType.PYDANTIC_MODEL]))
+    contract_parents.extend(store.nodes([NodeType.GRAPHQL_TYPE]))
+    fields_by_parent: dict[str, list[dict]] = {}
     for f in ser_fields:
         parent = f["qualified_name"].rsplit(".", 1)[0]
-        fields_by_serializer.setdefault(parent, []).append(f)
+        fields_by_parent.setdefault(parent, []).append(f)
+    for f in store.nodes([NodeType.GRAPHQL_FIELD]):
+        parent = f["qualified_name"].rsplit(".", 1)[0]
+        fields_by_parent.setdefault(parent, []).append(f)
 
     for schema in schemas:
         zod_fields = set((schema.get("extra") or {}).get("fields") or [])
         if not zod_fields:
             continue
+        schema_kind = (schema.get("extra") or {}).get("kind") or "zod"
+        typed = schema_kind == "graphql-codegen" or (schema.get("extra") or {}).get("generated")
         best: tuple[float, dict, set[str]] | None = None
-        for ser in serializers:
-            names = {f["name"] for f in fields_by_serializer.get(ser["qualified_name"], [])}
+        for ser in contract_parents:
+            names = {f["name"] for f in fields_by_parent.get(ser["qualified_name"], [])}
+            extra_fields = (ser.get("extra") or {}).get("fields") or []
+            names.update(extra_fields)
             if not names:
                 continue
             overlap = zod_fields & names
@@ -287,21 +298,28 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
                 best = (score, ser, overlap)
         if best:
             score, ser, overlap = best
+            inferred = not typed
             store.upsert_edge(
                 Edge(
                     src=ser["id"],
                     dst=schema["id"],
                     type=EdgeType.MATCHES_SCHEMA,
-                    confidence=min(0.85, 0.4 + score),
-                    extra={"overlap": sorted(overlap), "score": score, "inferred": True},
+                    confidence=min(0.95, 0.55 + score) if typed else min(0.85, 0.4 + score),
+                    extra={
+                        "overlap": sorted(overlap),
+                        "score": score,
+                        "inferred": inferred,
+                        "via": schema_kind,
+                    },
                 )
             )
-            residuals.append(
-                f"Inferred serializer/Zod overlap {ser['name']} ↔ {schema['name']} "
-                f"fields={sorted(overlap)} score={score:.2f}"
-            )
+            if inferred:
+                residuals.append(
+                    f"Inferred serializer/Zod overlap {ser['name']} ↔ {schema['name']} "
+                    f"fields={sorted(overlap)} score={score:.2f}"
+                )
             # field-level edges
-            ser_fields_map = {f["name"]: f for f in fields_by_serializer.get(ser["qualified_name"], [])}
+            ser_fields_map = {f["name"]: f for f in fields_by_parent.get(ser["qualified_name"], [])}
             for fname in overlap:
                 if fname in ser_fields_map:
                     store.upsert_edge(
@@ -309,8 +327,8 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
                             src=ser_fields_map[fname]["id"],
                             dst=schema["id"],
                             type=EdgeType.MATCHES_SCHEMA,
-                            confidence=0.6,
-                            extra={"field": fname, "inferred": True},
+                            confidence=0.85 if typed else 0.6,
+                            extra={"field": fname, "inferred": inferred},
                         )
                     )
 
@@ -333,6 +351,8 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
 
     residuals.extend(_stitch_graphql(store))
     residuals.extend(_stitch_htmx(store))
+    residuals.extend(_stitch_e2e(store))
+    residuals.extend(_stitch_trpc(store, routes))
     store.conn.commit()
     return residuals
 
@@ -368,6 +388,44 @@ def _stitch_graphql(store: GraphStore) -> list[str]:
                 type=EdgeType.CONSUMED_BY_CLIENT,
                 confidence=0.92,
                 extra={"via": "graphql", "operation": client["name"], "server": match["name"]},
+            )
+        )
+    schemas = [
+        n
+        for n in store.nodes([NodeType.FORM_SCHEMA])
+        if (n.get("extra") or {}).get("kind") == "graphql-codegen"
+    ]
+    types = store.nodes([NodeType.GRAPHQL_TYPE])
+    type_fields = store.nodes([NodeType.GRAPHQL_FIELD])
+    fields_by_type: dict[str, set[str]] = {}
+    for f in type_fields:
+        parent = f["qualified_name"].rsplit(".", 1)[0]
+        fields_by_type.setdefault(parent, set()).add(f["name"])
+    for schema in schemas:
+        zod = set((schema.get("extra") or {}).get("fields") or [])
+        if not zod:
+            continue
+        best: tuple[float, dict, set[str]] | None = None
+        for gql in types:
+            names = set(fields_by_type.get(gql["qualified_name"]) or [])
+            names.update((gql.get("extra") or {}).get("fields") or [])
+            if not names:
+                continue
+            overlap = zod & names
+            union = zod | names
+            score = len(overlap) / len(union) if union else 0
+            if score >= 0.4 and (best is None or score > best[0]):
+                best = (score, gql, overlap)
+        if not best:
+            continue
+        score, gql, overlap = best
+        store.upsert_edge(
+            Edge(
+                src=gql["id"],
+                dst=schema["id"],
+                type=EdgeType.MATCHES_SCHEMA,
+                confidence=min(0.95, 0.6 + score),
+                extra={"via": "graphql-codegen", "overlap": sorted(overlap), "score": score, "inferred": False},
             )
         )
     return residuals
@@ -409,6 +467,120 @@ def _stitch_htmx(store: GraphStore) -> list[str]:
     return residuals
 
 
+def _stitch_e2e(store: GraphStore) -> list[str]:
+    residuals: list[str] = []
+    tests = [n for n in store.nodes([NodeType.REACT_TEST]) if (n.get("extra") or {}).get("e2e")]
+    if not tests:
+        return residuals
+    routes = [
+        n
+        for n in store.nodes([NodeType.ROUTE, NodeType.FASTAPI_ROUTE, NodeType.REACT_ROUTE, NodeType.OPENAPI_PATH])
+        if not (n.get("extra") or {}).get("include")
+    ]
+    pages = store.nodes([NodeType.PAGE])
+    for test in tests:
+        visits = [(normalize_url_template(str(v)), str(v)) for v in ((test.get("extra") or {}).get("visits") or [])]
+        for tmpl, raw in visits:
+            matched = False
+            for route in routes:
+                extra = route.get("extra") or {}
+                if route["type"] == NodeType.OPENAPI_PATH.value:
+                    rtmpl = django_route_to_template(str(extra.get("path") or route["name"]))
+                elif route["type"] == NodeType.REACT_ROUTE.value:
+                    rtmpl = normalize_url_template(str(route["name"]))
+                else:
+                    rtmpl = django_route_to_template(str(published_route(route)))
+                if not _paths_match(tmpl, rtmpl) and tmpl.replace("{id}", ":id") != rtmpl:
+                    continue
+                store.upsert_edge(
+                    Edge(
+                        src=route["id"],
+                        dst=test["id"],
+                        type=EdgeType.TESTED_BY,
+                        confidence=0.9,
+                        extra={"via": "e2e", "visit": raw},
+                    )
+                )
+                matched = True
+            for page in pages:
+                proute = str((page.get("extra") or {}).get("route") or "")
+                if proute and _paths_match(tmpl, normalize_url_template(proute)):
+                    store.upsert_edge(
+                        Edge(
+                            src=page["id"],
+                            dst=test["id"],
+                            type=EdgeType.TESTED_BY,
+                            confidence=0.9,
+                            extra={"via": "e2e", "visit": raw},
+                        )
+                    )
+                    matched = True
+            if not matched and tmpl.startswith("/api/"):
+                residuals.append(f"E2E visit {tmpl} has no matching route ({test.get('file_path')})")
+    return residuals
+
+
+def _stitch_trpc(store: GraphStore, routes: list[dict]) -> list[str]:
+    residuals: list[str] = []
+    clients = [
+        n
+        for n in store.nodes([NodeType.API_CLIENT])
+        if (n.get("extra") or {}).get("typed_client") == "trpc"
+    ]
+    if not clients:
+        return residuals
+    ops = store.nodes([NodeType.GRAPHQL_OPERATION])
+    views = store.nodes([NodeType.VIEW])
+    for client in clients:
+        proc = str((client.get("extra") or {}).get("procedure") or client["name"])
+        head = proc.split(".")[0].lower()
+        matched = False
+        for op in ops:
+            if op["name"].lower() in {proc.lower(), head, proc.replace(".", "_").lower()}:
+                store.upsert_edge(
+                    Edge(
+                        src=op["id"],
+                        dst=client["id"],
+                        type=EdgeType.CONSUMED_BY_CLIENT,
+                        confidence=0.8,
+                        extra={"via": "trpc", "procedure": proc},
+                    )
+                )
+                matched = True
+        for route in routes:
+            rraw = published_route(route).lower()
+            if head and head in rraw:
+                store.upsert_edge(
+                    Edge(
+                        src=route["id"],
+                        dst=client["id"],
+                        type=EdgeType.CONSUMED_BY_CLIENT,
+                        confidence=0.7,
+                        extra={"via": "trpc", "procedure": proc, "inferred": True},
+                    )
+                )
+                matched = True
+        if not matched:
+            for view in views:
+                if head and head in (view.get("name") or "").lower():
+                    store.upsert_edge(
+                        Edge(
+                            src=view["id"],
+                            dst=client["id"],
+                            type=EdgeType.CONSUMED_BY_CLIENT,
+                            confidence=0.65,
+                            extra={"via": "trpc", "procedure": proc, "inferred": True},
+                        )
+                    )
+                    matched = True
+                    break
+        if not matched:
+            residuals.append(
+                f"tRPC procedure {proc} has no matching GraphQL field or route ({client.get('file_path')})"
+            )
+    return residuals
+
+
 def _paths_match(a: str, b: str) -> bool:
     a = normalize_url_template(a)
     b = django_route_to_template(b)
@@ -428,7 +600,7 @@ def _paths_match(a: str, b: str) -> bool:
 
 def _client_is_generated(client: dict, generated_files: list[str]) -> bool:
     extra = client.get("extra") or {}
-    if extra.get("generated"):
+    if extra.get("generated") or extra.get("typed_client"):
         return True
     fp = str(client.get("file_path") or extra.get("file") or "").replace("\\", "/")
     if not fp:

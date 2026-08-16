@@ -30,6 +30,7 @@ ARCHITECTURE_NODE_TYPES = {
     NodeType.HOOK.value,
     NodeType.API_CLIENT.value,
     NodeType.FORM_SCHEMA.value,
+    NodeType.SERVER_ACTION.value,
     NodeType.GRAPHQL_TYPE.value,
     NodeType.GRAPHQL_OPERATION.value,
     NodeType.FASTAPI_ROUTE.value,

@@ -20,6 +20,7 @@ CLUSTER_SEED_PRIORITY = [
     NodeType.FORM_SCHEMA,
     NodeType.HOOK,
     NodeType.COMPONENT,
+    NodeType.SERVER_ACTION,
     NodeType.GRAPHQL_TYPE,
     NodeType.GRAPHQL_OPERATION,
     NodeType.FASTAPI_ROUTE,

@@ -26,6 +26,26 @@ def test_index_stitches_django_route_to_react_client(tmp_path: Path):
     assert any((e.get("extra") or {}).get("superseded_by_generated") for e in inferred)
     schema_edges = [e for e in edges if e["type"] == "matches_schema"]
     assert schema_edges, "serializer fields should overlap invoiceSchema"
+    typed = [
+        n
+        for n in store.nodes([NodeType.API_CLIENT])
+        if (n.get("extra") or {}).get("typed_client") in {"rtk", "openapi-fetch"}
+    ]
+    assert typed, "RTK / openapi-fetch clients should be indexed"
+    e2e = [
+        e
+        for e in edges
+        if e["type"] == "tested_by" and (e.get("extra") or {}).get("via") == "e2e"
+    ]
+    assert e2e, "Playwright visits should stitch tested_by onto routes"
+    gql_schema = [
+        e
+        for e in schema_edges
+        if (e.get("extra") or {}).get("via") == "graphql-codegen"
+    ]
+    assert gql_schema, "graphql-codegen InvoiceType should match the server GraphQL type"
+    assert any(n["type"] == "react.server_action" for n in store.nodes())
+    assert any(n["type"] == "react.page" and (n.get("extra") or {}).get("next_app") for n in store.nodes())
     store.close()
 
 

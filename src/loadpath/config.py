@@ -55,6 +55,7 @@ class LoadpathConfig:
             "**/generated/**/*.{ts,tsx,js}",
             "**/*openapi*.{ts,js}",
             "**/orval/**/*.{ts,js}",
+            "**/*graphql*.{ts,tsx,js}",
         ]
     )
     extra: dict[str, Any] = field(default_factory=dict)

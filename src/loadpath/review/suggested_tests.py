@@ -57,6 +57,20 @@ def _sketch(ntype: str, name: str, node: dict) -> dict | None:
                 f"    assert response.status_code < 500\n"
             ),
         }
+    if ntype == NodeType.PAGE.value and ((node.get("extra") or {}).get("next_app") or (node.get("extra") or {}).get("route")):
+        route = (node.get("extra") or {}).get("route") or name
+        return {
+            "sink": name,
+            "type": ntype,
+            "kind": "playwright",
+            "title": f"Hit {route} through the App Router page",
+            "body": (
+                f"test('{name} load path', async ({{ page }}) => {{\n"
+                f"  await page.goto({route!r})\n"
+                f"  await expect(page.getByRole('heading')).toBeVisible()\n"
+                f"}})\n"
+            ),
+        }
     if ntype in {NodeType.PAGE.value, NodeType.FORM_SCHEMA.value}:
         component = name if ntype == NodeType.PAGE.value else name.replace("Schema", "Form")
         return {
@@ -160,6 +174,20 @@ def _sketch(ntype: str, name: str, node: dict) -> dict | None:
             "body": (
                 f"def test_{_ident(name)}_task():\n"
                 f"    {name}(1)  # pass a model pk, not a deserialized object\n"
+            ),
+        }
+    if ntype == NodeType.SERVER_ACTION.value:
+        return {
+            "sink": name,
+            "type": ntype,
+            "kind": "playwright",
+            "title": f"Submit server action {name}",
+            "body": (
+                f"test('{name} server action', async ({{ page }}) => {{\n"
+                f"  await page.goto('/')\n"
+                f"  await page.getByRole('button').click()\n"
+                f"  await expect(page.getByRole('alert')).not.toBeVisible()\n"
+                f"}})\n"
             ),
         }
     return None
