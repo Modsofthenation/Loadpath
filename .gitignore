@@ -25,3 +25,9 @@ ui/playwright-report/
 ui/test-results/
 desktop/backend-dist/
 desktop/dist/
+.env.*
+!.env.example
+*.pem
+id_rsa
+id_rsa.pub
+credentials.json

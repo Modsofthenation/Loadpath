@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse
 
 from pydantic import AnyHttpUrl
 from starlette.middleware.authentication import AuthenticationMiddleware
@@ -13,7 +14,7 @@ from mcp.server.auth.middleware.auth_context import AuthContextMiddleware
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import MCPServer
-from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 
 from loadpath import __version__
 from loadpath.mcp import tools
@@ -151,11 +152,36 @@ def create_mcp_server(
     return mcp
 
 
-def build_mcp_http(mcp: MCPServer):
+def mcp_transport_security(public_url: str | None = None) -> TransportSecuritySettings:
+    """Allow loopback (and an optional tunnel origin). Reject other Host/Origin values."""
+    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*", "testserver", "testclient"]
+    origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    explicit = (public_url or os.environ.get("LOADPATH_PUBLIC_URL") or "").strip()
+    if explicit:
+        parsed = urlparse(explicit)
+        host = (parsed.hostname or "").lower().strip("[]")
+        if host and host not in {"127.0.0.1", "localhost", "::1"}:
+            hosts.extend([host, f"{host}:*"])
+            if parsed.scheme:
+                origins.extend([f"{parsed.scheme}://{host}", f"{parsed.scheme}://{host}:*"])
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+        allowed_origins=origins,
+    )
+
+
+def mcp_host_allowed(host_header: str, public_url: str | None = None) -> bool:
+    """True when Host is loopback, TestClient, or the optional tunnel hostname."""
+    settings = mcp_transport_security(public_url)
+    return TransportSecurityMiddleware(settings)._validate_host(host_header or "")
+
+
+def build_mcp_http(mcp: MCPServer, public_url: str | None = None):
     """Create the Streamable HTTP Starlette app (initializes session_manager)."""
     return mcp.streamable_http_app(
         streamable_http_path="/mcp",
-        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        transport_security=mcp_transport_security(public_url),
         host="0.0.0.0",
     )
 

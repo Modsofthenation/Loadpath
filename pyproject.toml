@@ -5,16 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "loadpath"
 version = "0.1.0"
-description = "Architecture-typed impact graphs for Django + React pull requests."
+description = "Architecture-typed impact graphs for Django + React pull requests. Local load-path review, not a hunk-comment bot."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Loadpath" }]
 keywords = ["django", "react", "code-review", "architecture", "mcp"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Quality Assurance",
+    "Intended Audience :: Developers",
 ]
 dependencies = [
     "fastapi>=0.115.0",
@@ -42,6 +44,8 @@ dev = [
 Homepage = "https://github.com/Modsofthenation/PR-Reviewer"
 Repository = "https://github.com/Modsofthenation/PR-Reviewer"
 Issues = "https://github.com/Modsofthenation/PR-Reviewer/issues"
+Documentation = "https://github.com/Modsofthenation/PR-Reviewer#readme"
+"Bug Tracker" = "https://github.com/Modsofthenation/PR-Reviewer/issues"
 
 [project.scripts]
 loadpath = "loadpath.cli:app"

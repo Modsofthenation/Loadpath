@@ -6,7 +6,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -20,6 +21,7 @@ from loadpath.mcp.server import (
     build_mcp_http,
     copy_mcp_routes,
     create_mcp_server,
+    mcp_host_allowed,
     mcp_lifespan,
     public_base_url,
     resource_url,
@@ -234,9 +236,38 @@ def _call_scm(provider: str, fn):
         raise HTTPException(502, str(exc)) from exc
 
 
+LOCAL_API_ONLY = "This action is only available from the local Loadpath UI"
+
+
 def require_loopback(request: Request) -> None:
     if not is_loopback_request(request.headers.get("host") or "", request.headers.get("origin") or ""):
-        raise HTTPException(403, "This action is only available from the local Loadpath UI")
+        raise HTTPException(403, LOCAL_API_ONLY)
+
+
+class LoopbackAPIMiddleware(BaseHTTPMiddleware):
+    """Keep /api/* on the local UI. MCP OAuth stays on /mcp, /authorize, /token."""
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path.rstrip("/") or "/"
+        if path.startswith("/api/") and path != "/api/health":
+            if not is_loopback_request(request.headers.get("host") or "", request.headers.get("origin") or ""):
+                return JSONResponse({"detail": LOCAL_API_ONLY}, status_code=403)
+        return await call_next(request)
+
+
+class McpHostMiddleware(BaseHTTPMiddleware):
+    """Reject DNS-rebinding Host headers on MCP OAuth and transport paths."""
+
+    def __init__(self, app, public_url: str | None = None):
+        super().__init__(app)
+        self._public_url = public_url
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path.rstrip("/") or "/"
+        if path == "/mcp" or path.startswith("/mcp/") or path in {"/authorize", "/token", "/register", "/revoke", "/consent"}:
+            if not mcp_host_allowed(request.headers.get("host") or "", self._public_url):
+                return JSONResponse({"detail": "Invalid Host header"}, status_code=421)
+        return await call_next(request)
 
 
 def _attach_loadpath(listed: list[dict[str, Any]], repo_path: str | None) -> list[dict[str, Any]]:
@@ -276,7 +307,7 @@ def create_app(
         oauth_pin=oauth_pin,
         auto_approve=oauth_auto_approve,
     )
-    mcp_http = build_mcp_http(mcp)
+    mcp_http = build_mcp_http(mcp, public_url=base)
     app = FastAPI(title="Loadpath", version=__version__, lifespan=mcp_lifespan(mcp))
     app.state.mcp = mcp
     app.state.mcp_http = mcp_http
@@ -290,6 +321,8 @@ def create_app(
         allow_headers=["*"],
         expose_headers=["WWW-Authenticate", "Mcp-Session-Id", "mcp-session-id"],
     )
+    app.add_middleware(LoopbackAPIMiddleware)
+    app.add_middleware(McpHostMiddleware, public_url=base)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -951,6 +984,12 @@ def serve(
     display = "127.0.0.1" if host in {"0.0.0.0", "::", "[::]"} else host
     base = public_base_url(host=host, port=port, public_url=public_url)
     application = create_app(public_url=base, oauth_pin=oauth_pin)
+    if host in {"0.0.0.0", "::", "[::]"}:
+        print(
+            "Listening on all interfaces. The UI at /api stays loopback-only; "
+            "remote clients should use MCP at /mcp. Prefer --oauth-pin when --public-url is set.",
+            flush=True,
+        )
     if open_browser:
         webbrowser.open(f"http://{display}:{port}")
     uvicorn.run(application, host=host, port=port, reload=False)

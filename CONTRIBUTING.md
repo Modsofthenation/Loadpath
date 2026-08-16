@@ -1,15 +1,23 @@
 # Contributing
 
+By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Security reports go to [SECURITY.md](SECURITY.md), not the public issue tracker.
+
 ## Setup
 
 Python 3.12+ and Node 22+.
 
 ```bash
+git clone https://github.com/Modsofthenation/PR-Reviewer.git
+cd PR-Reviewer
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 python -m playwright install chromium   # optional; needed for UI screenshot tests
 cd ui && npm install && npm run build && cd ..
 loadpath --help
 ```
+
+Do not commit `~/.loadpath/`, `.env`, tokens, or private clones. Settings already live outside the repo.
 
 ## Tests
 
