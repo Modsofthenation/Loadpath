@@ -17,10 +17,6 @@ inputs:
     description: "Python version used to install Loadpath."
     required: false
     default: "3.12"
-  extra-args:
-    description: "Extra arguments passed to `loadpath review`."
-    required: false
-    default: ""
 outputs:
   level:
     description: "Confidence level (high, medium, low)."
@@ -51,12 +47,22 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
+        LOADPATH_FAIL_ON: ${{ inputs.fail-on }}
+        LOADPATH_COMMENT: ${{ inputs.comment }}
+        LOADPATH_PR: ${{ github.event.pull_request.number }}
+        LOADPATH_REPO: ${{ github.repository }}
+        LOADPATH_BASE_REF: ${{ github.base_ref }}
       run: |
         set -euo pipefail
-        ARGS=(review . --base "origin/${GITHUB_BASE_REF:-main}" --head HEAD --fail-on "${{ inputs.fail-on }}")
-        if [ "${{ inputs.comment }}" = "true" ] && [ -n "${{ github.event.pull_request.number }}" ]; then
-          ARGS+=(--comment --provider github --pr "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}")
+        case "${LOADPATH_FAIL_ON}" in
+          never|blocker|low|medium) ;;
+          *)
+            echo "fail-on must be never, blocker, low, or medium" >&2
+            exit 1
+            ;;
+        esac
+        ARGS=(review . --base "origin/${LOADPATH_BASE_REF:-main}" --head HEAD --fail-on "${LOADPATH_FAIL_ON}")
+        if [ "${LOADPATH_COMMENT}" = "true" ] && [ -n "${LOADPATH_PR}" ]; then
+          ARGS+=(--comment --provider github --pr "${LOADPATH_PR}" --repo "${LOADPATH_REPO}")
         fi
-        # shellcheck disable=SC2206
-        EXTRA=(${{ inputs.extra-args }})
-        loadpath "${ARGS[@]}" "${EXTRA[@]}"
+        loadpath "${ARGS[@]}"

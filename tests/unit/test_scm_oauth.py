@@ -239,8 +239,25 @@ def test_github_oauth_start_requires_client_id(tmp_path, monkeypatch):
 def test_scm_routes_reject_cross_origin(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     headers = {"Origin": "https://evil.example"}
+    assert client.get("/api/health", headers=headers).status_code == 200
     assert client.get("/api/scm/repos", params={"provider": "github"}, headers=headers).status_code == 403
     assert client.get("/api/oauth/status", headers=headers).status_code == 403
+    assert client.get("/api/settings", headers=headers).status_code == 403
+    assert client.get("/api/fs", headers=headers).status_code == 403
+    assert client.get("/api/repos", headers=headers).status_code == 403
+    assert client.put("/api/settings", json={"github_token": "ghp_x"}, headers=headers).status_code == 403
+    assert client.post("/api/index", json={"repo_path": "/tmp"}, headers=headers).status_code == 403
+    assert client.post(
+        "/api/review",
+        json={"repo_path": "/tmp", "base": "HEAD~1"},
+        headers=headers,
+    ).status_code == 403
+    assert client.post(
+        "/api/prs/comment",
+        json={"provider": "github", "repo": "acme/demo", "number": 1, "markdown": "x"},
+        headers=headers,
+    ).status_code == 403
+    assert client.post("/api/ai/residual", json={"review": {}}, headers=headers).status_code == 403
     assert client.post("/api/oauth/github/start", headers=headers).status_code == 403
     assert client.post("/api/oauth/disconnect", json={"provider": "github"}, headers=headers).status_code == 403
     assert client.put(
@@ -268,6 +285,26 @@ def test_loopback_request_helper():
     assert is_loopback_request("example.com", "http://127.0.0.1:7345")
     assert not is_loopback_request("example.com", "https://evil.example")
     assert not is_loopback_request("tunnel.example", "")
+
+
+def test_mcp_transport_security_allows_loopback_and_tunnel():
+    from loadpath.mcp.server import mcp_transport_security
+
+    local = mcp_transport_security("http://127.0.0.1:7345")
+    assert local.enable_dns_rebinding_protection is True
+    assert "127.0.0.1:*" in local.allowed_hosts
+    assert "evil.example" not in local.allowed_hosts
+
+    tunneled = mcp_transport_security("https://loadpath.example")
+    assert "loadpath.example" in tunneled.allowed_hosts
+    assert "https://loadpath.example" in tunneled.allowed_origins
+
+    from loadpath.mcp.server import mcp_host_allowed
+
+    assert mcp_host_allowed("testserver", None)
+    assert mcp_host_allowed("127.0.0.1:7345", None)
+    assert not mcp_host_allowed("evil.example", None)
+    assert mcp_host_allowed("loadpath.example", "https://loadpath.example")
 
 
 def test_github_device_rejects_unexpected_verification_url():

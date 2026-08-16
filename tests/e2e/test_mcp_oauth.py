@@ -49,6 +49,9 @@ def test_oauth_metadata_and_mcp_requires_bearer(tmp_path, monkeypatch):
         assert prm.json()["resource"].endswith("/mcp")
         assert prm.json()["authorization_servers"] == [body["issuer"]]
 
+        denied = client.post("/mcp", headers={"host": "evil.example"})
+        assert denied.status_code == 421
+
         denied = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
         assert denied.status_code == 401
         assert "resource_metadata" in denied.headers.get("www-authenticate", "").lower()
