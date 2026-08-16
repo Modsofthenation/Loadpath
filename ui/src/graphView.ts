@@ -12,18 +12,36 @@ import {
 export type GraphFamily = "django" | "react" | "stitch" | "arch";
 export type GraphDetail = "overview" | "full";
 export type GraphProjection = "2d" | "3d";
-export type GraphLayoutId = "layers" | "flow" | "radial" | "grid";
+export type GraphLayoutId =
+  | "layers"
+  | "flow"
+  | "tree"
+  | "radial"
+  | "concentric"
+  | "circle"
+  | "clusters"
+  | "grid"
+  | "force";
 
 export const GRAPH_LAYOUTS: { id: GraphLayoutId; label: string }[] = [
   { id: "layers", label: "Architecture layers" },
   { id: "flow", label: "Edge flow" },
+  { id: "tree", label: "Spanning tree" },
   { id: "radial", label: "Radial" },
+  { id: "concentric", label: "Concentric layers" },
+  { id: "circle", label: "Circle" },
+  { id: "clusters", label: "Type clusters" },
   { id: "grid", label: "Compact grid" },
+  { id: "force", label: "Force directed" },
 ];
 
 const GRAPH_LAYOUT_IDS = new Set<GraphLayoutId>(GRAPH_LAYOUTS.map((item) => item.id));
 const LAYOUT_STORAGE = "loadpath.graphLayout";
 const LAYOUT_PASSES = 8;
+const FORCE_ITERS = 64;
+const MIN_ARC = GRAPH_NODE_WIDTH + 32;
+const COL_PITCH = GRAPH_NODE_WIDTH + GRAPH_COL_GAP;
+const ROW_PITCH = GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP;
 
 export const PATH_SINK_TYPES = new Set([
   "django.route",
@@ -326,6 +344,28 @@ function byName(a: GraphNode, b: GraphNode): number {
   return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
 }
 
+function byLayerThenName(a: GraphNode, b: GraphNode): number {
+  return layerFor(a.type) - layerFor(b.type) || byName(a, b);
+}
+
+function placeRing(
+  ring: GraphNode[],
+  radius: number,
+  pos: Map<string, { x: number; y: number }>,
+): void {
+  ring.forEach((n, i) => {
+    const theta = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(ring.length, 1);
+    pos.set(n.id, { x: Math.cos(theta) * radius, y: Math.sin(theta) * radius });
+  });
+}
+
+function ringRadius(count: number, ringIndex: number): number {
+  return Math.max(
+    ringIndex * COL_PITCH,
+    count <= 1 ? (ringIndex === 0 ? 0 : GRAPH_NODE_WIDTH) : (count * MIN_ARC) / (2 * Math.PI),
+  );
+}
+
 function placeColumns(order: GraphNode[][], edges: GraphEdge[]): Map<string, { x: number; y: number }> {
   const pos = new Map<string, { x: number; y: number }>();
   if (!order.length) return pos;
@@ -496,6 +536,261 @@ function layoutGrid(nodes: GraphNode[]): Map<string, { x: number; y: number }> {
   return pos;
 }
 
+function layoutCircle(nodes: GraphNode[]): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>();
+  const ordered = [...nodes].sort(byLayerThenName);
+  if (ordered.length <= 1) {
+    if (ordered[0]) pos.set(ordered[0].id, { x: 0, y: 0 });
+    return pos;
+  }
+  placeRing(ordered, ringRadius(ordered.length, 1), pos);
+  return pos;
+}
+
+function layoutConcentric(nodes: GraphNode[]): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>();
+  if (!nodes.length) return pos;
+  const rings = new Map<number, GraphNode[]>();
+  for (const n of nodes) {
+    const layer = layerFor(n.type);
+    const list = rings.get(layer) ?? [];
+    list.push(n);
+    rings.set(layer, list);
+  }
+  const layers = [...rings.keys()].sort((a, b) => a - b);
+  layers.forEach((layer, d) => {
+    const ring = (rings.get(layer) ?? []).sort(byName);
+    if (d === 0 && ring.length === 1) {
+      pos.set(ring[0]!.id, { x: 0, y: 0 });
+      return;
+    }
+    placeRing(ring, ringRadius(ring.length, d === 0 ? 1 : d), pos);
+  });
+  return pos;
+}
+
+function layoutClusters(nodes: GraphNode[]): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>();
+  if (!nodes.length) return pos;
+  const groups = new Map<string, GraphNode[]>();
+  for (const n of nodes) {
+    const list = groups.get(n.type) ?? [];
+    list.push(n);
+    groups.set(n.type, list);
+  }
+  const types = [...groups.keys()].sort((a, b) => layerFor(a) - layerFor(b) || a.localeCompare(b));
+  const packed = types.map((type) => {
+    const members = (groups.get(type) ?? []).sort(byName);
+    const cols = Math.max(1, Math.ceil(Math.sqrt(members.length)));
+    const rows = Math.ceil(members.length / cols);
+    return {
+      members,
+      cols,
+      width: Math.max(0, cols - 1) * COL_PITCH,
+      height: Math.max(0, rows - 1) * ROW_PITCH,
+    };
+  });
+  const maxSpan = Math.max(...packed.map((g) => Math.hypot(g.width, g.height) / 2 + GRAPH_NODE_WIDTH), GRAPH_NODE_WIDTH);
+  const radius =
+    packed.length <= 1 ? 0 : Math.max(COL_PITCH, (packed.length * (maxSpan * 2 + GRAPH_COL_GAP)) / (2 * Math.PI));
+  packed.forEach((group, tIndex) => {
+    const theta = packed.length === 1 ? 0 : -Math.PI / 2 + (2 * Math.PI * tIndex) / packed.length;
+    const cx = Math.cos(theta) * radius;
+    const cy = Math.sin(theta) * radius;
+    group.members.forEach((n, i) => {
+      const col = i % group.cols;
+      const row = Math.floor(i / group.cols);
+      pos.set(n.id, {
+        x: cx - group.width / 2 + col * COL_PITCH,
+        y: cy - group.height / 2 + row * ROW_PITCH,
+      });
+    });
+  });
+  return pos;
+}
+
+function layoutTree(nodes: GraphNode[], edges: GraphEdge[]): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>();
+  if (!nodes.length) return pos;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const ids = new Set(byId.keys());
+  const outgoing = new Map<string, string[]>();
+  const indeg = new Map<string, number>();
+  for (const n of nodes) {
+    outgoing.set(n.id, []);
+    indeg.set(n.id, 0);
+  }
+  for (const e of edges) {
+    if (!ids.has(e.src) || !ids.has(e.dst) || e.src === e.dst) continue;
+    outgoing.get(e.src)!.push(e.dst);
+    indeg.set(e.dst, (indeg.get(e.dst) || 0) + 1);
+  }
+  for (const [id, list] of outgoing) {
+    const unique = [...new Set(list)];
+    unique.sort((a, b) => byName(byId.get(a)!, byId.get(b)!));
+    outgoing.set(id, unique);
+  }
+
+  const roots: GraphNode[] = nodes.filter((n) => (indeg.get(n.id) || 0) === 0).sort(byName);
+  if (!roots.length) {
+    const fallback = [...nodes].sort(
+      (a, b) => (outgoing.get(b.id)?.length || 0) - (outgoing.get(a.id)?.length || 0) || byName(a, b),
+    )[0]!;
+    roots.push(fallback);
+  }
+
+  const inTree = new Set<string>();
+  const treeKids = new Map<string, string[]>();
+  for (const n of nodes) treeKids.set(n.id, []);
+  const grow = (id: string) => {
+    inTree.add(id);
+    for (const kid of outgoing.get(id) ?? []) {
+      if (inTree.has(kid)) continue;
+      treeKids.get(id)!.push(kid);
+      grow(kid);
+    }
+  };
+  for (const root of roots) {
+    if (!inTree.has(root.id)) grow(root.id);
+  }
+  for (const n of [...nodes].sort(byName)) {
+    if (inTree.has(n.id)) continue;
+    roots.push(n);
+    grow(n.id);
+  }
+
+  let leaf = 0;
+  const place = (id: string, depth: number) => {
+    const kids = treeKids.get(id) ?? [];
+    if (!kids.length) {
+      pos.set(id, { x: leaf * COL_PITCH, y: depth * ROW_PITCH });
+      leaf += 1;
+      return;
+    }
+    const start = leaf;
+    for (const kid of kids) place(kid, depth + 1);
+    pos.set(id, { x: ((start + leaf - 1) / 2) * COL_PITCH, y: depth * ROW_PITCH });
+  };
+  for (const root of roots) {
+    if (!pos.has(root.id)) place(root.id, 0);
+  }
+  return pos;
+}
+
+function separateNodes(pos: Map<string, { x: number; y: number }>, nodes: GraphNode[]): void {
+  const minX = GRAPH_NODE_WIDTH + 24;
+  const minY = GRAPH_NODE_HEIGHT + 16;
+  for (let pass = 0; pass < 8; pass++) {
+    for (let i = 0; i < nodes.length; i++) {
+      const a = pos.get(nodes[i]!.id)!;
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = pos.get(nodes[j]!.id)!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const overlapX = minX - Math.abs(dx);
+        const overlapY = minY - Math.abs(dy);
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        if (overlapX < overlapY) {
+          const push = overlapX / 2;
+          const sign = dx < 0 ? -1 : 1;
+          a.x -= sign * push;
+          b.x += sign * push;
+        } else {
+          const push = overlapY / 2;
+          const sign = dy < 0 ? -1 : 1;
+          a.y -= sign * push;
+          b.y += sign * push;
+        }
+      }
+    }
+  }
+}
+
+function layoutForce(nodes: GraphNode[], edges: GraphEdge[]): Map<string, { x: number; y: number }> {
+  const pos = new Map<string, { x: number; y: number }>();
+  const ordered = [...nodes].sort(byLayerThenName);
+  if (ordered.length <= 1) {
+    if (ordered[0]) pos.set(ordered[0].id, { x: 0, y: 0 });
+    return pos;
+  }
+
+  const n = ordered.length;
+  const k = COL_PITCH;
+  placeRing(ordered, ringRadius(n, 1), pos);
+
+  const ids = new Set(ordered.map((node) => node.id));
+  const links: [string, string][] = [];
+  const seen = new Set<string>();
+  for (const e of edges) {
+    if (!ids.has(e.src) || !ids.has(e.dst) || e.src === e.dst) continue;
+    const a = e.src < e.dst ? e.src : e.dst;
+    const b = e.src < e.dst ? e.dst : e.src;
+    const key = `${a}|${b}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push([a, b]);
+  }
+
+  const disp = new Map<string, { x: number; y: number }>();
+  let temp = k;
+  const iters = Math.min(FORCE_ITERS, 24 + n);
+  for (let iter = 0; iter < iters; iter++) {
+    for (const node of ordered) disp.set(node.id, { x: 0, y: 0 });
+    for (let i = 0; i < n; i++) {
+      const a = ordered[i]!;
+      const pa = pos.get(a.id)!;
+      for (let j = i + 1; j < n; j++) {
+        const b = ordered[j]!;
+        const pb = pos.get(b.id)!;
+        let dx = pa.x - pb.x;
+        let dy = pa.y - pb.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist < 0.01) {
+          dx = ((i % 2) * 2 - 1) * 0.01;
+          dy = ((j % 2) * 2 - 1) * 0.01;
+          dist = Math.hypot(dx, dy);
+        }
+        const force = (k * k) / dist;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        const da = disp.get(a.id)!;
+        const db = disp.get(b.id)!;
+        da.x += fx;
+        da.y += fy;
+        db.x -= fx;
+        db.y -= fy;
+      }
+    }
+    for (const [src, dst] of links) {
+      const pa = pos.get(src)!;
+      const pb = pos.get(dst)!;
+      const dx = pa.x - pb.x;
+      const dy = pa.y - pb.y;
+      const dist = Math.hypot(dx, dy) || 0.01;
+      const force = (dist * dist) / k;
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      const da = disp.get(src)!;
+      const db = disp.get(dst)!;
+      da.x -= fx;
+      da.y -= fy;
+      db.x += fx;
+      db.y += fy;
+    }
+    for (const node of ordered) {
+      const p = pos.get(node.id)!;
+      const d = disp.get(node.id)!;
+      const mag = Math.hypot(d.x, d.y) || 0.01;
+      const limited = Math.min(mag, temp);
+      p.x += (d.x / mag) * limited;
+      p.y += (d.y / mag) * limited;
+    }
+    temp *= 0.9;
+  }
+  separateNodes(pos, ordered);
+  return pos;
+}
+
 /** 2D positions for the selected layout. `layers` is the architecture-column default. */
 export function layoutGraph(
   nodes: GraphNode[],
@@ -503,7 +798,12 @@ export function layoutGraph(
   layout: GraphLayoutId = "layers",
 ): Map<string, { x: number; y: number }> {
   if (layout === "flow") return layoutFlow(nodes, edges);
+  if (layout === "tree") return layoutTree(nodes, edges);
   if (layout === "radial") return layoutRadial(nodes, edges);
+  if (layout === "concentric") return layoutConcentric(nodes);
+  if (layout === "circle") return layoutCircle(nodes);
+  if (layout === "clusters") return layoutClusters(nodes);
   if (layout === "grid") return layoutGrid(nodes);
+  if (layout === "force") return layoutForce(nodes, edges);
   return layoutNodes(nodes, edges);
 }

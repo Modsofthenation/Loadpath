@@ -33,7 +33,7 @@ describe("toReactFlowElements", () => {
     expect(rfEdges[0].targetHandle).toBe("tgt-w");
   });
 
-  it("uses bezier edges and different positions for radial layout", () => {
+  it("uses bezier edges and different positions for freeform layouts", () => {
     const layered = toReactFlowElements(nodes, edges);
     const radial = toReactFlowElements(nodes, edges, null, { layout: "radial" });
     expect(radial.rfEdges[0]?.type).toBe("default");

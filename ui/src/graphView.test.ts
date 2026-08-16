@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  GRAPH_LAYOUTS,
   LARGE_GRAPH,
   LAYER_LABELS,
   defaultDetail,
@@ -147,15 +148,16 @@ describe("layoutGraph", () => {
     expect(pos.get("t")!.x).toBeGreaterThan(pos.get("m")!.x);
   });
 
-  it("radial and grid produce finite coordinates for every node", () => {
-    for (const layout of ["radial", "grid"] as const) {
-      const pos = layoutGraph(nodes, edges, layout);
+  it("every listed algorithm places every node at finite coordinates", () => {
+    for (const { id } of GRAPH_LAYOUTS) {
+      const pos = layoutGraph(nodes, edges, id);
       expect(pos.size).toBe(nodes.length);
       for (const n of nodes) {
         const p = pos.get(n.id)!;
         expect(Number.isFinite(p.x)).toBe(true);
         expect(Number.isFinite(p.y)).toBe(true);
       }
+      expect(layoutGraph([], [], id).size).toBe(0);
     }
   });
 
@@ -176,11 +178,73 @@ describe("layoutGraph", () => {
     expect(span).toBeLessThanOrEqual(GRAPH_NODE_WIDTH + GRAPH_COL_GAP);
   });
 
-  it("treats flow as columns and radial/grid as freeform", () => {
+  it("tree stacks descendants below their parent", () => {
+    const chain = [node("s", "django.view", "S"), node("m", "django.serializer", "M"), node("t", "react.page", "T")];
+    const pos = layoutGraph(chain, [edge("s", "m"), edge("m", "t")], "tree");
+    expect(pos.get("m")!.y).toBeGreaterThan(pos.get("s")!.y);
+    expect(pos.get("t")!.y).toBeGreaterThan(pos.get("m")!.y);
+  });
+
+  it("circle keeps nodes on one ring", () => {
+    const ring = [
+      node("a", "django.view", "A"),
+      node("b", "django.serializer", "B"),
+      node("c", "django.model", "C"),
+      node("d", "react.page", "D"),
+    ];
+    const pos = layoutGraph(ring, [], "circle");
+    const radii = ring.map((n) => Math.hypot(pos.get(n.id)!.x, pos.get(n.id)!.y));
+    const mean = radii.reduce((s, r) => s + r, 0) / radii.length;
+    for (const r of radii) expect(Math.abs(r - mean)).toBeLessThan(1e-6);
+    expect(mean).toBeGreaterThan(0);
+  });
+
+  it("concentric puts later architecture layers on a larger ring", () => {
+    const inner = node("v", "django.view", "View");
+    const outer = node("p", "react.page", "Page");
+    const pos = layoutGraph([inner, outer], [], "concentric");
+    const rInner = Math.hypot(pos.get("v")!.x, pos.get("v")!.y);
+    const rOuter = Math.hypot(pos.get("p")!.x, pos.get("p")!.y);
+    expect(rOuter).toBeGreaterThan(rInner);
+  });
+
+  it("clusters keep same-type nodes closer than other types", () => {
+    const group = [
+      node("a1", "django.view", "A1"),
+      node("a2", "django.view", "A2"),
+      node("b1", "react.page", "B1"),
+      node("b2", "react.page", "B2"),
+    ];
+    const pos = layoutGraph(group, [], "clusters");
+    const dist = (a: string, b: string) => {
+      const pa = pos.get(a)!;
+      const pb = pos.get(b)!;
+      return Math.hypot(pa.x - pb.x, pa.y - pb.y);
+    };
+    expect(dist("a1", "a2")).toBeLessThan(dist("a1", "b1"));
+    expect(dist("b1", "b2")).toBeLessThan(dist("b1", "a1"));
+  });
+
+  it("force layout is deterministic and pulls a linked pair together", () => {
+    const trio = [node("a", "django.view", "A"), node("b", "django.serializer", "B"), node("c", "react.page", "C")];
+    const linked = [edge("a", "b")];
+    const first = layoutGraph(trio, linked, "force");
+    const second = layoutGraph(trio, linked, "force");
+    expect(first).toEqual(second);
+    const dist = (map: typeof first, a: string, b: string) => {
+      const pa = map.get(a)!;
+      const pb = map.get(b)!;
+      return Math.hypot(pa.x - pb.x, pa.y - pb.y);
+    };
+    expect(dist(first, "a", "b")).toBeLessThan(dist(first, "a", "c"));
+  });
+
+  it("treats only architecture and flow layouts as columns", () => {
     expect(layoutUsesColumns("layers")).toBe(true);
     expect(layoutUsesColumns("flow")).toBe(true);
-    expect(layoutUsesColumns("radial")).toBe(false);
-    expect(layoutUsesColumns("grid")).toBe(false);
+    for (const id of ["tree", "radial", "concentric", "circle", "clusters", "grid", "force"] as const) {
+      expect(layoutUsesColumns(id)).toBe(false);
+    }
   });
 });
 
@@ -195,7 +259,7 @@ describe("graph layout preference", () => {
   });
 
   it("round-trips a valid layout", () => {
-    writeGraphLayout("radial");
-    expect(readGraphLayout()).toBe("radial");
+    writeGraphLayout("force");
+    expect(readGraphLayout()).toBe("force");
   });
 });
