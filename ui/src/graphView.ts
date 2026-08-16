@@ -178,7 +178,11 @@ export function colorForType(type: string): string {
   return "#4a5568";
 }
 
-export function defaultProjection(nodeCount: number): GraphProjection {
+export function defaultProjection(
+  nodeCount: number,
+  automated = typeof navigator !== "undefined" && Boolean(navigator.webdriver),
+): GraphProjection {
+  if (automated) return "2d";
   return nodeCount >= LARGE_GRAPH ? "3d" : "2d";
 }
 

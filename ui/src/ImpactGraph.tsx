@@ -522,7 +522,13 @@ function ImpactGraphView({
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   useEffect(() => {
-    setWebgl(webglAvailable());
+    const probe = () => setWebgl(webglAvailable());
+    if (typeof window.requestIdleCallback === "function") {
+      const idle = window.requestIdleCallback(probe);
+      return () => window.cancelIdleCallback(idle);
+    }
+    const timer = window.setTimeout(probe, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const preferred = projection ?? defaultProjection(nodes.length);

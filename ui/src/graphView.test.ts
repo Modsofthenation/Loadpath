@@ -244,8 +244,9 @@ describe("searchNodes", () => {
 
 describe("defaults", () => {
   it("uses 3d overview once the graph is large", () => {
-    expect(defaultProjection(LARGE_GRAPH - 1)).toBe("2d");
-    expect(defaultProjection(LARGE_GRAPH)).toBe("3d");
+    expect(defaultProjection(LARGE_GRAPH - 1, false)).toBe("2d");
+    expect(defaultProjection(LARGE_GRAPH, false)).toBe("3d");
+    expect(defaultProjection(LARGE_GRAPH, true)).toBe("2d");
     expect(defaultDetail(LARGE_GRAPH - 1)).toBe("full");
     expect(defaultDetail(LARGE_GRAPH)).toBe("overview");
   });
