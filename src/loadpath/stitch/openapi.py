@@ -7,6 +7,7 @@ from pathlib import Path
 from loadpath.config import LoadpathConfig
 from loadpath.extractors.react import normalize_url_template
 from loadpath.graph.store import GraphStore
+from loadpath.scan import iter_named_files
 from loadpath.types import Edge, EdgeType, Node, NodeType, node_id
 
 DJANGO_PATH_PARAM = re.compile(r"""<(?:(?:int|str|slug|uuid|path):)?([^>]+)>""")
@@ -59,16 +60,16 @@ def load_openapi(repo_root: Path, config: LoadpathConfig) -> list[dict]:
     paths: list[dict] = []
     candidates = list(config.openapi_paths)
     if not candidates:
-        for pattern in (
-            "**/schema.yml",
-            "**/schema.yaml",
-            "**/openapi.yaml",
-            "**/openapi.yml",
-            "**/openapi.json",
-            "**/schema.json",
-            "**/swagger.json",
-        ):
-            candidates.extend(str(p.relative_to(repo_root)) for p in repo_root.glob(pattern))
+        names = {
+            "schema.yml",
+            "schema.yaml",
+            "openapi.yaml",
+            "openapi.yml",
+            "openapi.json",
+            "schema.json",
+            "swagger.json",
+        }
+        candidates.extend(str(p.relative_to(repo_root)) for p in iter_named_files(repo_root, names))
     for rel in candidates:
         path = repo_root / rel
         if not path.is_file():
@@ -180,7 +181,7 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
     serializers = [n for n in store.nodes([NodeType.SERIALIZER])]
     ser_fields = [n for n in store.nodes([NodeType.SERIALIZER_FIELD])]
     schemas = [n for n in store.nodes([NodeType.FORM_SCHEMA])]
-    generated_files = _generated_client_files(repo_root, config)
+    generated_files = _generated_client_files(config, store.indexed_paths())
     generated_templates: set[str] = set()
     for client in clients:
         raw = (client.get("extra") or {}).get("raw") or client["name"]
@@ -189,48 +190,57 @@ def stitch(store: GraphStore, config: LoadpathConfig, repo_root: Path) -> list[s
             generated_templates.add(tmpl)
 
     # Clients consumed_by matching routes / openapi
+    routes_by_tmpl: dict[str, list[dict]] = {}
+    prepared_routes: list[tuple[dict, str]] = []
+    for route in routes:
+        extra = route.get("extra") or {}
+        if extra.get("include"):
+            continue
+        rtmpl = django_route_to_template(str(published_route(route)))
+        prepared_routes.append((route, rtmpl))
+        routes_by_tmpl.setdefault(rtmpl, []).append(route)
+
     for client in clients:
         raw = (client.get("extra") or {}).get("raw") or client["name"]
         tmpl = normalize_url_template(str(raw))
         matched = False
         generated = _client_is_generated(client, generated_files)
 
-        for route in routes:
+        hits = routes_by_tmpl.get(tmpl)
+        if hits is None:
+            hits = [route for route, rtmpl in prepared_routes if _paths_match(tmpl, rtmpl)]
+        for route in hits:
             extra = route.get("extra") or {}
-            if extra.get("include"):
-                continue
-            rraw = published_route(route)
-            rtmpl = django_route_to_template(str(rraw))
-            if _paths_match(tmpl, rtmpl):
-                if generated:
-                    conf = 0.95
-                elif tmpl in generated_templates:
-                    conf = 0.4
-                else:
-                    conf = 0.55
-                store.upsert_edge(
-                    Edge(
-                        src=route["id"],
-                        dst=client["id"],
-                        type=EdgeType.CONSUMED_BY_CLIENT,
-                        confidence=conf,
-                        extra={
-                            "match": "url_template",
-                            "generated_client": generated,
-                            "django": rtmpl,
-                            "react": tmpl,
-                            "superseded_by_generated": bool(not generated and tmpl in generated_templates),
-                        },
-                    )
+            rtmpl = django_route_to_template(str(published_route(route)))
+            if generated:
+                conf = 0.95
+            elif tmpl in generated_templates:
+                conf = 0.4
+            else:
+                conf = 0.55
+            store.upsert_edge(
+                Edge(
+                    src=route["id"],
+                    dst=client["id"],
+                    type=EdgeType.CONSUMED_BY_CLIENT,
+                    confidence=conf,
+                    extra={
+                        "match": "url_template",
+                        "generated_client": generated,
+                        "django": rtmpl,
+                        "react": tmpl,
+                        "superseded_by_generated": bool(not generated and tmpl in generated_templates),
+                    },
                 )
-                matched = True
-                if not generated:
-                    note = f"Inferred client stitch {tmpl} ↔ {rtmpl} from string URL in {client.get('file_path')}"
-                    if tmpl in generated_templates:
-                        note += " (generated OpenAPI client already covers this URL)"
-                    else:
-                        note += " (not a generated OpenAPI client)"
-                    residuals.append(note)
+            )
+            matched = True
+            if not generated:
+                note = f"Inferred client stitch {tmpl} ↔ {rtmpl} from string URL in {client.get('file_path')}"
+                if tmpl in generated_templates:
+                    note += " (generated OpenAPI client already covers this URL)"
+                else:
+                    note += " (not a generated OpenAPI client)"
+                residuals.append(note)
         for op in openapi_by_path.get(tmpl, []):
             store.upsert_edge(
                 Edge(
@@ -617,16 +627,27 @@ def _client_is_generated(client: dict, generated_files: list[str]) -> bool:
     return generated or "/generated/" in f"/{fp}/" or "openapi" in Path(fp).name.lower()
 
 
-def _generated_client_files(repo_root: Path, config: LoadpathConfig) -> list[str]:
-    found: list[str] = []
+def _generated_client_files(config: LoadpathConfig, indexed_rels: list[str]) -> list[str]:
+    """Match already-indexed paths against generated-client globs (no tree walk)."""
+    from fnmatch import fnmatch
+
+    patterns: list[str] = []
     for pattern in config.generated_client_globs:
-        # pathlib doesn't expand {ts,tsx}
         if "{" in pattern:
             pre, rest = pattern.split("{", 1)
             exts = rest.split("}", 1)[0].split(",")
             suffix = rest.split("}", 1)[1] if "}" in rest else ""
             for ext in exts:
-                found.extend(str(p.relative_to(repo_root)) for p in repo_root.glob(pre + ext + suffix))
+                patterns.append(_glob_to_fnmatch(pre + ext + suffix))
         else:
-            found.extend(str(p.relative_to(repo_root)) for p in repo_root.glob(pattern))
+            patterns.append(_glob_to_fnmatch(pattern))
+    found: list[str] = []
+    for rel in indexed_rels:
+        path = rel.replace("\\", "/")
+        if any(fnmatch(path, pat) for pat in patterns):
+            found.append(rel)
     return found
+
+
+def _glob_to_fnmatch(pattern: str) -> str:
+    return pattern.replace("\\", "/").replace("**/", "*").replace("**", "*")

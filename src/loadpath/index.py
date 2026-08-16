@@ -17,14 +17,14 @@ from loadpath.extractors.react import extract_react_file
 from loadpath.extractors.templates import extract_template_file
 from loadpath.extractors.django_boot import try_boot_models
 from loadpath.graph.store import GraphStore
+from loadpath.scan import MAX_SOURCE_BYTES, iter_source_paths
 from loadpath.stitch.openapi import stitch
-from loadpath.types import GENERATED_PATH_MARKERS, ExtractedGraph, Node, NodeType, node_id
+from loadpath.types import ExtractedGraph, Node, NodeType, node_id
 
 PY_SKIP = {"migrations"}  # still extract migrations, just not skip
-INDEX_EXTENSIONS = {".py", ".ts", ".tsx", ".js", ".jsx", ".html", ".htm", ".graphql", ".gql"}
 # Bump when extractor/stitch node identity changes so incremental indexes rebuild.
-INDEX_REVISION = "16"
-_UPSERT_BATCH = 25
+INDEX_REVISION = "17"
+_UPSERT_BATCH = 200
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 
@@ -44,38 +44,11 @@ def default_db_path(repo_root: Path) -> Path:
 
 def iter_source_files(repo_root: Path, config: LoadpathConfig) -> list[Path]:
     files: list[Path] = []
-    skip_dirs = {
-        ".git",
-        "node_modules",
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".loadpath",
-        "dist",
-        "build",
-        ".mypy_cache",
-        ".pytest_cache",
-        "docs",
-        "documentation",
-        "website",
-        "docusaurus",
-        "storybook",
-        "starlight_help",
-        "collected_static",
-        "staticfiles",
-        "locale",
-    }
-    for path in repo_root.rglob("*"):
-        if not path.is_file() or path.suffix not in INDEX_EXTENSIONS:
-            continue
-        rel_path = path.relative_to(repo_root)
-        rel = rel_path.as_posix()
-        if any(part in skip_dirs for part in rel_path.parts):
-            continue
-        if any(m in rel for m in GENERATED_PATH_MARKERS if m.endswith("/") and m not in {"generated/"}):
-            # still index generated clients
-            pass
-        if path.name in {"package-lock.json"}:
+    for path in iter_source_paths(repo_root):
+        try:
+            if path.stat().st_size > MAX_SOURCE_BYTES:
+                continue
+        except OSError:
             continue
         files.append(path)
     return files
@@ -249,7 +222,8 @@ def index_drift(
     else:
         files = files if files is not None else list_source_files(repo_root, config)
         present = {src.rel for src in files}
-        changed = [src.rel for src in files if store.file_hash(src.rel) != src.digest]
+        hashes = store.file_hashes()
+        changed = [src.rel for src in files if hashes.get(src.rel) != src.digest]
     added = sorted(present - indexed)
     deleted = sorted(indexed - present)
     return {
@@ -459,8 +433,9 @@ def index_repo(
             store.delete_file_nodes(stale)
 
     to_extract: list[SourceFile] = []
+    hashes = store.file_hashes() if incremental and not revision_changed else {}
     for src in files:
-        if incremental and not revision_changed and store.file_hash(src.rel) == src.digest:
+        if incremental and not revision_changed and hashes.get(src.rel) == src.digest:
             skipped.add(src.rel)
             continue
         to_extract.append(src)
@@ -557,6 +532,9 @@ def index_repo(
     _ensure_context_nodes(store, config)
     stitch_residuals = stitch(store, config, repo_root)
     store.prune_dangling_edges()
+    from loadpath.architecture.snapshot import persist_findings
+
+    persist_findings(store, config)
     if incremental:
         old = [line for line in (store.get_meta("residuals") or "").splitlines() if line]
         changed = present - skipped

@@ -76,7 +76,7 @@ class GraphStore:
         self.conn.execute("PRAGMA synchronous = NORMAL")
         self.conn.execute("PRAGMA temp_store = MEMORY")
         self.conn.execute("PRAGMA mmap_size = 268435456")
-        self.conn.execute("PRAGMA cache_size = -8000")
+        self.conn.execute("PRAGMA cache_size = -32000")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
         self._nodes_cache: list[dict[str, Any]] | None = None
@@ -107,6 +107,9 @@ class GraphStore:
     def get_meta(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
+
+    def file_hashes(self) -> dict[str, str]:
+        return {r["path"]: r["hash"] for r in self.conn.execute("SELECT path, hash FROM files")}
 
     def file_hash(self, path: str) -> str | None:
         row = self.conn.execute("SELECT hash FROM files WHERE path=?", (path,)).fetchone()
@@ -148,37 +151,54 @@ class GraphStore:
         self._invalidate()
 
     def upsert_graph(self, graph: ExtractedGraph, *, commit: bool = True) -> None:
+        if not graph.nodes and not graph.edges:
+            if commit:
+                self.conn.commit()
+            return
+        existing: dict[str, dict[str, Any]] = {}
+        ids = [node.id for node in graph.nodes]
+        for chunk in _chunks(ids, 400):
+            placeholders = ",".join("?" * len(chunk))
+            for row in self.conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})", chunk
+            ):
+                existing[row["id"]] = self._node_from_row(row)
         for node in graph.nodes:
-            self.upsert_node(node)
-        for edge in graph.edges:
-            self.upsert_edge(edge)
+            existing[node.id] = self._merged_node(node, existing.get(node.id))
+        unique_ids = list(dict.fromkeys(ids))
+        self.conn.executemany(
+            """
+            INSERT INTO nodes(id, type, name, qualified_name, file_path, start_line, end_line, context, extra)
+            VALUES(?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                type=excluded.type,
+                name=excluded.name,
+                qualified_name=excluded.qualified_name,
+                file_path=excluded.file_path,
+                start_line=excluded.start_line,
+                end_line=excluded.end_line,
+                context=excluded.context,
+                extra=excluded.extra
+            """,
+            [self._node_sql_row(existing[nid]) for nid in unique_ids],
+        )
+        self.conn.executemany(
+            """
+            INSERT INTO edges(id, src, dst, type, weight, confidence, extra)
+            VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                weight=excluded.weight,
+                confidence=excluded.confidence,
+                extra=excluded.extra
+            """,
+            [self._edge_row(edge) for edge in graph.edges],
+        )
         if commit:
             self.conn.commit()
         self._invalidate()
 
     def upsert_node(self, node: Node) -> None:
         existing = self.get_node(node.id)
-        extra = dict(node.extra or {})
-        file_path = node.file_path
-        start_line = node.start_line
-        context = node.context
-        if existing:
-            merged = dict(existing.get("extra") or {})
-            merged.update(extra)
-            extra = merged
-            new_is_ref = bool(node.extra.get("referenced"))
-            old_is_ref = bool((existing.get("extra") or {}).get("referenced"))
-            # A definition (tasks.py / @actor) wins over a call-site placeholder.
-            if new_is_ref and not old_is_ref:
-                extra["referenced"] = False
-                for k, v in (existing.get("extra") or {}).items():
-                    if k not in node.extra or node.extra.get(k) is None:
-                        extra[k] = v
-                file_path = existing.get("file_path") or file_path
-                start_line = existing.get("start_line") if existing.get("start_line") is not None else start_line
-                context = existing.get("context") or context
-            elif not new_is_ref and old_is_ref:
-                extra["referenced"] = False
         self.conn.execute(
             """
             INSERT INTO nodes(id, type, name, qualified_name, file_path, start_line, end_line, context, extra)
@@ -193,22 +213,11 @@ class GraphStore:
                 context=excluded.context,
                 extra=excluded.extra
             """,
-            (
-                node.id,
-                node.type.value,
-                node.name,
-                node.qualified_name,
-                file_path,
-                start_line,
-                node.end_line,
-                context,
-                json.dumps(extra),
-            ),
+            self._node_sql_row(self._merged_node(node, existing)),
         )
         self._invalidate()
 
     def upsert_edge(self, edge: Edge) -> None:
-        row = edge.to_row()
         self.conn.execute(
             """
             INSERT INTO edges(id, src, dst, type, weight, confidence, extra)
@@ -218,15 +227,7 @@ class GraphStore:
                 confidence=excluded.confidence,
                 extra=excluded.extra
             """,
-            (
-                row["id"],
-                row["src"],
-                row["dst"],
-                row["type"],
-                row["weight"],
-                row["confidence"],
-                json.dumps(row["extra"]),
-            ),
+            self._edge_row(edge),
         )
         self._invalidate()
 
@@ -271,6 +272,18 @@ class GraphStore:
               AND e.dst IN (SELECT id FROM nodes WHERE type IN ({placeholders}))
             """,
             (*want, *want),
+        ).fetchall()
+        return [self._edge_from_row(r) for r in rows]
+
+    def edges_of_type(self, types: Iterable[str]) -> list[dict[str, Any]]:
+        want = {str(t) for t in types}
+        if not want:
+            return []
+        if self._edges_cache is not None:
+            return [e for e in self._edges_cache if e["type"] in want]
+        placeholders = ",".join("?" * len(want))
+        rows = self.conn.execute(
+            f"SELECT * FROM edges WHERE type IN ({placeholders})", tuple(want)
         ).fetchall()
         return [self._edge_from_row(r) for r in rows]
 
@@ -380,9 +393,73 @@ class GraphStore:
     def indexed_paths(self) -> list[str]:
         return [r["path"] for r in self.conn.execute("SELECT path FROM files").fetchall()]
 
+    def _merged_node(self, node: Node, existing: dict[str, Any] | None) -> dict[str, Any]:
+        extra = dict(node.extra or {})
+        file_path = node.file_path
+        start_line = node.start_line
+        context = node.context
+        if existing:
+            merged = dict(existing.get("extra") or {})
+            merged.update(extra)
+            extra = merged
+            new_is_ref = bool(node.extra.get("referenced"))
+            old_is_ref = bool((existing.get("extra") or {}).get("referenced"))
+            # A definition (tasks.py / @actor) wins over a call-site placeholder.
+            if new_is_ref and not old_is_ref:
+                extra["referenced"] = False
+                for k, v in (existing.get("extra") or {}).items():
+                    if k not in node.extra or node.extra.get(k) is None:
+                        extra[k] = v
+                file_path = existing.get("file_path") or file_path
+                start_line = existing.get("start_line") if existing.get("start_line") is not None else start_line
+                context = existing.get("context") or context
+            elif not new_is_ref and old_is_ref:
+                extra["referenced"] = False
+        return {
+            "id": node.id,
+            "type": node.type.value,
+            "name": node.name,
+            "qualified_name": node.qualified_name,
+            "file_path": file_path,
+            "start_line": start_line,
+            "end_line": node.end_line,
+            "context": context,
+            "extra": extra,
+        }
+
+    @staticmethod
+    def _node_sql_row(merged: dict[str, Any]) -> tuple[Any, ...]:
+        extra = merged.get("extra") or {}
+        return (
+            merged["id"],
+            merged["type"],
+            merged["name"],
+            merged["qualified_name"],
+            merged["file_path"],
+            merged["start_line"],
+            merged["end_line"],
+            merged["context"],
+            "{}" if not extra else json.dumps(extra),
+        )
+
+    @staticmethod
+    def _edge_row(edge: Edge) -> tuple[Any, ...]:
+        row = edge.to_row()
+        extra = row["extra"]
+        return (
+            row["id"],
+            row["src"],
+            row["dst"],
+            row["type"],
+            row["weight"],
+            row["confidence"],
+            "{}" if not extra else json.dumps(extra),
+        )
+
     @staticmethod
     def _node_from_row(row: sqlite3.Row) -> dict[str, Any]:
-        extra = json.loads(row["extra"] or "{}")
+        raw = row["extra"] or "{}"
+        extra = {} if raw == "{}" else json.loads(raw)
         return {
             "id": row["id"],
             "type": row["type"],
@@ -397,7 +474,8 @@ class GraphStore:
 
     @staticmethod
     def _edge_from_row(row: sqlite3.Row) -> dict[str, Any]:
-        extra = json.loads(row["extra"] or "{}")
+        raw = row["extra"] or "{}"
+        extra = {} if raw == "{}" else json.loads(raw)
         return {
             "id": row["id"],
             "src": row["src"],
@@ -407,3 +485,8 @@ class GraphStore:
             "confidence": row["confidence"],
             "extra": extra,
         }
+
+
+def _chunks(values: list[str], size: int) -> Iterable[list[str]]:
+    for i in range(0, len(values), size):
+        yield values[i : i + size]

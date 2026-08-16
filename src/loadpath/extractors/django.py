@@ -116,6 +116,25 @@ DESTRUCTIVE_MIGRATION_OPS = {"DeleteModel", "RemoveField", "AlterField", "RunPyt
 ON_DELETE_ATTRS = {"CASCADE", "PROTECT", "RESTRICT", "SET_NULL", "SET_DEFAULT", "DO_NOTHING", "SET"}
 
 
+def _uppercase_name(node: ast.AST | None) -> str | None:
+    """First ClassName-looking identifier in an AST fragment (queryset = Model.objects...)."""
+    if node is None:
+        return None
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id[:1].isupper():
+            return child.id
+    return None
+
+
+def _mentions_queryset(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id == "queryset":
+            return True
+        if isinstance(child, ast.Attribute) and child.attr == "objects":
+            return True
+    return False
+
+
 def _name(node: ast.AST | None) -> str | None:
     if node is None:
         return None
@@ -631,7 +650,7 @@ class DjangoExtractor(ast.NodeVisitor):
                 fname = stmt.targets[0].id
                 if not fname.startswith("_") and fname[0].islower():
                     declared.append((fname, stmt.lineno))
-            if isinstance(stmt, ast.FunctionDef) and "queryset" in ast.dump(stmt):
+            if isinstance(stmt, ast.FunctionDef) and _mentions_queryset(stmt):
                 queryset_in_serializer = True
         nested_by_name = self._nested_serializer_fields(node)
         method_fields = self._method_field_names(node)
@@ -703,10 +722,7 @@ class DjangoExtractor(ast.NodeVisitor):
                 elif key == "throttle_classes":
                     extra["throttles"] = _list_names(stmt.value)
                 elif key == "queryset":
-                    dumped = ast.dump(stmt.value)
-                    m = re.search(r"id='([A-Z][A-Za-z0-9_]+)'", dumped)
-                    if m:
-                        queryset_model = m.group(1)
+                    queryset_model = _uppercase_name(stmt.value)
                 elif key == "filterset_class":
                     extra["filterset"] = _name(stmt.value)
                 elif key == "authentication_classes":
@@ -717,10 +733,9 @@ class DjangoExtractor(ast.NodeVisitor):
                     extra["template"] = _const_str(stmt.value)
             if isinstance(stmt, ast.FunctionDef) and stmt.name == "get_queryset":
                 extra["get_queryset"] = True
-                dumped = ast.dump(stmt)
-                m = re.search(r"id='([A-Z][A-Za-z0-9_]+)'", dumped)
-                if m and not queryset_model:
-                    queryset_model = m.group(1)
+                found = _uppercase_name(stmt)
+                if found and not queryset_model:
+                    queryset_model = found
             if isinstance(stmt, ast.FunctionDef) and stmt.name == "get_serializer_class":
                 dynamic_serializer = True
                 extra["get_serializer_class"] = True

@@ -498,7 +498,8 @@ export function layoutNodes(
 
   const inColumn = (colIndex: number) => (nbr: string) => colOf.get(nbr) === colIndex;
 
-  for (let pass = 0; pass < LAYOUT_PASSES; pass++) {
+  const passes = nodes.length > 400 ? 2 : nodes.length > 120 ? 4 : LAYOUT_PASSES;
+  for (let pass = 0; pass < passes; pass++) {
     for (let i = 1; i < order.length; i++) {
       order[i] = sortByBarycenter(order[i]!, (id) => (preds.get(id) ?? []).filter(inColumn(i - 1)));
       refreshRanks();
