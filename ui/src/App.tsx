@@ -1445,7 +1445,7 @@ export function App() {
                   Tests
                 </button>
               </div>
-              {graphNodes.length ? (
+              {graphNodes.length || review || architecture?.indexed ? (
                 <ImpactGraph
                   nodes={graphNodes}
                   edges={graphEdges}
