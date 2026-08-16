@@ -1,0 +1,31 @@
+name: Bug
+description: Something does not work as documented
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Do **not** include tokens, `~/.loadpath/settings.json`, or private repo contents.
+  - type: textarea
+    id: expected
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro
+      description: Commands, `loadpath.yml` (redacted), and stack if you have one.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: `loadpath --version` or git SHA.
+    validations:
+      required: true
