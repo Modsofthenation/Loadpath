@@ -115,7 +115,10 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     page.get_by_test_id("graph-full").wait_for()
     wait_visible_graph(page)
     page.locator(".react-flow__minimap-node").first.wait_for(timeout=10_000)
-    page.locator(".react-flow__node").first.click()
+    closer = page.get_by_test_id("graph-inspector-close")
+    if closer.count() and closer.is_visible():
+        closer.click()
+    page.locator(".react-flow__node").filter(has_text="InvoicePage").first.click()
     inspector = page.get_by_test_id("graph-inspector")
     inspector.wait_for(timeout=10_000)
     assert inspector.inner_text().strip()
@@ -543,6 +546,42 @@ def test_ui_architecture_brief_paints_before_graph(live_app, browser_page):
     assert "drawing" in page.get_by_test_id("graph-loading").inner_text().lower()
     page.get_by_test_id("graph-loading").wait_for(state="hidden", timeout=20_000)
     wait_visible_graph(page)
+
+
+@pytest.mark.playwright
+def test_ui_architecture_edges_use_distinct_verticals(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+    _index_repo(page, repo)
+    page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=20_000)
+    wait_visible_graph(page)
+    info = page.evaluate(
+        """() => {
+          const paths = [...document.querySelectorAll('.react-flow__edge-path')].map((p) => p.getAttribute('d') || '');
+          const bySx = {};
+          for (const d of paths) {
+            const m = d.match(/^M(-?\\d+\\.?\\d*)/);
+            const nums = [...d.matchAll(/(-?\\d+\\.?\\d*)/g)].map((mm) => Number(mm[1]));
+            if (!m || nums.length < 4) continue;
+            const sx = Math.round(Number(m[1]));
+            const lastX = nums[nums.length - 2];
+            if (lastX <= sx) continue;
+            const verts = [];
+            for (let i = 0; i + 3 < nums.length; i += 2) {
+              if (Math.abs(nums[i] - nums[i + 2]) < 1 && Math.abs(nums[i + 1] - nums[i + 3]) > 8) {
+                verts.push(Math.round(nums[i]));
+              }
+            }
+            (bySx[sx] ||= []).push(verts);
+          }
+          return Object.values(bySx).filter((list) => list.length >= 2);
+        }"""
+    )
+    assert info, "expected multiple left-to-right edges from one column"
+    distinct = any(len({x for verts in group for x in verts}) > 1 for group in info)
+    assert distinct, info
 
 
 @pytest.mark.playwright

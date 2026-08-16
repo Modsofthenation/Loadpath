@@ -523,7 +523,7 @@ export function layoutNodes(
         if (here.has(e.src) && next.has(e.dst)) between += 1;
       }
     }
-    const extra = Math.min(96, Math.max(0, (between - 1) * 12));
+    const extra = Math.min(48, Math.max(0, (between - 2) * 10));
     x += colPitch + extra;
   }
   order.forEach((col, colIndex) => {
