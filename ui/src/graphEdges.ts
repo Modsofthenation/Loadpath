@@ -1,4 +1,5 @@
 import {
+  GRAPH_COL_GAP,
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
   layoutNodes,
@@ -28,6 +29,7 @@ export function assignEdgeStepPositions(
   pos?: Map<string, { x: number; y: number }>,
 ): Map<string, number> {
   const placed = pos ?? layoutNodes(nodes, edges);
+  const colXs = [...new Set([...placed.values()].map((p) => p.x))].sort((a, b) => a - b);
   const spans: Span[] = [];
   for (const edge of edges) {
     const src = placed.get(edge.src);
@@ -64,20 +66,27 @@ export function assignEdgeStepPositions(
     const sorted = [...group].sort((a, b) => a.y0 - b.y0 || a.y1 - b.y1 || a.id.localeCompare(b.id));
     const laneOf = lanesFor(sorted);
     const laneCount = Math.max(0, ...laneOf.values()) + 1;
-    const minDx = Math.min(...sorted.map((span) => span.targetX - span.sourceX));
+    const sourceX = sorted[0]!.sourceX;
+    const gutter = gapAfter(colXs, sourceX);
     for (const span of sorted) {
-      const lane = laneOf.get(span.id) ?? 0;
-      const t = stepForLane(lane, laneCount);
+      const t = stepForLane(laneOf.get(span.id) ?? 0, laneCount);
       const denom = span.targetX - span.sourceX;
-      if (Math.abs(denom - minDx) < 0.5) {
+      if (Math.abs(denom - gutter) < 0.5) {
         steps.set(span.id, t);
         continue;
       }
-      const laneX = span.sourceX + minDx * t;
+      const laneX = span.sourceX + gutter * t;
       steps.set(span.id, Math.min(0.92, Math.max(0.08, (laneX - span.sourceX) / denom)));
     }
   }
   return steps;
+}
+
+function gapAfter(colXs: number[], sourceX: number): number {
+  const colX = sourceX - GRAPH_NODE_WIDTH;
+  const next = colXs.find((x) => x > colX + 1);
+  if (next === undefined) return GRAPH_COL_GAP;
+  return Math.max(GRAPH_COL_GAP, next - sourceX);
 }
 
 /** First-fit coloring: two verticals share an x only when their y ranges stay apart. */

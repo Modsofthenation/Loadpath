@@ -99,6 +99,24 @@ describe("assignEdgeStepPositions", () => {
     expect(Math.abs(xNext - xSkip)).toBeGreaterThan(40);
   });
 
+  it("bends skip-column edges in the first gap so they do not sit on the next column", () => {
+    const nodes = [
+      node("r", "django.route"),
+      node("u", "django.url_name"),
+      node("v", "django.view"),
+    ];
+    const pos = new Map([
+      ["r", { x: 0, y: 0 }],
+      ["u", { x: 296, y: 92 }],
+      ["v", { x: 592, y: 184 }],
+    ]);
+    const steps = assignEdgeStepPositions(nodes, [edge("r", "v")], pos);
+    const step = steps.get("r->v") ?? 0.5;
+    const srcX = 208;
+    const laneX = srcX + (592 - srcX) * step;
+    expect(laneX).toBeLessThan(296);
+  });
+
   it("spreads lanes between 0.2 and 0.8", () => {
     expect(stepForLane(0, 1)).toBe(0.5);
     expect(stepForLane(0, 2)).toBe(0.2);
