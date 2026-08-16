@@ -114,6 +114,19 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     layout = page.get_by_test_id("graph-layout")
     layout.wait_for()
     assert layout.input_value() == "layers"
+    labels = layout.locator("option").all_inner_texts()
+    for expected in (
+        "Architecture layers",
+        "Edge flow",
+        "Spanning tree",
+        "Radial",
+        "Concentric layers",
+        "Circle",
+        "Type clusters",
+        "Compact grid",
+        "Force directed",
+    ):
+        assert expected in labels, labels
     before = invoice.get_attribute("style")
     layout.select_option("radial")
     page.wait_for_function(
@@ -126,6 +139,18 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
         timeout=10_000,
     )
     assert layout.input_value() == "radial"
+    before_force = invoice.get_attribute("style")
+    layout.select_option("force")
+    page.wait_for_function(
+        """before => {
+          const n = [...document.querySelectorAll('.react-flow__node')]
+            .find(el => (el.textContent || '').includes('InvoicePage'));
+          return Boolean(n && n.getAttribute('style') !== before);
+        }""",
+        arg=before_force,
+        timeout=10_000,
+    )
+    assert layout.input_value() == "force"
 
     page.get_by_test_id("tab-graph").click()
     page.get_by_test_id("graph-full").wait_for()
