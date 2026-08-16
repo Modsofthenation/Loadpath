@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isAllowedExternalUrl, isAppOrigin } from "./urls.mjs";
+import { isAllowedExternalUrl, isAppOrigin, isEditorUrl } from "./urls.mjs";
 
 describe("isAllowedExternalUrl", () => {
   it("allows GitHub, GitLab, and Bitbucket https PR links", () => {
@@ -21,6 +21,15 @@ describe("isAllowedExternalUrl", () => {
     assert.equal(isAllowedExternalUrl("file:///etc/passwd"), false);
     assert.equal(isAllowedExternalUrl("javascript:alert(1)"), false);
     assert.equal(isAllowedExternalUrl("not a url"), false);
+  });
+});
+
+describe("isEditorUrl", () => {
+  it("allows vscode and cursor file URLs without credentials", () => {
+    assert.equal(isEditorUrl("vscode://file/tmp/acme/a.py:12"), true);
+    assert.equal(isEditorUrl("cursor://file/tmp/acme/a.py"), true);
+    assert.equal(isEditorUrl("vscode://user:pass@file/tmp"), false);
+    assert.equal(isEditorUrl("https://github.com"), false);
   });
 });
 

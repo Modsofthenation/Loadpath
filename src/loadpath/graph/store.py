@@ -74,11 +74,22 @@ class GraphStore:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA synchronous = NORMAL")
+        self.conn.execute("PRAGMA temp_store = MEMORY")
+        self.conn.execute("PRAGMA mmap_size = 268435456")
+        self.conn.execute("PRAGMA cache_size = -8000")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._nodes_cache: list[dict[str, Any]] | None = None
+        self._edges_cache: list[dict[str, Any]] | None = None
 
     def close(self) -> None:
+        self._nodes_cache = None
+        self._edges_cache = None
         self.conn.close()
+
+    def _invalidate(self) -> None:
+        self._nodes_cache = None
+        self._edges_cache = None
 
     def __enter__(self) -> GraphStore:
         return self
@@ -115,6 +126,7 @@ class GraphStore:
         ]
         if not ids:
             self.conn.execute("DELETE FROM files WHERE path=?", (path,))
+            self._invalidate()
             return
         placeholders = ",".join("?" * len(ids))
         if drop_incoming:
@@ -127,11 +139,13 @@ class GraphStore:
             self.conn.execute(f"DELETE FROM edges WHERE src IN ({placeholders})", ids)
         self.conn.execute("DELETE FROM nodes WHERE file_path=?", (path,))
         self.conn.execute("DELETE FROM files WHERE path=?", (path,))
+        self._invalidate()
 
     def prune_dangling_edges(self) -> None:
         self.conn.execute(
             "DELETE FROM edges WHERE src NOT IN (SELECT id FROM nodes) OR dst NOT IN (SELECT id FROM nodes)"
         )
+        self._invalidate()
 
     def upsert_graph(self, graph: ExtractedGraph, *, commit: bool = True) -> None:
         for node in graph.nodes:
@@ -140,6 +154,7 @@ class GraphStore:
             self.upsert_edge(edge)
         if commit:
             self.conn.commit()
+        self._invalidate()
 
     def upsert_node(self, node: Node) -> None:
         existing = self.get_node(node.id)
@@ -190,6 +205,7 @@ class GraphStore:
                 json.dumps(extra),
             ),
         )
+        self._invalidate()
 
     def upsert_edge(self, edge: Edge) -> None:
         row = edge.to_row()
@@ -212,24 +228,50 @@ class GraphStore:
                 json.dumps(row["extra"]),
             ),
         )
+        self._invalidate()
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM nodes WHERE id=?", (node_id,)).fetchone()
         return self._node_from_row(row) if row else None
 
-    def nodes(self, types: Iterable[NodeType] | None = None) -> list[dict[str, Any]]:
-        if types:
-            values = [t.value for t in types]
-            placeholders = ",".join("?" * len(values))
+    def nodes(self, types: Iterable[NodeType | str] | None = None) -> list[dict[str, Any]]:
+        want = {t.value if isinstance(t, NodeType) else str(t) for t in types} if types else None
+        if self._nodes_cache is not None:
+            if want is None:
+                return self._nodes_cache
+            return [n for n in self._nodes_cache if n["type"] in want]
+        if want:
+            placeholders = ",".join("?" * len(want))
             rows = self.conn.execute(
-                f"SELECT * FROM nodes WHERE type IN ({placeholders})", values
+                f"SELECT * FROM nodes WHERE type IN ({placeholders})", tuple(want)
             ).fetchall()
-        else:
-            rows = self.conn.execute("SELECT * FROM nodes").fetchall()
-        return [self._node_from_row(r) for r in rows]
+            return [self._node_from_row(r) for r in rows]
+        self._nodes_cache = [self._node_from_row(r) for r in self.conn.execute("SELECT * FROM nodes")]
+        return self._nodes_cache
 
     def edges(self) -> list[dict[str, Any]]:
-        rows = self.conn.execute("SELECT * FROM edges").fetchall()
+        if self._edges_cache is None:
+            self._edges_cache = [self._edge_from_row(r) for r in self.conn.execute("SELECT * FROM edges")]
+        return self._edges_cache
+
+    def edges_between_types(self, types: Iterable[str]) -> list[dict[str, Any]]:
+        """Edges whose endpoints both have a type in `types`. Avoids loading the full graph."""
+        want = sorted({str(t) for t in types})
+        if not want:
+            return []
+        if self._edges_cache is not None and self._nodes_cache is not None:
+            ids = {n["id"] for n in self._nodes_cache if n["type"] in set(want)}
+            return [e for e in self._edges_cache if e["src"] in ids and e["dst"] in ids]
+        placeholders = ",".join("?" * len(want))
+        rows = self.conn.execute(
+            f"""
+            SELECT e.id, e.src, e.dst, e.type, e.weight, e.confidence, e.extra
+            FROM edges e
+            WHERE e.src IN (SELECT id FROM nodes WHERE type IN ({placeholders}))
+              AND e.dst IN (SELECT id FROM nodes WHERE type IN ({placeholders}))
+            """,
+            (*want, *want),
+        ).fetchall()
         return [self._edge_from_row(r) for r in rows]
 
     def neighbors(self, node_id: str, direction: str = "both") -> list[dict[str, Any]]:

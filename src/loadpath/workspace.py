@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -209,9 +210,35 @@ def git_dirty_paths(repo_root: Path) -> list[str]:
         path = line[3:].strip()
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
-        if path:
+        if path and not _is_loadpath_internal(path):
             paths.append(path)
     return paths
+
+
+def _is_loadpath_internal(path: str) -> bool:
+    rel = path.replace("\\", "/").removeprefix("./").lstrip("/")
+    return rel == ".loadpath" or rel.startswith(".loadpath/")
+
+
+def workspace_status(repo_root: Path) -> dict[str, Any]:
+    """Dirty paths plus a fingerprint so the UI can watch the working tree."""
+    repo_root = repo_root.resolve()
+    dirty = git_dirty_paths(repo_root)
+    parts: list[str] = []
+    for rel in dirty[:80]:
+        full = repo_root / rel
+        try:
+            st = full.stat()
+            parts.append(f"{rel}:{st.st_mtime_ns}:{st.st_size}")
+        except OSError:
+            parts.append(f"{rel}:missing")
+    digest = hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+    return {
+        "repo_path": str(repo_root),
+        "dirty": dirty[:80],
+        "dirty_count": len(dirty),
+        "fingerprint": digest if dirty else "clean",
+    }
 
 
 def git_merge_base(repo_root: Path, a: str, b: str) -> str | None:

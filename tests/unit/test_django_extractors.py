@@ -746,3 +746,28 @@ def test_unparsed_to_representation_is_residual():
     g = extract_django_file("backend/billing/serializers.py", source, _cfg())
     assert any("to_representation" in r for r in g.residuals)
 
+
+def test_dead_serializer_dict_does_not_resolve_get_serializer_class():
+    source = (
+        "from rest_framework.viewsets import ModelViewSet\n"
+        "class InvoiceViewSet(ModelViewSet):\n"
+        "    def get_serializer_class(self):\n"
+        "        unused = {\"list\": InvoiceSerializer}\n"
+        "        return registry[self.action]\n"
+    )
+    g = extract_django_file("backend/billing/views.py", source, _cfg())
+    assert any("get_serializer_class" in r for r in g.residuals)
+
+
+def test_marshmallow_schema_is_not_ninja_when_router_imported():
+    source = (
+        "from ninja import Router\n"
+        "from marshmallow import Schema\n"
+        "router = Router()\n"
+        "class Weird(Schema):\n"
+        "    amount: str\n"
+    )
+    g = extract_django_file("backend/billing/api.py", source, _cfg())
+    assert not any(n.extra.get("ninja_schema") for n in g.nodes)
+
+

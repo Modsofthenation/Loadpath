@@ -25,6 +25,22 @@ const GRAPH_LAYOUT_IDS = new Set<GraphLayoutId>(GRAPH_LAYOUTS.map((item) => item
 const LAYOUT_STORAGE = "loadpath.graphLayout";
 const LAYOUT_PASSES = 8;
 
+export const PATH_SINK_TYPES = new Set([
+  "django.route",
+  "react.route",
+  "react.page",
+  "react.server_action",
+  "django.task",
+  "django.migration_op",
+  "django.permission",
+  "openapi.path",
+  "django.consumer",
+  "django.websocket_route",
+  "django.template",
+  "graphql.operation",
+  "fastapi.route",
+]);
+
 export const LARGE_GRAPH = 90;
 
 /** Leaf noise that turns a load-path into an unreadable field cloud. */
@@ -177,6 +193,69 @@ export function visibleGraph(
   return { nodes: kept, edges: linked, neighborIds: neighbors };
 }
 
+export function searchNodes(nodes: GraphNode[], query: string): GraphNode[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return nodes
+    .filter((n) => {
+      const hay = `${n.name} ${n.qualified_name} ${n.type} ${n.file_path || ""} ${n.context || ""}`.toLowerCase();
+      return hay.includes(q);
+    })
+    .slice(0, 24);
+}
+
+export function isolatePathIds(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  sourceId: string,
+  targetId?: string | null,
+): { nodeIds: Set<string>; edgeIds: Set<string> } {
+  const ids = new Set(nodes.map((n) => n.id));
+  if (!ids.has(sourceId)) return { nodeIds: new Set(), edgeIds: new Set() };
+  const succ = new Map<string, { dst: string; id: string }[]>();
+  const pred = new Map<string, { src: string; id: string }[]>();
+  for (const e of edges) {
+    if (!ids.has(e.src) || !ids.has(e.dst)) continue;
+    const s = succ.get(e.src) ?? [];
+    s.push({ dst: e.dst, id: e.id });
+    succ.set(e.src, s);
+    const p = pred.get(e.dst) ?? [];
+    p.push({ src: e.src, id: e.id });
+    pred.set(e.dst, p);
+  }
+  const sinks = new Set(nodes.filter((n) => PATH_SINK_TYPES.has(n.type)).map((n) => n.id));
+  const targets = targetId && ids.has(targetId) ? new Set([targetId]) : sinks.size ? sinks : ids;
+
+  const reachable = new Set<string>();
+  const stack = [sourceId];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    if (reachable.has(cur)) continue;
+    reachable.add(cur);
+    for (const nxt of succ.get(cur) ?? []) {
+      if (!reachable.has(nxt.dst)) stack.push(nxt.dst);
+    }
+  }
+  const keep = new Set<string>([sourceId]);
+  const back = [...targets].filter((t) => reachable.has(t));
+  const seen = new Set(back);
+  while (back.length) {
+    const cur = back.pop()!;
+    keep.add(cur);
+    for (const prev of pred.get(cur) ?? []) {
+      if (reachable.has(prev.src) && !seen.has(prev.src)) {
+        seen.add(prev.src);
+        back.push(prev.src);
+      }
+    }
+  }
+  const edgeIds = new Set<string>();
+  for (const e of edges) {
+    if (keep.has(e.src) && keep.has(e.dst)) edgeIds.add(e.id);
+  }
+  return { nodeIds: keep, edgeIds };
+}
+
 export function layoutNodes3d(nodes: GraphNode[]): Map<string, { x: number; y: number; z: number }> {
   const columns = new Map<number, GraphNode[]>();
   for (const n of nodes) {
@@ -214,14 +293,22 @@ export function layerCenters(nodes: GraphNode[]): { layer: number; x: number; co
 }
 
 export function readGraphLayout(): GraphLayoutId {
-  if (typeof localStorage === "undefined") return "layers";
-  const raw = localStorage.getItem(LAYOUT_STORAGE);
-  return raw && GRAPH_LAYOUT_IDS.has(raw as GraphLayoutId) ? (raw as GraphLayoutId) : "layers";
+  try {
+    if (typeof localStorage === "undefined") return "layers";
+    const raw = localStorage.getItem(LAYOUT_STORAGE);
+    return raw && GRAPH_LAYOUT_IDS.has(raw as GraphLayoutId) ? (raw as GraphLayoutId) : "layers";
+  } catch {
+    return "layers";
+  }
 }
 
 export function writeGraphLayout(id: GraphLayoutId): void {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(LAYOUT_STORAGE, id);
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(LAYOUT_STORAGE, id);
+  } catch {
+    /* ignore quota / private-mode */
+  }
 }
 
 export function layoutUsesColumns(layout: GraphLayoutId): boolean {
@@ -305,13 +392,14 @@ function placeColumns(order: GraphNode[][], edges: GraphEdge[]): Map<string, { x
 
 function layoutFlow(nodes: GraphNode[], edges: GraphEdge[]): Map<string, { x: number; y: number }> {
   const ids = new Set(nodes.map((n) => n.id));
+  const cap = Math.max(nodes.length - 1, 0);
   const rank = new Map<string, number>();
   for (const n of nodes) rank.set(n.id, 0);
   for (let pass = 0; pass < nodes.length; pass++) {
     let changed = false;
     for (const e of edges) {
       if (!ids.has(e.src) || !ids.has(e.dst) || e.src === e.dst) continue;
-      const next = (rank.get(e.src) || 0) + 1;
+      const next = Math.min((rank.get(e.src) || 0) + 1, cap);
       if (next > (rank.get(e.dst) || 0)) {
         rank.set(e.dst, next);
         changed = true;

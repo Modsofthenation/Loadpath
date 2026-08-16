@@ -5,14 +5,17 @@ import {
   defaultDetail,
   defaultProjection,
   familyFor,
+  isolatePathIds,
   layoutGraph,
   layoutNodes3d,
+  layoutUsesColumns,
   neighborIds,
   readGraphLayout,
+  searchNodes,
   visibleGraph,
   writeGraphLayout,
 } from "./graphView";
-import { LAYER_ORDER, layoutNodes, type GraphEdge, type GraphNode } from "./types";
+import { GRAPH_COL_GAP, GRAPH_NODE_WIDTH, LAYER_ORDER, layoutNodes, type GraphEdge, type GraphNode } from "./types";
 
 function node(id: string, type: string, name = id): GraphNode {
   return { id, type, name, qualified_name: name };
@@ -84,6 +87,32 @@ describe("neighborIds", () => {
   });
 });
 
+describe("isolatePathIds", () => {
+  it("keeps only nodes on the path from source to a sink", () => {
+    const pathNodes: GraphNode[] = [
+      node("field", "django.field", "total"),
+      node("ser", "django.serializer", "InvoiceSerializer"),
+      node("route", "django.route", "/api/invoices"),
+      node("me", "react.page", "MePage"),
+    ];
+    const pathEdges: GraphEdge[] = [
+      edge("field", "ser"),
+      edge("ser", "route"),
+      edge("ser", "me"),
+    ];
+    const isolated = isolatePathIds(pathNodes, pathEdges, "field", "route");
+    expect([...isolated.nodeIds].sort()).toEqual(["field", "route", "ser"]);
+    expect(isolated.edgeIds.has("ser->me")).toBe(false);
+  });
+});
+
+describe("searchNodes", () => {
+  it("matches name and type", () => {
+    expect(searchNodes(nodes, "invoice").map((n) => n.id)).toEqual([]);
+    expect(searchNodes(nodes, "component").map((n) => n.id)).toEqual(["c"]);
+  });
+});
+
 describe("defaults", () => {
   it("uses 3d overview once the graph is large", () => {
     expect(defaultProjection(LARGE_GRAPH - 1)).toBe("2d");
@@ -137,6 +166,21 @@ describe("layoutGraph", () => {
       (n) => layers.get(n.id)!.x !== radial.get(n.id)!.x || layers.get(n.id)!.y !== radial.get(n.id)!.y,
     );
     expect(moved).toBe(true);
+  });
+
+  it("caps flow ranks so cycles do not explode into a long strip", () => {
+    const cycle = [node("a", "django.view", "A"), node("b", "django.serializer", "B")];
+    const loop = [edge("a", "b"), edge("b", "a")];
+    const pos = layoutGraph(cycle, loop, "flow");
+    const span = Math.abs(pos.get("a")!.x - pos.get("b")!.x);
+    expect(span).toBeLessThanOrEqual(GRAPH_NODE_WIDTH + GRAPH_COL_GAP);
+  });
+
+  it("treats flow as columns and radial/grid as freeform", () => {
+    expect(layoutUsesColumns("layers")).toBe(true);
+    expect(layoutUsesColumns("flow")).toBe(true);
+    expect(layoutUsesColumns("radial")).toBe(false);
+    expect(layoutUsesColumns("grid")).toBe(false);
   });
 });
 

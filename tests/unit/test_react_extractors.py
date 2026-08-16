@@ -208,3 +208,84 @@ export const invoiceContract = c.router({
     g = extract_react_file("frontend/src/features/billing/contract.ts", src, _cfg())
     clients = [n for n in g.nodes if n.type is NodeType.API_CLIENT]
     assert any(c.name == "/api/invoices/{id}" and c.extra.get("typed_client") == "ts-rest" for c in clients)
+
+
+def test_rtk_ignores_http_method_literals():
+    src = """
+import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+export const invoiceApi = createApi({
+  baseQuery: fetchBaseQuery({ baseUrl: "/api" }),
+  endpoints: (builder) => ({
+    save: builder.mutation({
+      query: (body) => ({ method: "POST", url: "/invoices", body }),
+    }),
+  }),
+});
+"""
+    g = extract_react_file("frontend/src/features/billing/invoiceApi.ts", src, _cfg())
+    clients = [n for n in g.nodes if n.type is NodeType.API_CLIENT]
+    assert any(c.name == "/api/invoices" for c in clients)
+    assert not any("POST" in c.name for c in clients)
+
+
+def test_does_not_treat_generic_post_as_openapi_fetch():
+    src = """
+export function save() {
+  return api.POST("/api/invoices", { body: {} });
+}
+"""
+    g = extract_react_file("frontend/src/features/billing/api.ts", src, _cfg())
+    typed = [n for n in g.nodes if n.type is NodeType.API_CLIENT and n.extra.get("typed_client") == "openapi-fetch"]
+    assert not typed
+
+
+def test_does_not_treat_api_usequery_as_trpc():
+    src = """
+export function useBilling() {
+  return api.billing.list.useQuery();
+}
+"""
+    g = extract_react_file("frontend/src/features/billing/useBilling.ts", src, _cfg())
+    assert not any(n.extra.get("typed_client") == "trpc" for n in g.nodes)
+
+
+def test_ts_rest_ignores_react_router_paths():
+    src = """
+import { initContract } from '@ts-rest/core';
+const c = initContract();
+export const routes = [{ path: '/settings/profile', element: <Profile /> }];
+"""
+    g = extract_react_file("frontend/src/features/billing/contract.ts", src, _cfg())
+    assert not any(n.extra.get("typed_client") == "ts-rest" for n in g.nodes)
+
+
+def test_app_router_route_handler_is_not_a_page():
+    src = """
+export async function GET() {
+  return Response.json({});
+}
+"""
+    g = extract_react_file("frontend/src/app/api/invoices/route.ts", src, _cfg())
+    assert not any(n.type is NodeType.PAGE for n in g.nodes)
+    assert not any(n.name == "GET" for n in g.nodes)
+    assert any(n.type is NodeType.API_CLIENT and n.extra.get("next_api") for n in g.nodes)
+
+
+def test_server_action_arrow_export():
+    src = """
+"use server";
+export const saveInvoice = async (formData: FormData) => {
+  return String(formData.get("id") || "");
+};
+"""
+    g = extract_react_file("frontend/src/app/invoices/[id]/actions.ts", src, _cfg())
+    assert any(n.type is NodeType.SERVER_ACTION and n.name == "saveInvoice" for n in g.nodes)
+
+
+def test_typename_alone_is_not_graphql_codegen():
+    src = """
+export type ButtonProps = { __typename?: string; label: string };
+"""
+    g = extract_react_file("frontend/src/components/Button.tsx", src, _cfg())
+    assert not any(n.extra.get("kind") == "graphql-codegen" for n in g.nodes)
+

@@ -1,3 +1,14 @@
+export function isEditorUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.username || parsed.password) return false;
+  return parsed.protocol === "vscode:" || parsed.protocol === "cursor:" || parsed.protocol === "vscode-insiders:";
+}
+
 export function isAllowedExternalUrl(url) {
   let parsed;
   try {

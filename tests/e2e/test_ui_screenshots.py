@@ -113,7 +113,8 @@ def test_ui_review_graph_prs_settings(live_app, tmp_path: Path, browser_page):
     error = page.locator(".error")
     if error.count() and error.inner_text().strip():
         pytest.fail(error.inner_text())
-    page.locator(".level").wait_for(timeout=15_000)
+    page.get_by_test_id("merge-box").wait_for(timeout=15_000)
+    page.get_by_test_id("brief").locator(".level").wait_for(timeout=15_000)
     brief = page.get_by_test_id("brief").inner_text()
     assert "MEDIUM" in brief or "LOW" in brief or "HIGH" in brief
     _wait_graph(page)

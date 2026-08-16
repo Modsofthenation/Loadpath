@@ -438,7 +438,7 @@ class DjangoExtractor(ast.NodeVisitor):
             self._graphql_type(node)
         elif _has_base(node, {"BaseModel"}) and not _has_base(node, MODEL_BASES):
             self._pydantic_model(node)
-        elif _has_base(node, NINJA_SCHEMA_BASES) and self._looks_like_ninja():
+        elif self._is_ninja_schema(node):
             self._pydantic_model(node, ninja=True)
         elif _has_base(node, ADMIN_BASES) or node.name.endswith("Admin"):
             self._admin(node)
@@ -1302,6 +1302,16 @@ class DjangoExtractor(ast.NodeVisitor):
     def _looks_like_ninja(self) -> bool:
         return _looks_like_ninja_blob(self.imports, self.from_imports)
 
+    def _is_ninja_schema(self, node: ast.ClassDef) -> bool:
+        for base in _bases(node):
+            short = base.split(".")[-1]
+            if short not in NINJA_SCHEMA_BASES:
+                continue
+            resolved = self._resolve(base)
+            if "ninja" in resolved.lower():
+                return True
+        return False
+
     def _ninja_response_schemas(self, node: ast.FunctionDef, dec: ast.Call) -> list[str]:
         names = _ann_class_names(node.returns)
         names.extend(_ann_class_names(_kw(dec, "response")))
@@ -1391,11 +1401,13 @@ class DjangoExtractor(ast.NodeVisitor):
                         vn = _name(val)
                         if vn:
                             candidates.append(vn)
-            if isinstance(child, ast.Dict):
-                for val in child.values:
-                    vn = _name(val)
-                    if vn:
-                        candidates.append(vn)
+                if isinstance(child.value, ast.Subscript):
+                    inner = child.value.value
+                    if isinstance(inner, ast.Dict):
+                        for val in inner.values:
+                            vn = _name(val)
+                            if vn:
+                                candidates.append(vn)
             for n in candidates:
                 short = n.split(".")[-1]
                 if short.endswith("Serializer") and short not in SERIALIZER_BASES and short not in seen:

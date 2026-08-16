@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import time
 
 import pytest
 
@@ -106,10 +107,9 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert "MEDIUM" in brief or "LOW" in brief or "HIGH" in brief
     assert "billing-team" in brief
     assert "MePage" not in brief
-    force_2d_graph(page)
+    wait_visible_graph(page)
     invoice = page.locator(".react-flow__node").filter(has_text="InvoicePage").first
     invoice.wait_for(timeout=15_000)
-    page.locator(".react-flow__edge").filter(visible=True).first.wait_for(timeout=15_000)
     assert page.locator(".react-flow__node").filter(has_text="MePage").count() == 0
     layout = page.get_by_test_id("graph-layout")
     layout.wait_for()
@@ -131,7 +131,10 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     page.get_by_test_id("graph-full").wait_for()
     wait_visible_graph(page)
     page.locator(".react-flow__minimap-node").first.wait_for(timeout=10_000)
-    page.locator(".react-flow__node").first.click()
+    closer = page.get_by_test_id("graph-inspector-close")
+    if closer.count() and closer.is_visible():
+        closer.click()
+    page.locator(".react-flow__node").filter(has_text="InvoicePage").first.click()
     inspector = page.get_by_test_id("graph-inspector")
     inspector.wait_for(timeout=10_000)
     assert inspector.inner_text().strip()
@@ -171,12 +174,30 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     wait_visible_graph(page)
 
     page.get_by_test_id("tab-review").click()
+    page.get_by_test_id("merge-box").wait_for()
+    page.get_by_test_id("merge-checklist").wait_for()
     page.context.grant_permissions(["clipboard-read", "clipboard-write"], origin=base_url)
     page.get_by_test_id("btn-copy-markdown").click()
     page.get_by_test_id("status-note").wait_for(timeout=10_000)
     assert "Copied markdown" in page.get_by_test_id("status-note").inner_text()
     clip = page.evaluate("navigator.clipboard.readText()")
     assert "Loadpath" in clip or "Invoice" in clip or clip.strip()
+
+    page.locator(".brand").click()
+    page.keyboard.press("Control+K")
+    page.get_by_test_id("command-palette").wait_for()
+    page.get_by_test_id("command-palette-input").fill("Impact graph")
+    page.keyboard.press("Enter")
+    page.get_by_test_id("graph-full").wait_for()
+    page.get_by_test_id("graph-search").fill("Invoice")
+    page.get_by_test_id("graph-search-hits").wait_for()
+    page.get_by_test_id("graph-neighborhood").wait_for()
+    page.get_by_test_id("graph-test-overlay").click()
+    assert page.get_by_test_id("graph-test-overlay").get_attribute("aria-pressed") == "true"
+
+    page.get_by_test_id("tab-review").click()
+    page.get_by_test_id("btn-export-html").click()
+    page.get_by_test_id("status-note").wait_for(timeout=10_000)
 
     page.get_by_test_id("btn-post-comment").click()
     post_err = _assert_readable_error(page)
@@ -226,6 +247,67 @@ def test_ui_index_polls_progress_endpoint(live_app, browser_page):
     page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=15_000)
     assert progress_hits, "UI should poll GET /api/index/progress while indexing"
     page.screenshot(path="/opt/cursor/artifacts/index_complete_architecture.png")
+
+
+@pytest.mark.playwright
+def test_ui_index_progress_bar_does_not_jump_backwards(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+    page.get_by_test_id("repo-path").fill(str(repo))
+    sequence = [
+        {"phase": "scan", "done": 50, "total": 100, "percent": 10, "message": "Hashed 50/100 files"},
+        {"phase": "scan", "done": 100, "total": 100, "percent": 20, "message": "Hashed 100/100 files"},
+        {"phase": "extract", "done": 0, "total": 80, "percent": 20, "message": "Extracting 80 of 100 files"},
+        {"phase": "extract", "done": 40, "total": 80, "percent": 54, "message": "Extracted foo.py (40/80)"},
+        {"phase": "extract", "done": 80, "total": 80, "percent": 88, "message": "Extracted bar.py (80/80)"},
+        {"phase": "boot", "done": 0, "total": 1, "percent": 88, "message": "Booting Django models (optional)"},
+        {"phase": "stitch", "done": 0, "total": 1, "percent": 94, "message": "Stitching contracts"},
+        {"phase": "done", "done": 5, "total": 100, "percent": 100, "message": "Indexed 5 files"},
+    ]
+    page.evaluate(
+        """(sequence) => {
+          let n = 0;
+          const orig = window.fetch;
+          window.fetch = async (input, init) => {
+            const url = String(typeof input === "string" ? input : input.url);
+            const method = (init && init.method) || "GET";
+            if (url.includes("/api/index/progress")) {
+              const body = sequence[Math.min(n, sequence.length - 1)];
+              n += 1;
+              return new Response(JSON.stringify(body), {
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+            if (method === "POST" && url.includes("/api/index") && !url.includes("progress")) {
+              await new Promise((resolve) => setTimeout(resolve, 2200));
+              return orig.call(window, input, init);
+            }
+            return orig.call(window, input, init);
+          };
+        }""",
+        sequence,
+    )
+    page.get_by_test_id("btn-index").click()
+    page.get_by_test_id("progress").wait_for(timeout=5_000)
+    samples: list[int] = []
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        bar = page.get_by_test_id("progress")
+        if bar.count():
+            raw = bar.get_attribute("aria-valuenow")
+            if raw is not None and raw != "":
+                samples.append(int(raw))
+        page.wait_for_timeout(150)
+    assert samples, "expected determinate progress samples"
+    assert samples[-1] >= samples[0]
+    for earlier, later in zip(samples, samples[1:]):
+        assert later >= earlier, samples
+    assert max(samples) >= 20
+    assert min(samples) < 100
+    # Extract starting at 0/80 must not rewind the bar to empty.
+    assert not any(samples[i] >= 15 and samples[i + 1] < 10 for i in range(len(samples) - 1))
 
 
 @pytest.mark.playwright
@@ -455,4 +537,137 @@ def test_ui_workspace_switch_shows_loading(live_app, browser_page):
     loading.wait_for(state="hidden", timeout=15_000)
     assert page.get_by_test_id("workspace-select").input_value() == str(repo)
     page.get_by_test_id("review-empty").wait_for()
+
+
+@pytest.mark.playwright
+def test_ui_architecture_brief_paints_before_graph(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+    page.evaluate(
+        """() => {
+          const orig = window.fetch;
+          window.fetch = async (input, init) => {
+            const url = String(typeof input === "string" ? input : input.url);
+            if (url.includes("/api/architecture/graph")) {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+            return orig.call(window, input, init);
+          };
+        }"""
+    )
+    page.get_by_test_id("repo-path").fill(str(repo))
+    _index_repo(page, repo)
+    page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=20_000)
+    page.get_by_test_id("graph-loading").wait_for(timeout=8_000)
+    assert "drawing" in page.get_by_test_id("graph-loading").inner_text().lower()
+    page.get_by_test_id("graph-loading").wait_for(state="hidden", timeout=20_000)
+    wait_visible_graph(page)
+
+
+@pytest.mark.playwright
+def test_ui_architecture_edges_use_distinct_verticals(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+    _index_repo(page, repo)
+    page.get_by_test_id("architecture-brief").locator(".level").wait_for(timeout=20_000)
+    wait_visible_graph(page)
+    info = page.evaluate(
+        """() => {
+          const pointsOf = (d) => {
+            const pts = [];
+            const re = /([MLQC])([^MLQC]*)/g;
+            let m;
+            while ((m = re.exec(d))) {
+              const nums = [...m[2].matchAll(/-?\\d+\\.?\\d*/g)].map(Number);
+              if (m[1] === 'Q' && nums.length >= 4) pts.push({ x: nums[2], y: nums[3] });
+              else if (m[1] === 'C' && nums.length >= 6) pts.push({ x: nums[4], y: nums[5] });
+              else {
+                for (let i = 0; i + 1 < nums.length; i += 2) pts.push({ x: nums[i], y: nums[i + 1] });
+              }
+            }
+            return pts;
+          };
+          const segs = [];
+          for (const p of document.querySelectorAll('.react-flow__edge-path')) {
+            const pts = pointsOf(p.getAttribute('d') || '');
+            if (pts.length < 2) continue;
+            const sx = pts[0].x;
+            const tx = pts[pts.length - 1].x;
+            if (tx <= sx + 8) continue;
+            for (let i = 0; i + 1 < pts.length; i++) {
+              const a = pts[i];
+              const b = pts[i + 1];
+              if (a.x <= sx + 8 || a.x >= tx - 8) continue;
+              if (Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) > 16) {
+                segs.push({ x: Math.round(a.x), y0: Math.min(a.y, b.y), y1: Math.max(a.y, b.y) });
+              }
+            }
+          }
+          const overlaps = [];
+          for (let i = 0; i < segs.length; i++) {
+            for (let j = i + 1; j < segs.length; j++) {
+              const a = segs[i];
+              const b = segs[j];
+              if (a.x !== b.x) continue;
+              if (a.y0 < b.y1 - 4 && b.y0 < a.y1 - 4) overlaps.push({ a, b });
+            }
+          }
+          return { segCount: segs.length, overlapCount: overlaps.length, overlaps: overlaps.slice(0, 5) };
+        }"""
+    )
+    assert info["segCount"] > 0, info
+    assert info["overlapCount"] == 0, info
+
+
+@pytest.mark.playwright
+def test_ui_whatif_banner_and_back_to_git_range(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+    _index_repo(page, repo)
+    page.get_by_test_id("btn-review").click()
+    page.get_by_test_id("brief").locator(".level").wait_for(timeout=30_000)
+    wait_visible_graph(page)
+    git_title = page.get_by_test_id("brief").locator(".level").inner_text()
+    assert "What if" not in git_title
+
+    page.get_by_test_id("graph-search").fill("InvoiceSerializer")
+    page.get_by_test_id("graph-search-hits").wait_for(timeout=8_000)
+    page.get_by_test_id("graph-search-hits").locator("button").first.click()
+    inspector = page.get_by_test_id("graph-inspector")
+    inspector.wait_for(timeout=10_000)
+    hint = page.get_by_test_id("whatif-hint").inner_text().lower()
+    assert "no git range" in hint
+    assert "isolate" in hint
+
+    with page.expect_response(
+        lambda r: "/api/whatif" in r.url and r.request.method == "POST",
+        timeout=30_000,
+    ) as pending:
+        page.get_by_test_id("btn-whatif").click()
+    if not pending.value.ok:
+        pytest.fail(f"whatif API {pending.value.status}: {pending.value.text()}")
+
+    banner = page.get_by_test_id("whatif-banner")
+    banner.wait_for(timeout=15_000)
+    banner_text = banner.inner_text().lower()
+    assert "hypothetical" in banner_text
+    assert "base/head" in banner_text
+    page.get_by_test_id("whatif-chip").wait_for()
+    brief = page.get_by_test_id("brief").locator(".level").inner_text()
+    assert "What if" in brief
+    assert page.get_by_test_id("btn-post-comment").is_disabled()
+    assert page.get_by_test_id("btn-exit-whatif").inner_text().strip() == "Back to git range"
+
+    page.get_by_test_id("btn-exit-whatif").click()
+    banner.wait_for(state="hidden", timeout=10_000)
+    restored = page.get_by_test_id("brief").locator(".level").inner_text()
+    assert restored == git_title
+    assert page.get_by_test_id("whatif-chip").count() == 0
+    assert page.get_by_test_id("btn-post-comment").is_enabled()
 

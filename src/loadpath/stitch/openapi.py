@@ -530,13 +530,16 @@ def _stitch_trpc(store: GraphStore, routes: list[dict]) -> list[str]:
     if not clients:
         return residuals
     ops = store.nodes([NodeType.GRAPHQL_OPERATION])
-    views = store.nodes([NodeType.VIEW])
     for client in clients:
         proc = str((client.get("extra") or {}).get("procedure") or client["name"])
-        head = proc.split(".")[0].lower()
+        last = proc.split(".")[-1].lower()
+        full = proc.lower()
+        aliases = {full, full.replace(".", "_")}
+        if last not in {"get", "list", "create", "update", "delete", "query", "mutate"}:
+            aliases.add(last)
         matched = False
         for op in ops:
-            if op["name"].lower() in {proc.lower(), head, proc.replace(".", "_").lower()}:
+            if op["name"].lower() in aliases:
                 store.upsert_edge(
                     Edge(
                         src=op["id"],
@@ -549,7 +552,7 @@ def _stitch_trpc(store: GraphStore, routes: list[dict]) -> list[str]:
                 matched = True
         for route in routes:
             rraw = published_route(route).lower()
-            if head and head in rraw:
+            if f"/trpc/{full}" in rraw or rraw.rstrip("/").endswith("/" + full.replace(".", "/")):
                 store.upsert_edge(
                     Edge(
                         src=route["id"],
@@ -561,24 +564,29 @@ def _stitch_trpc(store: GraphStore, routes: list[dict]) -> list[str]:
                 )
                 matched = True
         if not matched:
-            for view in views:
-                if head and head in (view.get("name") or "").lower():
-                    store.upsert_edge(
-                        Edge(
-                            src=view["id"],
-                            dst=client["id"],
-                            type=EdgeType.CONSUMED_BY_CLIENT,
-                            confidence=0.65,
-                            extra={"via": "trpc", "procedure": proc, "inferred": True},
-                        )
-                    )
-                    matched = True
-                    break
-        if not matched:
             residuals.append(
                 f"tRPC procedure {proc} has no matching GraphQL field or route ({client.get('file_path')})"
             )
     return residuals
+
+
+_API_MOUNTS = {"api", "v1", "v2", "v3", "backend"}
+
+
+def _path_segments(path: str) -> list[str]:
+    return [part for part in path.strip("/").split("/") if part]
+
+
+def _seg_eq(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    def is_param(s: str) -> bool:
+        return s.startswith("{") or s.startswith(":") or s.startswith("<")
+    return is_param(a) and is_param(b)
+
+
+def _segs_match(a: list[str], b: list[str]) -> bool:
+    return len(a) == len(b) and all(_seg_eq(x, y) for x, y in zip(a, b))
 
 
 def _paths_match(a: str, b: str) -> bool:
@@ -586,16 +594,14 @@ def _paths_match(a: str, b: str) -> bool:
     b = django_route_to_template(b)
     if a == b:
         return True
-    a_base = re.sub(r"""/\{id\}$""", "", a)
-    b_base = re.sub(r"""/\{id\}$""", "", b)
-    if a_base == b_base:
+    sa, sb = _path_segments(a), _path_segments(b)
+    if _segs_match(sa, sb):
         return True
-    # included Django urls often omit the /api mount until composed
-    a_tail = a.rsplit("/", 2)[-2:] 
-    b_tail = b.rsplit("/", 2)[-2:]
-    if a.endswith(b) or b.endswith(a):
+    if len(sa) == len(sb) + 1 and sa[0].lower() in _API_MOUNTS and _segs_match(sa[1:], sb):
         return True
-    return "/".join(a_tail) == "/".join(b_tail) and len(a_tail[-1]) > 2
+    if len(sb) == len(sa) + 1 and sb[0].lower() in _API_MOUNTS and _segs_match(sb[1:], sa):
+        return True
+    return False
 
 
 def _client_is_generated(client: dict, generated_files: list[str]) -> bool:

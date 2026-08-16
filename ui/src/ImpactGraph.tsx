@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   Background,
+  BaseEdge,
   Controls,
   Handle,
   MarkerType,
@@ -8,8 +9,10 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getSmoothStepPath,
   useReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeMouseHandler,
 } from "@xyflow/react";
@@ -20,9 +23,11 @@ import {
   defaultDetail,
   defaultProjection,
   familyFor,
+  isolatePathIds,
   layoutGraph,
   layoutUsesColumns,
   readGraphLayout,
+  searchNodes,
   visibleGraph,
   writeGraphLayout,
   type GraphDetail,
@@ -31,6 +36,7 @@ import {
   type GraphProjection,
 } from "./graphView";
 import { inspectNode, type InspectorLink } from "./nodeInspector";
+import { assignEdgeStepPositions } from "./graphEdges";
 import {
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
@@ -50,21 +56,103 @@ const WEIGHT_COLOR: Record<string, string> = {
   critical: "var(--edge-critical)",
 };
 
-function LoadNode({ data, selected }: { data: { name: string; type: string }; selected?: boolean }) {
+const HANDLE_POS = {
+  n: Position.Top,
+  e: Position.Right,
+  s: Position.Bottom,
+  w: Position.Left,
+} as const;
+
+function facingHandles(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): { source: keyof typeof HANDLE_POS; target: keyof typeof HANDLE_POS } {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? { source: "e", target: "w" } : { source: "w", target: "e" };
+  }
+  return dy >= 0 ? { source: "s", target: "n" } : { source: "n", target: "s" };
+}
+
+function LoadNode({
+  data,
+  selected,
+}: {
+  data: { name: string; type: string; roles?: string[]; dim?: boolean };
+  selected?: boolean;
+}) {
+  const roles = (data.roles || []).map((role) => `role-${role}`).join(" ");
   return (
-    <div className={selected ? "lp-node selected" : "lp-node"}>
-      <Handle type="target" position={Position.Left} isConnectable={false} />
+    <div className={["lp-node", selected ? "selected" : "", data.dim ? "dim" : "", roles].filter(Boolean).join(" ")}>
+      {(["n", "e", "s", "w"] as const).map((side) => (
+        <Handle key={`tgt-${side}`} id={`tgt-${side}`} type="target" position={HANDLE_POS[side]} isConnectable={false} />
+      ))}
       <div className="t">{typeLabel(data.type)}</div>
       <div className="n" title={data.name}>
         {wrapHint(data.name)}
       </div>
-      <Handle type="source" position={Position.Right} isConnectable={false} />
+      {(["n", "e", "s", "w"] as const).map((side) => (
+        <Handle key={`src-${side}`} id={`src-${side}`} type="source" position={HANDLE_POS[side]} isConnectable={false} />
+      ))}
     </div>
   );
 }
 
 const nodeTypes = { load: LoadNode };
 const ALL_FAMILIES = new Set<GraphFamily>(["django", "react", "stitch", "arch"]);
+
+function LoadStepEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style,
+  markerEnd,
+  markerStart,
+  label,
+  labelStyle,
+  labelShowBg,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+  data,
+  interactionWidth,
+}: EdgeProps<Edge<{ stepPosition?: number }>>) {
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: 8,
+    stepPosition: data?.stepPosition ?? 0.5,
+  });
+  return (
+    <BaseEdge
+      id={id}
+      path={path}
+      labelX={labelX}
+      labelY={labelY}
+      label={label}
+      labelStyle={labelStyle}
+      labelShowBg={labelShowBg}
+      labelBgStyle={labelBgStyle}
+      labelBgPadding={labelBgPadding}
+      labelBgBorderRadius={labelBgBorderRadius}
+      style={style}
+      markerEnd={markerEnd}
+      markerStart={markerStart}
+      interactionWidth={interactionWidth}
+    />
+  );
+}
+
+const edgeTypes = { loadstep: LoadStepEdge };
 
 function FitViewOnTopology({ topologyKey }: { topologyKey: string }) {
   const { fitView } = useReactFlow();
@@ -87,34 +175,53 @@ export function toReactFlowElements(
   nodes: GraphNode[],
   edges: GraphEdge[],
   selectedId: string | null = null,
-  layout: GraphLayoutId = "layers",
+  opts: { roles?: Record<string, string[]>; testOverlay?: boolean; layout?: GraphLayoutId } = {},
 ): { rfNodes: Node[]; rfEdges: Edge[] } {
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const layout = opts.layout ?? "layers";
+  const columns = layoutUsesColumns(layout);
   const pos = layoutGraph(nodes, edges, layout);
-  const edgeType = layoutUsesColumns(layout) ? "smoothstep" : "default";
-  const rfNodes: Node[] = nodes.map((n) => ({
-    id: n.id,
-    type: "load",
-    position: pos.get(n.id) ?? { x: 0, y: 0 },
-    data: { name: n.name, type: n.type, file: n.file_path },
-    selected: selectedId === n.id,
-    sourcePosition: Position.Right,
-    targetPosition: Position.Left,
-    width: GRAPH_NODE_WIDTH,
-    height: GRAPH_NODE_HEIGHT,
-    style: { width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT },
-  }));
+  const stepByEdge = assignEdgeStepPositions(nodes, edges, pos);
+  const rfNodes: Node[] = nodes.map((n) => {
+    const roles = opts.roles?.[n.id] || [];
+    const dim =
+      Boolean(opts.testOverlay) &&
+      !roles.includes("tested") &&
+      !roles.includes("untested") &&
+      !roles.includes("test") &&
+      !roles.includes("seed");
+    return {
+      id: n.id,
+      type: "load",
+      position: pos.get(n.id) ?? { x: 0, y: 0 },
+      data: { name: n.name, type: n.type, file: n.file_path, roles, dim },
+      selected: selectedId === n.id,
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+      width: GRAPH_NODE_WIDTH,
+      height: GRAPH_NODE_HEIGHT,
+      style: { width: GRAPH_NODE_WIDTH, height: GRAPH_NODE_HEIGHT },
+    };
+  });
   const rfEdges: Edge[] = edges
     .filter((e) => byId.has(e.src) && byId.has(e.dst))
     .map((e) => {
       const stroke = WEIGHT_COLOR[e.weight] || "var(--edge-cheap)";
       const labeled = Boolean(selectedId && (e.src === selectedId || e.dst === selectedId));
+      const from = pos.get(e.src) ?? { x: 0, y: 0 };
+      const to = pos.get(e.dst) ?? { x: 0, y: 0 };
+      const facing = columns ? { source: "e" as const, target: "w" as const } : facingHandles(from, to);
       return {
         id: e.id,
         source: e.src,
         target: e.dst,
-        type: edgeType,
+        sourceHandle: `src-${facing.source}`,
+        targetHandle: `tgt-${facing.target}`,
+        sourcePosition: HANDLE_POS[facing.source],
+        targetPosition: HANDLE_POS[facing.target],
+        type: columns ? "loadstep" : "default",
         animated: e.weight === "critical",
+        data: { stepPosition: stepByEdge.get(e.id) ?? 0.5 },
         style: {
           stroke,
           strokeWidth: e.weight === "critical" ? 2.4 : 1.2,
@@ -142,12 +249,22 @@ function GraphInspector({
   edges,
   onClose,
   onWhatIf,
+  onSelect,
+  onOpenFile,
+  pinned,
+  onPin,
+  onIsolate,
 }: {
   node: GraphNode;
   nodes: GraphNode[];
   edges: GraphEdge[];
   onClose: () => void;
   onWhatIf?: (id: string) => void;
+  onSelect?: (id: string) => void;
+  onOpenFile?: (path: string, line?: number | null) => void;
+  pinned?: boolean;
+  onPin?: (id: string | null) => void;
+  onIsolate?: (id: string) => void;
 }) {
   const info = inspectNode(node, nodes, edges);
   useEffect(() => {
@@ -183,7 +300,21 @@ function GraphInspector({
         {info.purpose}
       </p>
       {info.context ? <div className="muted">{wrapHint(info.context)}</div> : null}
-      {info.file ? <div className="file">{wrapHint(info.file)}</div> : null}
+      {info.file ? (
+        <div className="file-row">
+          <div className="file">{wrapHint(info.file)}</div>
+          {onOpenFile && node.file_path ? (
+            <button
+              type="button"
+              className="btn"
+              data-testid="btn-open-editor"
+              onClick={() => onOpenFile(node.file_path!, node.start_line)}
+            >
+              Open in editor
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="muted">{wrapHint(info.qualifiedName)}</div>
       <div className="muted inspector-layer">layer · {info.layer}</div>
       <div className="muted inspector-degree" data-testid="graph-inspector-degree">
@@ -210,6 +341,7 @@ function GraphInspector({
         links={info.inputs}
         extra={info.extraInputs}
         empty="Nothing in this graph points here."
+        onSelect={onSelect}
       />
       <InspectorLinks
         title="Outputs"
@@ -217,12 +349,49 @@ function GraphInspector({
         links={info.outputs}
         extra={info.extraOutputs}
         empty="This node does not point at anything in this graph."
+        onSelect={onSelect}
       />
       {onWhatIf ? (
-        <button type="button" className="btn" data-testid="btn-whatif" onClick={() => onWhatIf(node.id)}>
-          What if this changes
-        </button>
+        <p className="whatif-hint" data-testid="whatif-hint">
+          {onIsolate
+            ? "Walks a new path from this node with no git range. Isolate (next) only hides the rest of this map."
+            : "Walks a new path from this node with no git range — as if this changed, regardless of Base/Head."}
+        </p>
       ) : null}
+      <div className="btn-row">
+        {onWhatIf ? (
+          <button
+            type="button"
+            className="btn"
+            data-testid="btn-whatif"
+            title="Start a hypothetical walk from this node. Does not use Base/Head."
+            onClick={() => onWhatIf(node.id)}
+          >
+            What if this changes
+          </button>
+        ) : null}
+        {onIsolate ? (
+          <button
+            type="button"
+            className="btn"
+            data-testid="btn-isolate"
+            title="Hide nodes that are not on a path from here to a sink. Does not start a new walk."
+            onClick={() => onIsolate(node.id)}
+          >
+            Isolate path to sinks
+          </button>
+        ) : null}
+        {onPin ? (
+          <button
+            type="button"
+            className={pinned ? "btn primary" : "btn"}
+            data-testid="btn-pin-node"
+            onClick={() => onPin(pinned ? null : node.id)}
+          >
+            {pinned ? "Unpin" : "Pin"}
+          </button>
+        ) : null}
+      </div>
     </aside>
   );
 }
@@ -233,12 +402,14 @@ function InspectorLinks({
   links,
   extra,
   empty,
+  onSelect,
 }: {
   title: string;
   testId: string;
   links: InspectorLink[];
   extra: number;
   empty: string;
+  onSelect?: (id: string) => void;
 }) {
   return (
     <section className="inspector-section" data-testid={testId}>
@@ -250,14 +421,29 @@ function InspectorLinks({
         <ul>
           {links.map((link, i) => (
             <li key={`${link.edgeType}:${link.id}:${i}`}>
-              <span className="inspector-link-name" title={link.name}>
-                {wrapHint(link.name)}
-              </span>
-              <span className="inspector-link-meta">
-                {link.typeLabel ? `${link.typeLabel} · ` : ""}
-                {link.edgeLabel}
-                {link.inferred ? " · inferred" : ""}
-              </span>
+              {onSelect ? (
+                <button type="button" className="inspector-link" onClick={() => onSelect(link.id)}>
+                  <span className="inspector-link-name" title={link.name}>
+                    {wrapHint(link.name)}
+                  </span>
+                  <span className="inspector-link-meta">
+                    {link.typeLabel ? `${link.typeLabel} · ` : ""}
+                    {link.edgeLabel}
+                    {link.inferred ? " · inferred" : ""}
+                  </span>
+                </button>
+              ) : (
+                <>
+                  <span className="inspector-link-name" title={link.name}>
+                    {wrapHint(link.name)}
+                  </span>
+                  <span className="inspector-link-meta">
+                    {link.typeLabel ? `${link.typeLabel} · ` : ""}
+                    {link.edgeLabel}
+                    {link.inferred ? " · inferred" : ""}
+                  </span>
+                </>
+              )}
             </li>
           ))}
         </ul>
@@ -274,57 +460,91 @@ export function ImpactGraph({
   edges,
   onWhatIf,
   focusPath,
+  selectedId: selectedIdProp,
+  onSelect,
+  nodeRoles,
+  testOverlay = false,
+  isolateSource,
+  onIsolate,
+  repoPath: _repoPath,
+  onOpenFile,
+  pinnedId,
+  onPin,
 }: {
   nodes: GraphNode[];
   edges: GraphEdge[];
   onWhatIf?: (id: string) => void;
   focusPath?: string;
+  selectedId?: string | null;
+  onSelect?: (id: string | null) => void;
+  nodeRoles?: Record<string, string[]>;
+  testOverlay?: boolean;
+  isolateSource?: string | null;
+  onIsolate?: (id: string | null) => void;
+  repoPath?: string;
+  onOpenFile?: (path: string, line?: number | null) => void;
+  pinnedId?: string | null;
+  onPin?: (id: string | null) => void;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [localSelected, setLocalSelected] = useState<string | null>(null);
+  const selectedId = selectedIdProp !== undefined ? selectedIdProp : localSelected;
+  const setSelectedId = (id: string | null) => {
+    if (selectedIdProp === undefined) setLocalSelected(id);
+    onSelect?.(id);
+  };
   const [projection, setProjection] = useState<GraphProjection | null>(null);
   const [detail, setDetail] = useState<GraphDetail | null>(null);
   const [layout, setLayout] = useState<GraphLayoutId>(() => readGraphLayout());
   const [families, setFamilies] = useState<Set<GraphFamily>>(new Set(ALL_FAMILIES));
   const [neighborhoodOnly, setNeighborhoodOnly] = useState(false);
+  const [query, setQuery] = useState("");
+  const [hitsOpen, setHitsOpen] = useState(false);
   const reduceMotion =
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const view = projection ?? defaultProjection(nodes.length);
   const level = detail ?? defaultDetail(nodes.length);
-  const neighborhoodFocus = neighborhoodOnly && view === "3d" ? selectedId : null;
+  const neighborhoodFocus = neighborhoodOnly ? selectedId : null;
+  const isolated = useMemo(
+    () => (isolateSource ? isolatePathIds(nodes, edges, isolateSource) : null),
+    [nodes, edges, isolateSource],
+  );
+  const scopedNodes = isolated ? nodes.filter((n) => isolated.nodeIds.has(n.id)) : nodes;
+  const scopedEdges = isolated ? edges.filter((e) => isolated.edgeIds.has(e.id)) : edges;
   const visible = useMemo(
     () =>
-      visibleGraph(nodes, edges, {
+      visibleGraph(scopedNodes, scopedEdges, {
         detail: level,
         families,
         focusId: neighborhoodFocus,
         neighborhoodOnly: Boolean(neighborhoodFocus),
       }),
-    [nodes, edges, level, families, neighborhoodFocus],
+    [scopedNodes, scopedEdges, level, families, neighborhoodFocus],
   );
   const topologyKey = useMemo(
     () => `${layout}|${visible.nodes.map((n) => n.id).join("\0")}|${visible.edges.map((e) => e.id).join("\0")}`,
     [layout, visible.nodes, visible.edges],
   );
-  const byId = useMemo(() => new Map(visible.nodes.map((n) => [n.id, n])), [visible.nodes]);
-  const selected = selectedId ? byId.get(selectedId) ?? null : null;
+  const selected = selectedId ? nodes.find((n) => n.id === selectedId) ?? null : null;
   const { rfNodes, rfEdges } = useMemo(() => {
-    const elements = toReactFlowElements(visible.nodes, visible.edges, selectedId, layout);
+    const elements = toReactFlowElements(visible.nodes, visible.edges, selectedId, {
+      roles: nodeRoles,
+      testOverlay,
+      layout,
+    });
     if (reduceMotion) {
       elements.rfEdges = elements.rfEdges.map((edge) => ({ ...edge, animated: false }));
     }
     return elements;
-  }, [visible.nodes, visible.edges, selectedId, layout, reduceMotion]);
-
-  useEffect(() => {
-    if (selectedId && !byId.has(selectedId)) setSelectedId(null);
-  }, [byId, selectedId]);
+  }, [visible.nodes, visible.edges, selectedId, reduceMotion, nodeRoles, testOverlay, layout]);
 
   useEffect(() => {
     if (!focusPath) return;
     const match = nodes.find((n) => n.file_path === focusPath);
     if (match) setSelectedId(match.id);
   }, [focusPath, nodes]);
+
+  const hits = useMemo(() => searchNodes(nodes, query), [nodes, query]);
 
   const onNodeClick: NodeMouseHandler = (_evt, node) => {
     setSelectedId(node.id);
@@ -334,6 +554,27 @@ export function ImpactGraph({
     setSelectedId(null);
     setNeighborhoodOnly(false);
   };
+
+  const inspector = selected ? (
+    <GraphInspector
+      node={selected}
+      nodes={nodes}
+      edges={edges}
+      onClose={clearSelection}
+      onWhatIf={onWhatIf}
+      onSelect={setSelectedId}
+      onOpenFile={onOpenFile}
+      pinned={pinnedId === selected.id}
+      onPin={onPin}
+      onIsolate={
+        onIsolate
+          ? (id) => {
+              onIsolate(isolateSource === id ? null : id);
+            }
+          : undefined
+      }
+    />
+  ) : null;
 
   const toggleFamily = (family: GraphFamily) => {
     setFamilies((current) => {
@@ -437,17 +678,60 @@ export function ImpactGraph({
               ))}
             </select>
           </label>
-        ) : (
+        ) : null}
+        <button
+          type="button"
+          className={neighborhoodOnly ? "chip-btn active" : "chip-btn"}
+          data-testid="graph-neighborhood"
+          disabled={!selectedId}
+          onClick={() => setNeighborhoodOnly((v) => !v)}
+        >
+          {neighborhoodOnly ? "Neighborhood" : "Focus neighbors"}
+        </button>
+        {isolateSource ? (
           <button
             type="button"
-            className={neighborhoodOnly ? "chip-btn active" : "chip-btn"}
-            data-testid="graph-neighborhood"
-            disabled={!selectedId}
-            onClick={() => setNeighborhoodOnly((v) => !v)}
+            className="chip-btn active"
+            data-testid="graph-isolate-clear"
+            onClick={() => onIsolate?.(null)}
           >
-            {neighborhoodOnly ? "Neighborhood" : "Focus neighbors"}
+            Path isolate
           </button>
-        )}
+        ) : null}
+        <label className="graph-search">
+          <span className="sr-only">Search nodes</span>
+          <input
+            data-testid="graph-search"
+            placeholder="Find a node"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setHitsOpen(true);
+            }}
+            onFocus={() => setHitsOpen(true)}
+            onBlur={() => window.setTimeout(() => setHitsOpen(false), 150)}
+          />
+          {hitsOpen && query.trim() && hits.length ? (
+            <ul className="graph-search-hits" data-testid="graph-search-hits">
+              {hits.map((n) => (
+                <li key={n.id}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSelectedId(n.id);
+                      setQuery("");
+                      setHitsOpen(false);
+                    }}
+                  >
+                    {n.name}
+                    <span className="muted">{typeLabel(n.type)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </label>
         <span className="muted graph-count">
           {visible.nodes.length} nodes · {visible.edges.length} edges
           {hidden ? ` · ${hidden} hidden` : ""}
@@ -472,9 +756,7 @@ export function ImpactGraph({
                 }}
               />
             </Suspense>
-            {selected ? (
-              <GraphInspector node={selected} nodes={nodes} edges={edges} onClose={clearSelection} onWhatIf={onWhatIf} />
-            ) : null}
+            {inspector}
           </div>
         ) : (
           <ReactFlowProvider>
@@ -482,6 +764,7 @@ export function ImpactGraph({
               nodes={rfNodes}
               edges={rfEdges}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               fitView={false}
               minZoom={0.25}
               nodesDraggable={false}
@@ -510,9 +793,7 @@ export function ImpactGraph({
               />
               <Controls />
             </ReactFlow>
-            {selected ? (
-              <GraphInspector node={selected} nodes={nodes} edges={edges} onClose={clearSelection} onWhatIf={onWhatIf} />
-            ) : null}
+            {inspector}
           </ReactFlowProvider>
         )}
       </div>

@@ -8,7 +8,7 @@ from typing import Any
 from loadpath.architecture.depth import deepening_candidates
 from loadpath.architecture.rules import evaluate
 from loadpath.config import LoadpathConfig, load_config
-from loadpath.graph.store import GraphStore, linked_edges
+from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_drift
 from loadpath.types import NodeType
 
@@ -44,7 +44,7 @@ ARCHITECTURE_NODE_TYPES = {
 }
 
 
-def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]:
+def summarize_index(store: GraphStore, config: LoadpathConfig, *, hash_drift: bool = False) -> dict[str, Any]:
     raw_findings = evaluate(store, config)
     findings = [f.to_dict() for f in raw_findings]
     residuals = [line for line in (store.get_meta("residuals") or "").splitlines() if line]
@@ -58,7 +58,7 @@ def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]
         }
         for name, ctx in config.contexts.items()
     }
-    drift = index_drift(store, config.repo_root, config)
+    drift = index_drift(store, config.repo_root, config, hash_contents=hash_drift)
     boot_residuals = [line for line in residuals if "django.setup()" in line]
     return {
         "ok": True,
@@ -88,11 +88,55 @@ def summarize_index(store: GraphStore, config: LoadpathConfig) -> dict[str, Any]
 
 
 def architecture_graph(store: GraphStore) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    nodes = [n for n in store.nodes() if n["type"] in ARCHITECTURE_NODE_TYPES]
-    return nodes, linked_edges(nodes, store.edges())
+    types = sorted(ARCHITECTURE_NODE_TYPES)
+    nodes = store.nodes(types)
+    return nodes, store.edges_between_types(types)
 
 
-def architecture_report(repo_root: Path, db_path: Path | None = None) -> dict[str, Any]:
+def workspace_index_card(repo_root: Path, db_path: Path | None = None) -> dict[str, Any]:
+    """Counts and contexts only — used by GET /api/repos so listing workspaces is cheap."""
+    repo_root = repo_root.resolve()
+    db = db_path or default_db_path(repo_root)
+    has_config = (repo_root / "loadpath.yml").is_file()
+    empty_contexts: dict[str, Any] = {}
+    if not db.is_file():
+        return {
+            "indexed": False,
+            "counts": {"nodes": 0, "edges": 0},
+            "has_config": has_config,
+            "contexts": empty_contexts,
+        }
+    store = GraphStore(db)
+    config = load_config(repo_root)
+    card = {
+        "indexed": True,
+        "counts": store.counts(),
+        "indexed_at": store.get_meta("indexed_at"),
+        "has_config": has_config,
+        "contexts": {
+            name: {
+                "name": name,
+                "django_apps": ctx.django_apps,
+                "react": ctx.react,
+                "public_api": ctx.public_api,
+                "owners": ctx.owners,
+            }
+            for name, ctx in config.contexts.items()
+        },
+        "django_boot": store.get_meta("django_boot") or "off",
+        "stale": False,
+    }
+    store.close()
+    return card
+
+
+def architecture_report(
+    repo_root: Path,
+    db_path: Path | None = None,
+    *,
+    include_graph: bool = True,
+    hash_drift: bool = False,
+) -> dict[str, Any]:
     repo_root = repo_root.resolve()
     db = db_path or default_db_path(repo_root)
     if not db.is_file():
@@ -124,12 +168,19 @@ def architecture_report(repo_root: Path, db_path: Path | None = None) -> dict[st
             "residuals": [],
             "nodes": [],
             "edges": [],
+            "graph_pending": False,
         }
     store = GraphStore(db)
     config = load_config(repo_root)
-    summary = summarize_index(store, config)
-    nodes, edges = architecture_graph(store)
-    summary["nodes"] = nodes
-    summary["edges"] = edges
+    summary = summarize_index(store, config, hash_drift=hash_drift)
+    if include_graph:
+        nodes, edges = architecture_graph(store)
+        summary["nodes"] = nodes
+        summary["edges"] = edges
+        summary["graph_pending"] = False
+    else:
+        summary["nodes"] = []
+        summary["edges"] = []
+        summary["graph_pending"] = True
     store.close()
     return summary
