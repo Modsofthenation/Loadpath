@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Background,
   BaseEdge,
@@ -49,6 +49,23 @@ const NO_NEIGHBORS = new Set<string>();
 const LayeredGraph3D = lazy(() =>
   import("./LayeredGraph3D").then((mod) => ({ default: mod.LayeredGraph3D })),
 );
+
+class Graph3DBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <p className="muted graph-3d-hint" data-testid="graph-3d-fallback">
+          WebGL is unavailable in this browser, so the 3D view cannot start. Switch back to 2D map.
+        </p>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const WEIGHT_COLOR: Record<string, string> = {
   cheap: "var(--edge-cheap)",
@@ -751,19 +768,21 @@ export function ImpactGraph({
               Drag to orbit, scroll to zoom, click a node to inspect it.
             </p>
             <Suspense fallback={<p className="muted graph-3d-hint">Loading 3D layers…</p>}>
-              <LayeredGraph3D
-                nodes={visible.nodes}
-                edges={visible.edges}
-                selectedId={selectedId}
-                neighborIds={neighborhoodFocus ? visible.neighborIds : NO_NEIGHBORS}
-                layout={layout}
-                nodeRoles={nodeRoles}
-                testOverlay={testOverlay}
-                onSelect={(id) => {
-                  setSelectedId(id);
-                  if (!id) setNeighborhoodOnly(false);
-                }}
-              />
+              <Graph3DBoundary>
+                <LayeredGraph3D
+                  nodes={visible.nodes}
+                  edges={visible.edges}
+                  selectedId={selectedId}
+                  neighborIds={neighborhoodFocus ? visible.neighborIds : NO_NEIGHBORS}
+                  layout={layout}
+                  nodeRoles={nodeRoles}
+                  testOverlay={testOverlay}
+                  onSelect={(id) => {
+                    setSelectedId(id);
+                    if (!id) setNeighborhoodOnly(false);
+                  }}
+                />
+              </Graph3DBoundary>
             </Suspense>
             {inspector}
           </div>

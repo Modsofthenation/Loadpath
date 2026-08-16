@@ -172,6 +172,25 @@ describe("layoutGuides3d", () => {
     expect(radial.every((g) => g.shape === "ring")).toBe(true);
     expect(layoutGuides3d(ring, layoutNodes3d(ring, ringEdges, "grid"), "grid")).toEqual([]);
   });
+
+  it("uses rings for concentric and circle, and no guides for freeform layouts", () => {
+    const ring = [
+      node("a", "django.view", "A"),
+      node("b", "django.serializer", "B"),
+      node("c", "react.page", "C"),
+      node("d", "django.model", "D"),
+    ];
+    const edges = [edge("a", "b"), edge("a", "c"), edge("a", "d")];
+    const concentric = layoutGuides3d(ring, layoutNodes3d(ring, edges, "concentric"), "concentric");
+    expect(concentric.length).toBeGreaterThan(0);
+    expect(concentric.every((g) => g.shape === "ring")).toBe(true);
+    const circle = layoutGuides3d(ring, layoutNodes3d(ring, [], "circle"), "circle");
+    expect(circle.length).toBeGreaterThan(0);
+    expect(circle.every((g) => g.shape === "ring")).toBe(true);
+    for (const id of ["tree", "clusters", "grid", "force"] as const) {
+      expect(layoutGuides3d(ring, layoutNodes3d(ring, edges, id), id)).toEqual([]);
+    }
+  });
 });
 
 describe("nodeRadius3d", () => {

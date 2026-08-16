@@ -361,13 +361,21 @@ export function layoutNodes3d(
   return pos;
 }
 
+export function layoutGuideKind(layout: GraphLayoutId): "slab" | "ring" | "none" {
+  if (layout === "layers" || layout === "flow") return "slab";
+  if (layout === "radial" || layout === "concentric" || layout === "circle") return "ring";
+  return "none";
+}
+
 export function layoutGuides3d(
   nodes: GraphNode[],
   pos: Map<string, { x: number; y: number; z: number }>,
   layout: GraphLayoutId = "layers",
 ): LayoutGuide3d[] {
-  if (!nodes.length || layout === "grid") return [];
-  if (layout === "radial") return radialGuides(nodes, pos);
+  if (!nodes.length) return [];
+  const kind = layoutGuideKind(layout);
+  if (kind === "none") return [];
+  if (kind === "ring") return radialGuides(nodes, pos);
 
   const groups = new Map<number, GraphNode[]>();
   for (const n of nodes) {

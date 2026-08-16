@@ -542,18 +542,23 @@ export function LayeredGraph3D({
     let frame = 0;
     const tick = () => {
       frame = requestAnimationFrame(tick);
-      if (goalTarget && goalCamera) {
-        controls.target.lerp(goalTarget, 0.14);
-        camera.position.lerp(goalCamera, 0.14);
-        if (controls.target.distanceTo(goalTarget) < 1.5) {
-          controls.target.copy(goalTarget);
-          camera.position.copy(goalCamera);
-          goalTarget = null;
-          goalCamera = null;
+      try {
+        if (goalTarget && goalCamera) {
+          controls.target.lerp(goalTarget, 0.14);
+          camera.position.lerp(goalCamera, 0.14);
+          if (controls.target.distanceTo(goalTarget) < 1.5) {
+            controls.target.copy(goalTarget);
+            camera.position.copy(goalCamera);
+            goalTarget = null;
+            goalCamera = null;
+          }
         }
+        controls.update();
+        renderer.render(scene, camera);
+      } catch {
+        cancelAnimationFrame(frame);
+        setWebglError("WebGL is unavailable in this browser, so the 3D view cannot start. Switch back to 2D map.");
       }
-      controls.update();
-      renderer.render(scene, camera);
     };
     tick();
 
