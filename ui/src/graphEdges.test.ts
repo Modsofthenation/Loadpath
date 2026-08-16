@@ -1,3 +1,4 @@
+import { getSmoothStepPath, Position } from "@xyflow/react";
 import { describe, expect, it } from "vitest";
 import { assignEdgeStepPositions, stepForLane } from "./graphEdges";
 import type { GraphEdge, GraphNode } from "./types";
@@ -45,9 +46,39 @@ describe("assignEdgeStepPositions", () => {
     expect(steps.size).toBe(0);
   });
 
-  it("spreads lanes between 0.22 and 0.78", () => {
+  it("separates collinear verticals in the same gap even when their y ranges do not overlap", () => {
+    const nodes = [node("r1", "django.route"), node("r2", "django.route"), node("v1", "django.view"), node("v2", "django.view")];
+    const pos = new Map([
+      ["r1", { x: 0, y: 0 }],
+      ["r2", { x: 0, y: 400 }],
+      ["v1", { x: 296, y: 48 }],
+      ["v2", { x: 296, y: 448 }],
+    ]);
+    const edges = [edge("r1", "v1"), edge("r2", "v2")];
+    const steps = assignEdgeStepPositions(nodes, edges, pos);
+    expect(steps.get("r1->v1")).toBe(0.2);
+    expect(steps.get("r2->v2")).toBe(0.8);
+  });
+
+  it("spreads lanes between 0.2 and 0.8", () => {
     expect(stepForLane(0, 1)).toBe(0.5);
-    expect(stepForLane(0, 2)).toBe(0.22);
-    expect(stepForLane(1, 2)).toBe(0.78);
+    expect(stepForLane(0, 2)).toBe(0.2);
+    expect(stepForLane(1, 2)).toBe(0.8);
+  });
+});
+
+describe("getSmoothStepPath stepPosition", () => {
+  it("moves the vertical segment when stepPosition changes", () => {
+    const shared = {
+      sourceX: 208,
+      sourceY: 32,
+      targetX: 336,
+      targetY: 120,
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
+    };
+    const [left] = getSmoothStepPath({ ...shared, stepPosition: 0.2 });
+    const [right] = getSmoothStepPath({ ...shared, stepPosition: 0.8 });
+    expect(left).not.toBe(right);
   });
 });

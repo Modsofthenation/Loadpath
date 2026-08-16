@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   Background,
+  BaseEdge,
   Controls,
   Handle,
   MarkerType,
@@ -8,8 +9,10 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getSmoothStepPath,
   useReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeMouseHandler,
 } from "@xyflow/react";
@@ -71,6 +74,58 @@ function LoadNode({
 const nodeTypes = { load: LoadNode };
 const ALL_FAMILIES = new Set<GraphFamily>(["django", "react", "stitch", "arch"]);
 
+function LoadStepEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style,
+  markerEnd,
+  markerStart,
+  label,
+  labelStyle,
+  labelShowBg,
+  labelBgStyle,
+  labelBgPadding,
+  labelBgBorderRadius,
+  data,
+  interactionWidth,
+}: EdgeProps<Edge<{ stepPosition?: number }>>) {
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: 8,
+    stepPosition: data?.stepPosition ?? 0.5,
+  });
+  return (
+    <BaseEdge
+      id={id}
+      path={path}
+      labelX={labelX}
+      labelY={labelY}
+      label={label}
+      labelStyle={labelStyle}
+      labelShowBg={labelShowBg}
+      labelBgStyle={labelBgStyle}
+      labelBgPadding={labelBgPadding}
+      labelBgBorderRadius={labelBgBorderRadius}
+      style={style}
+      markerEnd={markerEnd}
+      markerStart={markerStart}
+      interactionWidth={interactionWidth}
+    />
+  );
+}
+
+const edgeTypes = { loadstep: LoadStepEdge };
+
 function FitViewOnTopology({ topologyKey }: { topologyKey: string }) {
   const { fitView } = useReactFlow();
   useEffect(() => {
@@ -127,9 +182,9 @@ export function toReactFlowElements(
         id: e.id,
         source: e.src,
         target: e.dst,
-        type: "smoothstep",
+        type: "loadstep",
         animated: e.weight === "critical",
-        pathOptions: { borderRadius: 8, stepPosition: stepByEdge.get(e.id) ?? 0.5 },
+        data: { stepPosition: stepByEdge.get(e.id) ?? 0.5 },
         style: {
           stroke,
           strokeWidth: e.weight === "critical" ? 2.4 : 1.2,
@@ -647,6 +702,7 @@ export function ImpactGraph({
               nodes={rfNodes}
               edges={rfEdges}
               nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
               fitView={false}
               minZoom={0.25}
               nodesDraggable={false}

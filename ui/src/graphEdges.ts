@@ -1,18 +1,16 @@
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, layoutNodes, type GraphEdge, type GraphNode } from "./types";
 
 const HORIZONTAL_EPS = 12;
-const Y_PAD = 6;
-const STEP_LO = 0.22;
-const STEP_HI = 0.78;
+const STEP_LO = 0.2;
+const STEP_HI = 0.8;
 
 type Span = {
   id: string;
-  y0: number;
-  y1: number;
+  sourceY: number;
   corridor: string;
 };
 
-/** Spread overlapping smooth-step bends so parallel verticals do not share one x. */
+/** Give each bent edge in a column gap its own vertical so parallel routes do not share one x. */
 export function assignEdgeStepPositions(
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -31,8 +29,7 @@ export function assignEdgeStepPositions(
     const targetX = dst.x;
     spans.push({
       id: edge.id,
-      y0: Math.min(sourceY, targetY),
-      y1: Math.max(sourceY, targetY),
+      sourceY,
       corridor: `${Math.round(sourceX / 8)}>${Math.round(targetX / 8)}`,
     });
   }
@@ -46,28 +43,13 @@ export function assignEdgeStepPositions(
 
   const steps = new Map<string, number>();
   for (const group of groups.values()) {
-    const sorted = [...group].sort((a, b) => a.y0 - b.y0 || a.y1 - b.y1 || a.id.localeCompare(b.id));
-    const lanes: Span[][] = [];
-    const laneOf = new Map<string, number>();
-    for (const span of sorted) {
-      let lane = lanes.findIndex((items) => items.every((other) => !yOverlap(span, other)));
-      if (lane < 0) {
-        lane = lanes.length;
-        lanes.push([]);
-      }
-      lanes[lane].push(span);
-      laneOf.set(span.id, lane);
-    }
-    const n = lanes.length;
-    for (const span of group) {
-      steps.set(span.id, stepForLane(laneOf.get(span.id) ?? 0, n));
-    }
+    const sorted = [...group].sort((a, b) => a.sourceY - b.sourceY || a.id.localeCompare(b.id));
+    const n = sorted.length;
+    sorted.forEach((span, i) => {
+      steps.set(span.id, stepForLane(i, n));
+    });
   }
   return steps;
-}
-
-function yOverlap(a: Span, b: Span): boolean {
-  return a.y0 < b.y1 + Y_PAD && b.y0 < a.y1 + Y_PAD;
 }
 
 export function stepForLane(lane: number, laneCount: number): number {

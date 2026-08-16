@@ -511,10 +511,25 @@ export function layoutNodes(
   const colPitch = GRAPH_NODE_WIDTH + GRAPH_COL_GAP;
   const rowPitch = GRAPH_NODE_HEIGHT + GRAPH_ROW_GAP;
   const maxRows = Math.max(...order.map((col) => col.length), 1);
+  const colX: number[] = [];
+  let x = 0;
+  for (let i = 0; i < order.length; i++) {
+    colX.push(x);
+    const here = new Set((order[i] ?? []).map((n) => n.id));
+    const next = new Set((order[i + 1] ?? []).map((n) => n.id));
+    let between = 0;
+    if (next.size) {
+      for (const e of edges) {
+        if (here.has(e.src) && next.has(e.dst)) between += 1;
+      }
+    }
+    const extra = Math.min(96, Math.max(0, (between - 1) * 12));
+    x += colPitch + extra;
+  }
   order.forEach((col, colIndex) => {
     const y0 = ((maxRows - col.length) * rowPitch) / 2;
     col.forEach((n, i) => {
-      pos.set(n.id, { x: colIndex * colPitch, y: y0 + i * rowPitch });
+      pos.set(n.id, { x: colX[colIndex] ?? 0, y: y0 + i * rowPitch });
     });
   });
   return pos;
