@@ -9,6 +9,7 @@ import {
   isolatePathIds,
   isInferredEdge,
   layoutGraph,
+  layoutGuides3d,
   layoutNodes3d,
   layoutUsesColumns,
   neighborIds,
@@ -123,6 +124,53 @@ describe("layoutNodes3d", () => {
       expect(radial3d.get(n.id)!.x).toBeCloseTo(radial2d.get(n.id)!.x * 0.45);
       expect(radial3d.get(n.id)!.y).toBeCloseTo(-radial2d.get(n.id)!.y * 0.45);
     }
+  });
+});
+
+describe("layoutGuides3d", () => {
+  it("fits a column slab around the nodes instead of a circle at the origin", () => {
+    const billing = { ...node("bill", "django.model", "Invoice"), context: "billing" };
+    const identity = { ...node("id", "django.model", "User"), context: "identity" };
+    const laid = layoutNodes3d([billing, identity]);
+    const guides = layoutGuides3d([billing, identity], laid, "layers");
+    expect(guides).toHaveLength(1);
+    expect(guides[0]!.shape).toBe("slab");
+    expect(guides[0]!.z).toBeCloseTo((laid.get("bill")!.z + laid.get("id")!.z) / 2);
+    expect(guides[0]!.y).toBeCloseTo((laid.get("bill")!.y + laid.get("id")!.y) / 2);
+    for (const n of [billing, identity]) {
+      const p = laid.get(n.id)!;
+      expect(Math.abs(p.y - guides[0]!.y)).toBeLessThanOrEqual(guides[0]!.extentY);
+      expect(Math.abs(p.z - guides[0]!.z)).toBeLessThanOrEqual(guides[0]!.extentZ);
+    }
+  });
+
+  it("places one slab per flow column, not per architecture type", () => {
+    const chain = [
+      node("v", "django.view", "View"),
+      node("s", "django.serializer", "Ser"),
+      node("p", "react.page", "Page"),
+    ];
+    const chainEdges = [edge("v", "s"), edge("s", "p")];
+    const laid = layoutNodes3d(chain, chainEdges, "flow");
+    const guides = layoutGuides3d(chain, laid, "flow");
+    expect(guides.map((g) => g.shape)).toEqual(["slab", "slab", "slab"]);
+    const xs = new Set(chain.map((n) => Math.round(laid.get(n.id)!.x * 10) / 10));
+    expect(new Set(guides.map((g) => Math.round(g.x * 10) / 10))).toEqual(xs);
+  });
+
+  it("does not emit filled discs for grid, and uses rings for radial", () => {
+    const ring = [
+      node("a", "django.view", "A"),
+      node("b", "django.serializer", "B"),
+      node("c", "react.page", "C"),
+      node("d", "django.model", "D"),
+    ];
+    const ringEdges = [edge("a", "b"), edge("a", "c"), edge("a", "d")];
+    const radialPos = layoutNodes3d(ring, ringEdges, "radial");
+    const radial = layoutGuides3d(ring, radialPos, "radial");
+    expect(radial.length).toBeGreaterThan(0);
+    expect(radial.every((g) => g.shape === "ring")).toBe(true);
+    expect(layoutGuides3d(ring, layoutNodes3d(ring, ringEdges, "grid"), "grid")).toEqual([]);
   });
 });
 

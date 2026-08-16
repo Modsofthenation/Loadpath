@@ -5,10 +5,8 @@ import { typeLabel } from "./format";
 import {
   colorForType,
   isInferredEdge,
-  LAYER_LABELS,
+  layoutGuides3d,
   layoutNodes3d,
-  layerCenters,
-  layoutUsesColumns,
   nodeRadius3d,
   type GraphLayoutId,
 } from "./graphView";
@@ -320,27 +318,54 @@ export function LayeredGraph3D({
     }
 
     const planeMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(cssColor("--muted", "#8b9bb0")),
+      color: new THREE.Color(cssColor("--node-line", "#2a3d52")),
       transparent: true,
-      opacity: 0.07,
+      opacity: 0.16,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
+    const lineMat = new THREE.LineBasicMaterial({
+      color: new THREE.Color(cssColor("--muted", "#8b9bb0")),
+      transparent: true,
+      opacity: 0.28,
+    });
     const labelColor = cssColor("--muted", "#8b9bb0");
     const layerLabels: THREE.Sprite[] = [];
-    const discGeoms: THREE.BufferGeometry[] = [];
-    if (layoutUsesColumns(layout)) {
-      for (const layer of layerCenters(nodes, pos)) {
-        const discGeom = new THREE.CircleGeometry(layer.radius, 48);
-        discGeoms.push(discGeom);
-        const disc = new THREE.Mesh(discGeom, planeMat);
-        disc.rotation.y = Math.PI / 2;
-        disc.position.x = layer.x;
-        group.add(disc);
-        const label = makeLayerLabel(LAYER_LABELS[layer.layer] ?? `layer ${layer.layer}`, labelColor);
-        label.position.set(layer.x, layer.radius + 18, 0);
-        group.add(label);
-        layerLabels.push(label);
+    const guideGeoms: THREE.BufferGeometry[] = [];
+    const planeGeom = new THREE.PlaneGeometry(1, 1);
+    guideGeoms.push(planeGeom);
+    for (const guide of layoutGuides3d(nodes, pos, layout)) {
+      if (guide.shape === "slab") {
+        const slab = new THREE.Mesh(planeGeom, planeMat);
+        slab.scale.set(guide.extentZ * 2, guide.extentY * 2, 1);
+        slab.rotation.y = Math.PI / 2;
+        slab.position.set(guide.x, guide.y, guide.z);
+        group.add(slab);
+        const outline = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(guide.x, guide.y - guide.extentY, guide.z - guide.extentZ),
+          new THREE.Vector3(guide.x, guide.y + guide.extentY, guide.z - guide.extentZ),
+          new THREE.Vector3(guide.x, guide.y + guide.extentY, guide.z + guide.extentZ),
+          new THREE.Vector3(guide.x, guide.y - guide.extentY, guide.z + guide.extentZ),
+        ]);
+        guideGeoms.push(outline);
+        group.add(new THREE.LineLoop(outline, lineMat));
+        if (guide.label) {
+          const label = makeLayerLabel(guide.label, labelColor);
+          label.position.set(guide.x, guide.y + guide.extentY + 12, guide.z);
+          group.add(label);
+          layerLabels.push(label);
+        }
+      } else if (guide.radius >= 12) {
+        const ringPts: THREE.Vector3[] = [];
+        for (let i = 0; i < 64; i += 1) {
+          const theta = (i / 64) * Math.PI * 2;
+          ringPts.push(
+            new THREE.Vector3(Math.cos(theta) * guide.radius, Math.sin(theta) * guide.radius, guide.z),
+          );
+        }
+        const ringGeom = new THREE.BufferGeometry().setFromPoints(ringPts);
+        guideGeoms.push(ringGeom);
+        group.add(new THREE.LineLoop(ringGeom, lineMat));
       }
     }
 
@@ -558,7 +583,8 @@ export function LayeredGraph3D({
       solidGeom.dispose();
       dashGeom.dispose();
       planeMat.dispose();
-      for (const geom of discGeoms) geom.dispose();
+      lineMat.dispose();
+      for (const geom of guideGeoms) geom.dispose();
       (solidLines.material as THREE.Material).dispose();
       dashMat.dispose();
       for (const sprite of [...layerLabels, ...labelSprites]) {

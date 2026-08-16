@@ -276,6 +276,21 @@ export function isolatePathIds(
   return { nodeIds: keep, edgeIds };
 }
 
+const GUIDE_PAD = 16;
+const RING_BIN = 28;
+
+export type LayoutGuide3d = {
+  shape: "slab" | "ring";
+  x: number;
+  y: number;
+  z: number;
+  extentY: number;
+  extentZ: number;
+  radius: number;
+  label: string;
+  count: number;
+};
+
 function contextKey(node: GraphNode): string {
   return (node.context || "").trim();
 }
@@ -346,42 +361,113 @@ export function layoutNodes3d(
   return pos;
 }
 
-export function layerCenters(
+export function layoutGuides3d(
   nodes: GraphNode[],
   pos: Map<string, { x: number; y: number; z: number }>,
-): { layer: number; x: number; count: number; radius: number }[] {
+  layout: GraphLayoutId = "layers",
+): LayoutGuide3d[] {
+  if (!nodes.length || layout === "grid") return [];
+  if (layout === "radial") return radialGuides(nodes, pos);
+
   const groups = new Map<number, GraphNode[]>();
   for (const n of nodes) {
-    const layer = layerFor(n.type);
-    const list = groups.get(layer) ?? [];
+    const x = Math.round((pos.get(n.id)?.x ?? 0) * 10) / 10;
+    const list = groups.get(x) ?? [];
     list.push(n);
-    groups.set(layer, list);
+    groups.set(x, list);
   }
   return [...groups.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([layer, list]) => {
-      let x = 0;
-      let y = 0;
-      let z = 0;
-      for (const n of list) {
+    .map(([, members]) => slabGuide(members, pos, layout));
+}
+
+function guideLabel(members: GraphNode[], layout: GraphLayoutId): string {
+  const counts = new Map<number, number>();
+  for (const n of members) {
+    const layer = layerFor(n.type);
+    counts.set(layer, (counts.get(layer) || 0) + 1);
+  }
+  let bestLayer = -1;
+  let bestCount = 0;
+  for (const [layer, count] of counts) {
+    if (count > bestCount) {
+      bestLayer = layer;
+      bestCount = count;
+    }
+  }
+  if (layout === "flow" && bestCount < members.length * 0.6) return "";
+  return LAYER_LABELS[bestLayer] ?? "";
+}
+
+function slabGuide(
+  members: GraphNode[],
+  pos: Map<string, { x: number; y: number; z: number }>,
+  layout: GraphLayoutId,
+): LayoutGuide3d {
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let sumX = 0;
+  for (const n of members) {
+    const p = pos.get(n.id) ?? { x: 0, y: 0, z: 0 };
+    const r = nodeRadius3d(n.type);
+    sumX += p.x;
+    minY = Math.min(minY, p.y - r);
+    maxY = Math.max(maxY, p.y + r);
+    minZ = Math.min(minZ, p.z - r);
+    maxZ = Math.max(maxZ, p.z + r);
+  }
+  return {
+    shape: "slab",
+    x: sumX / members.length,
+    y: (minY + maxY) / 2,
+    z: (minZ + maxZ) / 2,
+    extentY: Math.max((maxY - minY) / 2 + GUIDE_PAD, 20),
+    extentZ: Math.max((maxZ - minZ) / 2 + GUIDE_PAD, 20),
+    radius: 0,
+    label: guideLabel(members, layout),
+    count: members.length,
+  };
+}
+
+function radialGuides(
+  nodes: GraphNode[],
+  pos: Map<string, { x: number; y: number; z: number }>,
+): LayoutGuide3d[] {
+  const groups = new Map<number, GraphNode[]>();
+  for (const n of nodes) {
+    const p = pos.get(n.id) ?? { x: 0, y: 0, z: 0 };
+    const r = Math.hypot(p.x, p.y);
+    const bin = r < 12 ? 0 : Math.round(r / RING_BIN);
+    const list = groups.get(bin) ?? [];
+    list.push(n);
+    groups.set(bin, list);
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, members]) => {
+      let sumR = 0;
+      let sumZ = 0;
+      for (const n of members) {
         const p = pos.get(n.id) ?? { x: 0, y: 0, z: 0 };
-        x += p.x;
-        y += p.y;
-        z += p.z;
+        sumR += Math.hypot(p.x, p.y);
+        sumZ += p.z;
       }
-      const n = Math.max(list.length, 1);
-      x /= n;
-      y /= n;
-      z /= n;
-      let radius = 28;
-      for (const node of list) {
-        const p = pos.get(node.id) ?? { x: 0, y: 0, z: 0 };
-        const dy = p.y - y;
-        const dz = p.z - z;
-        radius = Math.max(radius, Math.hypot(dy, dz) + nodeRadius3d(node.type) + 16);
-      }
-      return { layer, x, count: list.length, radius };
-    });
+      const radius = sumR / members.length;
+      return {
+        shape: "ring" as const,
+        x: 0,
+        y: 0,
+        z: sumZ / members.length,
+        extentY: 0,
+        extentZ: 0,
+        radius,
+        label: radius < 12 ? "" : guideLabel(members, "radial"),
+        count: members.length,
+      };
+    })
+    .filter((guide) => guide.radius >= 12);
 }
 
 export function readGraphLayout(): GraphLayoutId {
