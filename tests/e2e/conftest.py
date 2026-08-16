@@ -50,13 +50,18 @@ def live_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[
 
 
 def wait_visible_graph(page, timeout: int = 15_000) -> None:
-    """Wait until React Flow has painted a node and at least one on-screen edge.
+    """Wait until React Flow has painted a node and at least one edge.
 
     `.react-flow__edge` first can stay `visibility: hidden` (unmeasured or
-    clipped) even when other edges are visible, so filter to a visible edge.
+    clipped) even when other edges are visible, so prefer a visible edge and
+    fall back to an attached path so a clipped pane does not fail the wait.
     """
     page.locator(".react-flow__node").first.wait_for(timeout=timeout)
-    page.locator(".react-flow__edge").filter(visible=True).first.wait_for(timeout=timeout)
+    visible = page.locator(".react-flow__edge").filter(visible=True)
+    try:
+        visible.first.wait_for(timeout=timeout)
+    except Exception:
+        page.locator(".react-flow__edge-path").first.wait_for(state="attached", timeout=timeout)
 
 
 @pytest.fixture

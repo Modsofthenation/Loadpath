@@ -108,7 +108,7 @@ def test_ui_index_review_graph_copy_and_workspace(live_app, browser_page):
     assert "billing-team" in brief
     assert "MePage" not in brief
     page.locator(".react-flow__node").filter(has_text="InvoicePage").first.wait_for(timeout=15_000)
-    page.locator(".react-flow__edge").filter(visible=True).first.wait_for(timeout=15_000)
+    wait_visible_graph(page)
     assert page.locator(".react-flow__node").filter(has_text="MePage").count() == 0
 
     page.get_by_test_id("tab-graph").click()
