@@ -28,6 +28,8 @@ describe("toReactFlowElements", () => {
     });
     expect(rfEdges[0].markerEnd).toMatchObject({ type: MarkerType.ArrowClosed });
     expect(rfEdges[0].label).toBeUndefined();
+    expect(rfEdges[0].pathOptions?.stepPosition).toBe(0.5);
+    expect(rfEdges[0].pathOptions?.borderRadius).toBe(8);
   });
 
   it("labels only edges incident to the selected node", () => {

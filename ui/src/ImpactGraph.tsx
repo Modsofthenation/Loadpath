@@ -27,6 +27,7 @@ import {
   type GraphProjection,
 } from "./graphView";
 import { inspectNode, type InspectorLink } from "./nodeInspector";
+import { assignEdgeStepPositions } from "./graphEdges";
 import {
   GRAPH_NODE_HEIGHT,
   GRAPH_NODE_WIDTH,
@@ -95,6 +96,7 @@ export function toReactFlowElements(
 ): { rfNodes: Node[]; rfEdges: Edge[] } {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const pos = layoutNodes(nodes, edges);
+  const stepByEdge = assignEdgeStepPositions(nodes, edges, pos);
   const rfNodes: Node[] = nodes.map((n) => {
     const roles = opts.roles?.[n.id] || [];
     const dim =
@@ -127,6 +129,7 @@ export function toReactFlowElements(
         target: e.dst,
         type: "smoothstep",
         animated: e.weight === "critical",
+        pathOptions: { borderRadius: 8, stepPosition: stepByEdge.get(e.id) ?? 0.5 },
         style: {
           stroke,
           strokeWidth: e.weight === "critical" ? 2.4 : 1.2,
