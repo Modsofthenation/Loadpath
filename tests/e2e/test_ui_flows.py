@@ -229,6 +229,67 @@ def test_ui_index_polls_progress_endpoint(live_app, browser_page):
 
 
 @pytest.mark.playwright
+def test_ui_index_progress_bar_does_not_jump_backwards(live_app, browser_page):
+    base_url, repo = live_app
+    page = browser_page
+    page.goto(base_url, wait_until="networkidle")
+    _wait_fonts(page)
+    page.get_by_test_id("repo-path").fill(str(repo))
+    sequence = [
+        {"phase": "scan", "done": 50, "total": 100, "percent": 10, "message": "Hashed 50/100 files"},
+        {"phase": "scan", "done": 100, "total": 100, "percent": 20, "message": "Hashed 100/100 files"},
+        {"phase": "extract", "done": 0, "total": 80, "percent": 20, "message": "Extracting 80 of 100 files"},
+        {"phase": "extract", "done": 40, "total": 80, "percent": 54, "message": "Extracted foo.py (40/80)"},
+        {"phase": "extract", "done": 80, "total": 80, "percent": 88, "message": "Extracted bar.py (80/80)"},
+        {"phase": "boot", "done": 0, "total": 1, "percent": 88, "message": "Booting Django models (optional)"},
+        {"phase": "stitch", "done": 0, "total": 1, "percent": 94, "message": "Stitching contracts"},
+        {"phase": "done", "done": 5, "total": 100, "percent": 100, "message": "Indexed 5 files"},
+    ]
+    page.evaluate(
+        """(sequence) => {
+          let n = 0;
+          const orig = window.fetch;
+          window.fetch = async (input, init) => {
+            const url = String(typeof input === "string" ? input : input.url);
+            const method = (init && init.method) || "GET";
+            if (url.includes("/api/index/progress")) {
+              const body = sequence[Math.min(n, sequence.length - 1)];
+              n += 1;
+              return new Response(JSON.stringify(body), {
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+            if (method === "POST" && url.includes("/api/index") && !url.includes("progress")) {
+              await new Promise((resolve) => setTimeout(resolve, 2200));
+              return orig.call(window, input, init);
+            }
+            return orig.call(window, input, init);
+          };
+        }""",
+        sequence,
+    )
+    page.get_by_test_id("btn-index").click()
+    page.get_by_test_id("progress").wait_for(timeout=5_000)
+    samples: list[int] = []
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        bar = page.get_by_test_id("progress")
+        if bar.count():
+            raw = bar.get_attribute("aria-valuenow")
+            if raw is not None and raw != "":
+                samples.append(int(raw))
+        page.wait_for_timeout(150)
+    assert samples, "expected determinate progress samples"
+    assert samples[-1] >= samples[0]
+    for earlier, later in zip(samples, samples[1:]):
+        assert later >= earlier, samples
+    assert max(samples) >= 20
+    assert min(samples) < 100
+    # Extract starting at 0/80 must not rewind the bar to empty.
+    assert not any(samples[i] >= 15 and samples[i + 1] < 10 for i in range(len(samples) - 1))
+
+
+@pytest.mark.playwright
 def test_ui_settings_preserve_model_and_theme(live_app, browser_page):
     base_url, _repo = live_app
     page = browser_page

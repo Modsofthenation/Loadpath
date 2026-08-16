@@ -173,6 +173,7 @@ export type IndexProgress = {
   phase: string;
   done?: number;
   total?: number;
+  percent?: number;
   current?: string;
   workers?: number;
   skipped?: number;

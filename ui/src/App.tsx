@@ -8,6 +8,7 @@ import { ImpactGraph } from "./ImpactGraph";
 import { openInEditor, persistEditorPreference, editorPreference } from "./openEditor";
 import { RefCombobox } from "./RefCombobox";
 import { RepoExplorer } from "./RepoExplorer";
+import { LIVE_INDEX_PHASES, progressPercent } from "./indexProgress";
 import { THEMES, applyTheme, readTheme, type ThemeId } from "./themes";
 import type {
   ArchitectureHealth,
@@ -15,7 +16,6 @@ import type {
   DeepeningCandidate,
   GitRefs,
   IndexedRepo,
-  IndexProgress,
   LoadpathConfigDoc,
   PullRequest,
   RemoteRepo,
@@ -34,12 +34,6 @@ const TABS: { id: Tab; label: string; testId: string; shortcut: string; icon: ty
   { id: "prs", label: "Pull requests", testId: "tab-prs", shortcut: "4", icon: IconPrs },
   { id: "settings", label: "Settings", testId: "tab-settings", shortcut: "5", icon: IconSettings },
 ];
-
-function progressPercent(p: IndexProgress): number | null {
-  const total = p.total || 0;
-  if (total <= 0) return null;
-  return Math.min(100, Math.round((100 * (p.done || 0)) / total));
-}
 
 function openOAuthUrl(url: string, host: string, pathPrefix: string) {
   let parsed: URL;
@@ -127,13 +121,23 @@ export function App() {
     setBusy(msg);
   };
   const watchIndex = (repoPath: string) => {
+    let peak = 0;
+    let seenLive = false;
+    setIndexPct(0);
     const tick = () => {
       api
         .indexProgress(repoPath)
         .then((p) => {
           if (!busyRef.current) return;
           if (p.phase && p.phase !== "idle" && p.message) markBusy(p.message);
-          setIndexPct(p.phase && p.phase !== "idle" ? progressPercent(p) : null);
+          const live = LIVE_INDEX_PHASES.has(p.phase);
+          if (live) seenLive = true;
+          else if (!seenLive) return;
+          const raw = progressPercent(p);
+          if (raw == null) return;
+          if (p.phase === "scan" && !(p.done || 0)) peak = raw;
+          else peak = Math.max(peak, raw);
+          setIndexPct(peak);
         })
         .catch(() => undefined);
     };
@@ -1054,6 +1058,9 @@ export function App() {
             role="status"
             aria-live="polite"
             aria-busy="true"
+            aria-valuemin={indexPct != null ? 0 : undefined}
+            aria-valuemax={indexPct != null ? 100 : undefined}
+            aria-valuenow={indexPct ?? undefined}
             data-testid="progress"
           >
             <i style={indexPct != null ? { width: `${indexPct}%` } : undefined} />

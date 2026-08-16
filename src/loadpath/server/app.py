@@ -35,7 +35,7 @@ from loadpath.config import load_config, config_document, write_config, add_waiv
 from loadpath.detect import detect_layout, write_draft_config
 from loadpath.graph.store import GraphStore
 from loadpath.index import default_db_path, index_repo
-from loadpath.progress import progress_callback, read_progress
+from loadpath.progress import begin_progress, progress_callback, read_progress
 from loadpath.providers.oauth import (
     callback_html,
     disconnect_scm,
@@ -379,6 +379,7 @@ def create_app(
     @app.post("/api/index")
     def api_index(body: IndexRequest) -> dict[str, Any]:
         root = require_repo_path(body.repo_path)
+        begin_progress(root)
         store = index_repo(
             root,
             incremental=body.incremental,
@@ -441,6 +442,8 @@ def create_app(
     @app.post("/api/review")
     def api_review(body: ReviewRequest) -> dict[str, Any]:
         root = require_repo_path(body.repo_path)
+        if body.reindex:
+            begin_progress(root)
         try:
             review = run_review(
                 root,
@@ -899,6 +902,8 @@ def create_app(
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(400, str(exc)) from exc
         root = Path(prepared["repo_path"])
+        if body.reindex:
+            begin_progress(root)
         try:
             review = run_review(
                 root,
