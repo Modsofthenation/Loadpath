@@ -820,6 +820,7 @@ function ImpactGraphView({
               deleteKeyCode={null}
               onNodeClick={onNodeClick}
               onPaneClick={clearSelection}
+              onlyRenderVisibleElements={rfNodes.length >= 90}
               proOptions={{ hideAttribution: false }}
               data-testid="impact-graph"
             >

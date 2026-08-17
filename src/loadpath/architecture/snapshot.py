@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -46,9 +47,32 @@ ARCHITECTURE_NODE_TYPES = {
 }
 
 
+def persist_findings(store: GraphStore, config: LoadpathConfig) -> list[dict[str, Any]]:
+    """Run architecture rules once and store the result for cheap workspace loads."""
+    raw = evaluate(store, config)
+    findings = [f.to_dict() for f in raw]
+    store.set_meta("findings_json", json.dumps(findings))
+    return findings
+
+
+def _load_cached_findings(store: GraphStore) -> list[dict[str, Any]] | None:
+    raw = store.get_meta("findings_json")
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, list):
+        return None
+    return payload
+
+
 def summarize_index(store: GraphStore, config: LoadpathConfig, *, hash_drift: bool = False) -> dict[str, Any]:
-    raw_findings = evaluate(store, config)
-    findings = [f.to_dict() for f in raw_findings]
+    drift = index_drift(store, config.repo_root, config, hash_contents=hash_drift)
+    findings = None if drift.get("config_changed") else _load_cached_findings(store)
+    if findings is None:
+        findings = persist_findings(store, config)
     residuals = [line for line in (store.get_meta("residuals") or "").splitlines() if line]
     contexts = {
         name: {
@@ -60,7 +84,6 @@ def summarize_index(store: GraphStore, config: LoadpathConfig, *, hash_drift: bo
         }
         for name, ctx in config.contexts.items()
     }
-    drift = index_drift(store, config.repo_root, config, hash_contents=hash_drift)
     boot_residuals = [line for line in residuals if "django.setup()" in line]
     return {
         "ok": True,
@@ -82,7 +105,7 @@ def summarize_index(store: GraphStore, config: LoadpathConfig, *, hash_drift: bo
         "contexts": contexts,
         "rules": list(config.rules),
         "findings": findings,
-        "deepening": deepening_candidates(raw_findings),
+        "deepening": deepening_candidates(findings),
         "residuals": residuals[:40],
         "boot_residuals": boot_residuals,
         "has_config": (config.repo_root / "loadpath.yml").is_file(),

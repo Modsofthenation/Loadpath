@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from loadpath.config import LoadpathConfig
+from loadpath.scan import iter_named_files
 from loadpath.types import Edge, EdgeType, ExtractedGraph, Node, NodeType, node_id
 
 BOOT_JSON_MARKER = "__LOADPATH_BOOT_JSON__"
@@ -251,12 +252,7 @@ def _discover_settings_module(repo_root: Path, django_root: str = "backend") -> 
         return env
     django_path = (repo_root / django_root).resolve()
     candidates: list[Path] = []
-    for settings in repo_root.rglob("settings.py"):
-        rel = settings.relative_to(repo_root)
-        if any(part.startswith(".") for part in rel.parts):
-            continue
-        if "site-packages" in rel.parts:
-            continue
+    for settings in iter_named_files(repo_root, ("settings.py",)):
         candidates.append(settings)
     if not candidates:
         return None

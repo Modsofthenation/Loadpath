@@ -136,10 +136,10 @@ def _leaked_seams(store: GraphStore) -> list[Finding]:
     ]
     queries_by_src: dict[str, set[str]] = {}
     called_by_view: dict[str, set[str]] = {v: set() for v in views}
-    for edge in store.edges():
-        if edge["type"] == EdgeType.QUERIES_MODEL.value:
-            queries_by_src.setdefault(edge["src"], set()).add(edge["dst"])
-        elif edge["type"] == EdgeType.CALLS.value and edge["src"] in called_by_view:
+    for edge in store.edges_of_type([EdgeType.QUERIES_MODEL.value]):
+        queries_by_src.setdefault(edge["src"], set()).add(edge["dst"])
+    for edge in store.edges_of_type([EdgeType.CALLS.value]):
+        if edge["src"] in called_by_view:
             called_by_view[edge["src"]].add(edge["dst"])
     modules_by_ctx: dict[str, list[dict]] = {}
     for svc in services:
@@ -149,9 +149,7 @@ def _leaked_seams(store: GraphStore) -> list[Finding]:
         modules_by_ctx.setdefault(ctx, []).append(svc)
     out: list[Finding] = []
     seen: set[tuple[str, str]] = set()
-    for edge in store.edges():
-        if edge["type"] != EdgeType.QUERIES_MODEL.value:
-            continue
+    for edge in store.edges_of_type([EdgeType.QUERIES_MODEL.value]):
         view = views.get(edge["src"])
         model = models.get(edge["dst"])
         if not view or not model:
@@ -222,13 +220,12 @@ def _tests_bypass_interface(store: GraphStore) -> list[Finding]:
     views = {n["id"]: n for n in store.nodes([NodeType.VIEW])}
     serializers = {n["id"]: n for n in store.nodes([NodeType.SERIALIZER])}
     tested_src: set[str] = set()
-    for edge in store.edges():
-        if edge["type"] == EdgeType.TESTED_BY.value:
-            tested_src.add(edge["src"])
+    for edge in store.edges_of_type([EdgeType.TESTED_BY.value]):
+        tested_src.add(edge["src"])
     view_of_route: dict[str, str] = {}
     ser_of_view: dict[str, str] = {}
     page_of_route: dict[str, str] = {}
-    for edge in store.edges():
+    for edge in store.edges_of_type([EdgeType.PUBLISHES_ROUTE.value, EdgeType.USES_SERIALIZER.value]):
         if edge["type"] == EdgeType.PUBLISHES_ROUTE.value and edge["src"] in routes:
             if edge["dst"] in views:
                 view_of_route[edge["src"]] = edge["dst"]

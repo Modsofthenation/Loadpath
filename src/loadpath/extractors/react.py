@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from loadpath.config import LoadpathConfig
+from loadpath.extractors.text import line_at, newline_starts
 from loadpath.types import Edge, EdgeType, ExtractedGraph, Node, NodeType, node_id
 
 IMPORT_RE = re.compile(
@@ -289,6 +290,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
     e2e = is_e2e_file(rel)
     stem = Path(rel).stem
     graphql_file = Path(rel).suffix.lower() in {".graphql", ".gql"}
+    lines = newline_starts(source)
 
     def add(ntype: NodeType, name: str, qname: str, line: int = 1, extra: dict | None = None) -> Node:
         n = Node(
@@ -362,7 +364,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
         name = m.group(1)
         if name in HTTP_VERBS:
             continue
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         is_page = (
             name.endswith("Page")
             or "pages/" in rel
@@ -392,7 +394,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
     hooks: list[Node] = []
     for m in HOOK_RE.finditer(source):
         name = m.group(1)
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         n = add(NodeType.HOOK, name, f"{feature or 'app'}.{name}", line, {"feature": feature})
         hooks.append(n)
         if feature:
@@ -412,7 +414,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
 
     for m in USE_QUERY_RE.finditer(source):
         body = m.group("body")
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         km = QUERY_KEY_RE.search(body)
         key_raw = km.group(1) if km else None
         if key_raw:
@@ -432,7 +434,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
 
     for m in INVALIDATE_RE.finditer(source):
         key_raw = m.group(1)
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         key_name = re.sub(r"""\s+""", "", key_raw)
         qn = add(
             NodeType.QUERY_KEY,
@@ -450,7 +452,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
             continue
         if "/api/" not in url and not url.startswith("/"):
             continue
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         norm = normalize_url_template(url)
         generated_file = "/generated/" in f"/{rel}/" or "openapi" in Path(rel).stem.lower()
         qname = f"client:{rel}:{norm}"
@@ -477,7 +479,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
     # also catch fetch(`/api/...`) missed by grouping
     for m in re.finditer(r"""[`'"](/api/[^`'"]+)[`'"]""", source):
         url = m.group(1)
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         norm = normalize_url_template(url)
         generated_file = "/generated/" in f"/{rel}/" or "openapi" in Path(rel).stem.lower()
         qname = f"client:{rel}:{norm}"
@@ -504,7 +506,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
         if not path_m:
             continue
         rpath = path_m.group(1) or "/"
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         page_name = el_m.group(1) if el_m else rpath
         rn = add(NodeType.REACT_ROUTE, rpath, f"react.route:{rpath}", line, {"element": page_name})
         if el_m:
@@ -515,13 +517,13 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
 
     for m in PATH_OBJ_RE.finditer(source):
         rpath, page_name = m.group(1) or "/", m.group(2)
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         rn = add(NodeType.REACT_ROUTE, rpath, f"react.route:{rpath}", line, {"element": page_name})
         edge(rn.id, node_id(NodeType.PAGE, f"{feature or 'app'}.{page_name}"), EdgeType.PUBLISHES_ROUTE)
 
     for m in GQL_DOC_RE.finditer(source):
         body = m.group(1)
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         ops = GQL_OP_RE.findall(body)
         if not ops:
             ops = [("query", f"{stem}Query")]
@@ -547,7 +549,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
 
     for m in ZOD_RE.finditer(source):
         name, body = m.group(1), m.group(2)
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         fields = ZOD_FIELD_RE.findall(body)
         schema = add(
             NodeType.FORM_SCHEMA,
@@ -562,7 +564,7 @@ def extract_react_file(rel_path: str, source: str, config: LoadpathConfig) -> Ex
     if CONTEXT_RE.search(source):
         for m in PROVIDER_RE.finditer(source):
             name = m.group(1)
-            line = source[: m.start()].count("\n") + 1
+            line = line_at(lines, m.start())
             add(NodeType.CONTEXT_PROVIDER, name, f"{feature or 'app'}.{name}", line)
 
     if is_test:
@@ -700,6 +702,7 @@ def _extract_next_routes(add, edge, graph, rel, source, feature, app_info, pages
 
 
 def _extract_typed_clients(add, edge, graph, rel, source, feature, hooks, components) -> None:
+    lines = newline_starts(source)
     if RTK_RE.search(source) or "injectEndpoints" in source:
         base = ""
         bm = RTK_BASE_URL_RE.search(source)
@@ -715,7 +718,7 @@ def _extract_typed_clients(add, edge, graph, rel, source, feature, hooks, compon
             if raw.startswith("http") and "/api/" not in raw and not raw.startswith("/"):
                 continue
             url = _join_base(base, raw)
-            line = source[: m.start()].count("\n") + 1
+            line = line_at(lines, m.start())
             _add_client(
                 add,
                 edge,
@@ -739,7 +742,7 @@ def _extract_typed_clients(add, edge, graph, rel, source, feature, hooks, compon
             method, raw = m.group(1), m.group(2)
             if not raw.startswith("/") and "/api/" not in raw:
                 continue
-            line = source[: m.start()].count("\n") + 1
+            line = line_at(lines, m.start())
             _add_client(
                 add,
                 edge,
@@ -762,7 +765,7 @@ def _extract_typed_clients(add, edge, graph, rel, source, feature, hooks, compon
             raw = m.group(1) or m.group(2) or ""
             if not raw.startswith("/") and "/api/" not in raw:
                 continue
-            line = source[: m.start()].count("\n") + 1
+            line = line_at(lines, m.start())
             _add_client(
                 add,
                 edge,
@@ -777,7 +780,7 @@ def _extract_typed_clients(add, edge, graph, rel, source, feature, hooks, compon
             )
     for m in TRPC_RE.finditer(source):
         proc = m.group(1).rstrip(".")
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         qname = f"client:{rel}:trpc.{proc}"
         if any(n.qualified_name == qname for n in graph.nodes):
             continue
@@ -805,11 +808,12 @@ def _extract_typed_clients(add, edge, graph, rel, source, feature, hooks, compon
 def _extract_server_actions(add, edge, rel, source, feature, components) -> None:
     if '"use server"' not in source and "'use server'" not in source:
         return
+    lines = newline_starts(source)
     for m in SERVER_ACTION_FN_RE.finditer(source):
         name = m.group(1) or m.group(2)
         if not name or name in HTTP_VERBS:
             continue
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         action = add(
             NodeType.SERVER_ACTION,
             name,
@@ -824,6 +828,7 @@ def _extract_server_actions(add, edge, rel, source, feature, components) -> None
 
 
 def _extract_graphql_codegen(add, edge, source, feature, components) -> None:
+    lines = newline_starts(source)
     for m in CODEGEN_TYPE_RE.finditer(source):
         name = m.group(1)
         start = m.end()
@@ -839,7 +844,7 @@ def _extract_graphql_codegen(add, edge, source, feature, components) -> None:
         fields = [f for f in CODEGEN_FIELD_RE.findall(body) if f not in {"__typename", "Query", "Mutation", "Subscription"}]
         if not fields:
             continue
-        line = source[: m.start()].count("\n") + 1
+        line = line_at(lines, m.start())
         schema = add(
             NodeType.FORM_SCHEMA,
             name,

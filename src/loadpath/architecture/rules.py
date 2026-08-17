@@ -108,9 +108,7 @@ def _views_foreign_models(store: GraphStore, config: LoadpathConfig) -> list[Fin
     out: list[Finding] = []
     views = {n["id"]: n for n in store.nodes([NodeType.VIEW, NodeType.SERVICE])}
     models = {n["id"]: n for n in store.nodes([NodeType.MODEL])}
-    for edge in store.edges():
-        if edge["type"] != EdgeType.QUERIES_MODEL.value:
-            continue
+    for edge in store.edges_of_type([EdgeType.QUERIES_MODEL.value]):
         view = views.get(edge["src"])
         model = models.get(edge["dst"]) or store.get_node(edge["dst"])
         if not view or not model:
@@ -158,9 +156,7 @@ def _react_own_api(store: GraphStore, config: LoadpathConfig) -> list[Finding]:
             allowed_by_context[name].add(path)
             allowed_by_context[name].add(normalize_url_template(path))
 
-    for edge in store.edges():
-        if edge["type"] not in {EdgeType.CALLS.value, EdgeType.CONSUMED_BY_CLIENT.value}:
-            continue
+    for edge in store.edges_of_type([EdgeType.CALLS.value, EdgeType.CONSUMED_BY_CLIENT.value]):
         src = features.get(edge["src"])
         dst = clients.get(edge["dst"])
         if not src or not dst:
@@ -214,9 +210,7 @@ def _contract_drift(store: GraphStore, config: LoadpathConfig) -> list[Finding]:
     fields = {n["id"]: n for n in store.nodes([NodeType.SERIALIZER_FIELD])}
     serializers = {n["id"]: n for n in store.nodes([NodeType.SERIALIZER])}
     matched_serializers: dict[str, list[dict]] = {}
-    for edge in store.edges():
-        if edge["type"] != EdgeType.MATCHES_SCHEMA.value:
-            continue
+    for edge in store.edges_of_type([EdgeType.MATCHES_SCHEMA.value]):
         ser = serializers.get(edge["src"])
         schema = schemas.get(edge["dst"])
         if ser and schema:
@@ -427,9 +421,7 @@ def _cascade_crosses_context(store: GraphStore, config: LoadpathConfig) -> list[
     out: list[Finding] = []
     fields = {n["id"]: n for n in store.nodes([NodeType.FIELD])}
     models = {n["id"]: n for n in store.nodes([NodeType.MODEL])}
-    for edge in store.edges():
-        if edge["type"] != EdgeType.RELATES_TO.value:
-            continue
+    for edge in store.edges_of_type([EdgeType.RELATES_TO.value]):
         if (edge.get("extra") or {}).get("on_delete") != "CASCADE":
             continue
         field = fields.get(edge["src"])
@@ -518,14 +510,12 @@ def _remaining_field_refs(store: GraphStore, app: str, model: str, field: str) -
     model_ids = _ids_for(store, NodeType.MODEL, f"{app}.{model}")
     serializer_ids: set[str] = set()
     want_model = f"{app}.{model}".lower()
-    for edge in store.edges():
-        if edge["type"] != EdgeType.SERIALIZES.value:
-            continue
+    for edge in store.edges_of_type([EdgeType.SERIALIZES.value]):
         dst = (edge.get("dst") or "").lower()
         if edge["dst"] in model_ids or dst.endswith(":" + want_model):
             serializer_ids.add(edge["src"])
-    for edge in store.edges():
-        if edge["type"] != EdgeType.HAS_FIELD.value or edge["src"] not in serializer_ids:
+    for edge in store.edges_of_type([EdgeType.HAS_FIELD.value]):
+        if edge["src"] not in serializer_ids:
             continue
         child = store.get_node(edge["dst"])
         if child and child.get("name") == field:
@@ -537,16 +527,13 @@ def _remaining_model_refs(store: GraphStore, app: str, model: str) -> list[dict]
     still = list(_qnames(store, NodeType.MODEL, f"{app}.{model}"))
     model_ids = _ids_for(store, NodeType.MODEL, f"{app}.{model}")
     want = f"{app}.{model}".lower()
-    for edge in store.edges():
+    for edge in store.edges_of_type(
+        [EdgeType.SERIALIZES.value, EdgeType.QUERIES_MODEL.value, EdgeType.RELATES_TO.value]
+    ):
         dst = (edge.get("dst") or "").lower()
         if edge["dst"] not in model_ids and not dst.endswith(":" + want):
             continue
-        if edge["type"] in {
-            EdgeType.SERIALIZES.value,
-            EdgeType.QUERIES_MODEL.value,
-            EdgeType.RELATES_TO.value,
-        }:
-            src = store.get_node(edge["src"])
-            if src:
-                still.append(src)
+        src = store.get_node(edge["src"])
+        if src:
+            still.append(src)
     return still

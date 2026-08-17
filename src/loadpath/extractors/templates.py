@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from loadpath.config import LoadpathConfig
+from loadpath.extractors.text import line_at, newline_starts
 from loadpath.types import Edge, EdgeType, ExtractedGraph, Node, NodeType, node_id
 
 HTMX_RE = re.compile(
@@ -47,6 +48,7 @@ def extract_template_file(rel_path: str, source: str, config: LoadpathConfig) ->
     graph = ExtractedGraph()
     app = _app_from_template(rel)
     context = config.context_for_django_app(app)
+    lines = newline_starts(source)
     name = Path(rel).name
     qname = template_qname(rel)
     extra = {
@@ -97,7 +99,7 @@ def extract_template_file(rel_path: str, source: str, config: LoadpathConfig) ->
             name=call_name,
             qualified_name=f"{rel}:{call_name}",
             file_path=rel,
-            start_line=source[: match.start()].count("\n") + 1,
+            start_line=line_at(lines, match.start()),
             context=context,
             extra={"app": app, "method": method, "url": url},
         )
