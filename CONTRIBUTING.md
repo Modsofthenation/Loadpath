@@ -64,3 +64,26 @@ cd desktop && npm install && npm start
 ```
 
 Requires Python 3.12+ on `PATH` (`python` on Windows, `python3` elsewhere), or set `LOADPATH_PYTHON`.
+
+## Releases
+
+Keep these versions in lockstep:
+
+- `pyproject.toml`
+- `src/loadpath/__init__.py`
+- `desktop/package.json`
+- `ui/package.json`
+- `editors/vscode/package.json`
+
+Bump them, merge to `main`, wait for CI, then tag the merge commit:
+
+```bash
+git checkout main
+git pull
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Pushing `vX.Y.Z` runs **Release**: desktop installers, a Python wheel/sdist, and a GitHub Release. A pre-release version (`0.1.0rc1`, `0.1.0-rc.1`) is marked as such. The workflow does not create tags.
+
+For a draft, Actions → **Release** → **Run workflow** with an existing tag (draft is the default). Tag from a green `main`; the tagged commit must already include `.github/workflows/release.yml`.

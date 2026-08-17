@@ -178,7 +178,7 @@ cd desktop && npm install && npm start
 
 Requires Python 3.12+ on `PATH` (`python` on Windows, `python3` elsewhere), or `LOADPATH_PYTHON`.
 
-Installers: GitHub → Actions → **Desktop builds** → **Run workflow** (Linux AppImage/`.deb`, Windows NSIS, macOS unsigned `.dmg`/`.zip`). Gatekeeper needs right-click → Open on macOS.
+Installers: GitHub → [Releases](https://github.com/Modsofthenation/Loadpath/releases) (Linux AppImage/`.deb`, Windows NSIS, macOS unsigned `.dmg`/`.zip`). Push a `vX.Y.Z` tag to publish, or Actions → **Desktop builds** → **Run workflow** for a one-off build. Gatekeeper needs right-click → Open on macOS.
 
 ## Security
 
